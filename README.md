@@ -16,12 +16,25 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 
 > [!WARNING]
 > **Early release, and AI-assisted.** I built this by reverse-engineering an undocumented API,
-> with a lot of help from AI coding tools. Expect rough edges. ICE (petrol/diesel) 2022 models
-> are the best-tested; BEV support (I-PACE) is newer and some EV-specific commands (ECC
-> preconditioning, VHS refresh, charge control) are implemented but not yet verified on the
-> webview backend. The read-only stuff (sensors, location) is the most reliable part. Use at
-> your own risk, and if something misbehaves, please
+> with a lot of help from AI coding tools. Expect rough edges. The read-only stuff (sensors,
+> location) is the most reliable part; remote commands may behave differently between models.
+> Use at your own risk, and if something misbehaves, please
 > [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues).
+>
+> **Community-tested so far** (see [issue #1](https://github.com/willbeeching/ha-jlr-incontrol/issues/1)):
+>
+> | Vehicle | Powertrain | Year |
+> |---|---|---|
+> | Jaguar I-PACE | BEV | 2020 |
+> | Range Rover Sport | PHEV | — |
+> | Discovery Sport | PHEV | 2025 |
+> | Defender | ICE | 2022 |
+> | Range Rover | ICE | 2022 |
+>
+> ICE 2022 models remain the best-tested for remote commands. BEV and PHEV support is newer but
+> early community reports are positive. Some EV-specific commands (ECC preconditioning, VHS
+> refresh, charge control) are implemented from native-app API docs and may still need tweaks on
+> the webview backend — please report errors.
 
 ## What you get
 
@@ -85,8 +98,8 @@ pressure units (kPa / bar / psi). Leave as "Use Home Assistant default" to let H
 automatically.
 
 > **HACS beta releases:** enable **Show beta versions** on the custom repository in HACS
-> (⋮ menu → Show beta versions) so version tags like `v1.0.0-beta.3` appear instead of the
-> default branch commit hash.
+> (⋮ menu → Show beta versions) to pick a tagged release (e.g. `v1.0.0-beta.4`) instead of
+> tracking the default branch.
 
 ## How it works
 
