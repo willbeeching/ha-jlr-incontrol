@@ -82,6 +82,7 @@ SERVICE_ALARM_OFF = "ALOFF"
 SERVICE_PRECONDITIONING = "ECC"  # electric climate control (BEV/PHEV)
 SERVICE_VHS = "VHS"  # vehicle health status refresh
 SERVICE_CHARGE = "CP"  # charge-now control
+SERVICE_PROV = "PROV"  # provisioning (required before ICE RCC settings)
 
 # serviceName -> path segment used to start the service.
 SERVICE_ENDPOINTS: dict[str, str] = {
@@ -94,6 +95,7 @@ SERVICE_ENDPOINTS: dict[str, str] = {
     SERVICE_PRECONDITIONING: "preconditioning",
     SERVICE_VHS: "healthstatus",
     SERVICE_CHARGE: "chargeProfile",
+    SERVICE_PROV: "prov",
 }
 
 # Per-service start-request configuration.
@@ -113,6 +115,14 @@ STALE_AFTER = timedelta(hours=24)
 ECC_MIN_TEMP = 16.0
 ECC_MAX_TEMP = 28.0
 ECC_DEFAULT_TEMP = 21.0
+
+# ICE remote climate uses an RCC scale of 31 (LO/cool) – 57 (HI/heat).
+ICE_RCC_MIN = 31
+ICE_RCC_MAX = 57
+ICE_MIN_TEMP = 16.0
+ICE_MAX_TEMP = 28.5
+ICE_DEFAULT_HEAT_TEMP = 22.0
+ICE_DEFAULT_COOL_TEMP = 18.0
 
 PLATFORMS = [
     "sensor",

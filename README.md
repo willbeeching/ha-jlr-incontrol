@@ -35,8 +35,9 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 - A GPS `device_tracker` so you can see where the car is, along with heading, speed, and when it
   last phoned home.
 - If you provide your vehicle PIN: remote lock, honk & flash, and alarm off.
-- **Climate:** ICE/PHEV uses remote engine start (REON/REOFF). BEVs use electric preconditioning
-  (ECC) with a target temperature — no PIN required for ECC.
+- **Climate:** ICE/PHEV uses remote engine start (REON/REOFF) with heat and cool modes
+  plus a target temperature. BEVs use electric preconditioning (ECC) with a target
+  temperature — no PIN required for ECC.
 - **Update from vehicle** button (VHS) to force the car to report fresh status, plus a cheap
   **Refresh** button that re-polls the server cache.
 - **Charge now** switch for BEVs (force charge on/off).

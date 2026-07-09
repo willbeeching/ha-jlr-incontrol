@@ -26,6 +26,8 @@ import aiohttp
 
 from .const import (
     BROWSER_HEADERS,
+    ICE_RCC_MAX,
+    ICE_RCC_MIN,
     IF9_BASE,
     IFAS_TOKENS_URL,
     IFOP_BASE,
@@ -38,7 +40,9 @@ from .const import (
     MEDIA_USER,
     SERVICE_CHARGE,
     SERVICE_ENDPOINTS,
+    SERVICE_ENGINE_ON,
     SERVICE_PRECONDITIONING,
+    SERVICE_PROV,
     SERVICE_START_CONTENT_TYPES,
     SERVICE_VHS,
     SERVICES_EMPTY_PIN,
@@ -270,6 +274,26 @@ class JlrClient:
     # honk-and-flash (HBLF) returned HTTP 202 {"status":"Started"}. Lock/unlock/climate
     # use the identical flow with a different serviceName + endpoint, so they are
     # expected to work but have not each been individually actuated.
+    async def _async_authenticate(
+        self, vin: str, service_name: str, pin: str = ""
+    ) -> dict[str, Any]:
+        """Authenticate for a service and return the full auth payload."""
+        await self.async_connect()
+        auth_pin = "" if service_name in SERVICES_EMPTY_PIN else pin
+        auth_headers = self._webview_headers(MEDIA_JSON)
+        auth_headers["Content-Type"] = MEDIA_AUTHENTICATE
+        async with self._session.post(
+            f"{IF9_BASE}/vehicles/{vin}/users/{self._user_id}/authenticate",
+            headers=auth_headers,
+            data=json.dumps({"pin": auth_pin, "serviceName": service_name}),
+        ) as resp:
+            if resp.status not in (200, 201):
+                raise self._error(f"authenticate ({service_name})", resp.status)
+            payload = await resp.json()
+        if not payload.get("token"):
+            raise JlrApiError(f"authenticate ({service_name}) returned no token")
+        return payload
+
     async def async_send_command(
         self,
         vin: str,
@@ -293,18 +317,8 @@ class JlrClient:
         auth_pin = "" if service_name in SERVICES_EMPTY_PIN else pin
 
         # a) get a one-time service token.
-        auth_headers = self._webview_headers(MEDIA_JSON)
-        auth_headers["Content-Type"] = MEDIA_AUTHENTICATE
-        async with self._session.post(
-            f"{IF9_BASE}/vehicles/{vin}/users/{self._user_id}/authenticate",
-            headers=auth_headers,
-            data=json.dumps({"pin": auth_pin, "serviceName": service_name}),
-        ) as resp:
-            if resp.status not in (200, 201):
-                raise self._error(f"authenticate ({service_name})", resp.status)
-            token = (await resp.json()).get("token")
-        if not token:
-            raise JlrApiError(f"authenticate ({service_name}) returned no token")
+        auth_payload = await self._async_authenticate(vin, service_name, auth_pin)
+        token = auth_payload["token"]
 
         # b) start the service. The response Accept MUST be ServiceStatus-v4 (v5/json 406).
         content_type = SERVICE_START_CONTENT_TYPES.get(
@@ -367,6 +381,76 @@ class JlrClient:
     async def async_send_vhs(self, vin: str) -> dict[str, Any]:
         """Request a vehicle health status refresh (VHS)."""
         return await self.async_send_command(vin, SERVICE_VHS)
+
+    async def _async_post_vehicle(
+        self,
+        vin: str,
+        endpoint: str,
+        *,
+        body: dict[str, Any],
+        content_type: str = MEDIA_START_SERVICE,
+        accept: str = MEDIA_SERVICE_STATUS,
+        error_label: str,
+    ) -> dict[str, Any]:
+        """POST to a vehicle endpoint and return JSON (best-effort for empty bodies)."""
+        await self.async_connect()
+        headers = self._webview_headers(accept)
+        headers["Content-Type"] = content_type
+        async with self._session.post(
+            f"{IF9_BASE}/vehicles/{vin}/{endpoint}",
+            headers=headers,
+            data=json.dumps(body),
+        ) as resp:
+            if resp.status not in (200, 202, 204):
+                raise self._error(error_label, resp.status)
+            if resp.status == 204:
+                return {}
+            return await resp.json()
+
+    async def _async_enable_provisioning(self, vin: str, pin: str) -> None:
+        """Enable provisioning mode (required before ICE RCC settings)."""
+        auth = await self._async_authenticate(vin, SERVICE_PROV, pin)
+        body = {
+            **auth,
+            "serviceCommand": "provisioning",
+            "startTime": None,
+            "endTime": None,
+        }
+        await self._async_post_vehicle(
+            vin,
+            SERVICE_ENDPOINTS[SERVICE_PROV],
+            body=body,
+            error_label="provisioning",
+        )
+
+    async def _async_set_rcc_target(self, vin: str, pin: str, rcc_value: int) -> None:
+        """Set the ICE remote climate target on the RCC 31 (cool) – 57 (heat) scale."""
+        await self._async_enable_provisioning(vin, pin)
+        await self._async_post_vehicle(
+            vin,
+            "settings",
+            body={
+                "key": "ClimateControlRccTargetTemp",
+                "value": str(rcc_value),
+                "applied": 1,
+            },
+            content_type=MEDIA_JSON,
+            accept=MEDIA_JSON,
+            error_label="climate settings",
+        )
+
+    @staticmethod
+    def celsius_to_rcc(target_temp_c: float) -> int:
+        """Map a Celsius setpoint to the ICE RCC scale (31 = LO, 57 = HI)."""
+        return min(ICE_RCC_MAX, max(ICE_RCC_MIN, int(target_temp_c * 2)))
+
+    async def async_remote_engine_start(
+        self, vin: str, pin: str, target_temp_c: float
+    ) -> dict[str, Any]:
+        """Start ICE remote climate via RCC target + REON."""
+        rcc_value = self.celsius_to_rcc(target_temp_c)
+        await self._async_set_rcc_target(vin, pin, rcc_value)
+        return await self.async_send_command(vin, SERVICE_ENGINE_ON, pin)
 
     async def _await_service(
         self, vin: str, service_id: str, started: dict[str, Any]

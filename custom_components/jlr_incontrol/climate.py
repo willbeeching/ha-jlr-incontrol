@@ -1,7 +1,7 @@
 """Climate (remote start / preconditioning) for JLR InControl.
 
-ICE/PHEV: HEAT starts remote climate (REON), OFF stops it (REOFF).
-BEV: uses ECC electric preconditioning with a target temperature.
+ICE/PHEV: HEAT/COOL starts remote climate (REON) with an RCC target temperature,
+OFF stops it (REOFF). BEV: uses ECC electric preconditioning with a target temperature.
 """
 
 from __future__ import annotations
@@ -24,13 +24,17 @@ from .const import (
     ECC_DEFAULT_TEMP,
     ECC_MAX_TEMP,
     ECC_MIN_TEMP,
+    ICE_DEFAULT_COOL_TEMP,
+    ICE_DEFAULT_HEAT_TEMP,
+    ICE_MAX_TEMP,
+    ICE_MIN_TEMP,
     SERVICE_ENGINE_OFF,
-    SERVICE_ENGINE_ON,
 )
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity
 
-_ON_STATES = {"ON", "RUNNING", "STARTUP", "PRECLIM", "HEATING", "COOLING", "ENGINE_ON"}
+_COOL_STATES = {"COOLING"}
+_HEAT_STATES = {"HEATING", "PRECLIM", "ENGINE_ON", "RUNNING", "STARTUP", "ON"}
 
 
 async def async_setup_entry(
@@ -54,27 +58,34 @@ async def async_setup_entry(
 
 
 class JlrClimate(JlrVehicleEntity, ClimateEntity):
-    """Remote climate as a simple on/off climate entity."""
+    """Remote climate with heat/cool support on ICE and ECC on BEV."""
 
     _attr_translation_key = "climate"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-    _attr_min_temp = ECC_MIN_TEMP
-    _attr_max_temp = ECC_MAX_TEMP
-    _attr_target_temperature = ECC_DEFAULT_TEMP
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
         self._attr_unique_id = f"{vin}_climate"
+        self._requested_hvac_mode = HVACMode.HEAT
         if self.is_electric:
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
+            self._attr_min_temp = ECC_MIN_TEMP
+            self._attr_max_temp = ECC_MAX_TEMP
+            self._attr_target_temperature = ECC_DEFAULT_TEMP
             self._attr_supported_features = (
                 ClimateEntityFeature.TURN_ON
                 | ClimateEntityFeature.TURN_OFF
                 | ClimateEntityFeature.TARGET_TEMPERATURE
             )
         else:
+            self._attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL]
+            self._attr_min_temp = ICE_MIN_TEMP
+            self._attr_max_temp = ICE_MAX_TEMP
+            self._attr_target_temperature = ICE_DEFAULT_HEAT_TEMP
             self._attr_supported_features = (
-                ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+                ClimateEntityFeature.TURN_ON
+                | ClimateEntityFeature.TURN_OFF
+                | ClimateEntityFeature.TARGET_TEMPERATURE
             )
 
     @property
@@ -82,13 +93,24 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
         status = str(
             self._status_value("CLIMATE_STATUS_OPERATING_STATUS") or ""
         ).upper()
-        return HVACMode.HEAT if status in _ON_STATES else HVACMode.OFF
+        if status in _COOL_STATES:
+            return HVACMode.COOL
+        if status in _HEAT_STATES:
+            return HVACMode.HEAT
+        return HVACMode.OFF
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         if hvac_mode == HVACMode.OFF:
             await self.async_turn_off()
-        else:
-            await self.async_turn_on()
+            return
+        self._requested_hvac_mode = hvac_mode
+        if not self.is_electric:
+            self._attr_target_temperature = (
+                ICE_DEFAULT_COOL_TEMP
+                if hvac_mode == HVACMode.COOL
+                else ICE_DEFAULT_HEAT_TEMP
+            )
+        await self.async_turn_on()
 
     async def async_set_temperature(self, **kwargs: float) -> None:
         if temperature := kwargs.get("temperature"):
@@ -100,13 +122,35 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
         if self.is_electric:
             await self._ecc_command(start=True)
         else:
-            await self._ice_command(SERVICE_ENGINE_ON)
+            await self._ice_command_start()
 
     async def async_turn_off(self) -> None:
         if self.is_electric:
             await self._ecc_command(start=False)
         else:
             await self._ice_command(SERVICE_ENGINE_OFF)
+
+    def _ice_target_temp_c(self) -> float:
+        if self._attr_target_temperature is not None:
+            return float(self._attr_target_temperature)
+        if self._requested_hvac_mode == HVACMode.COOL:
+            return ICE_DEFAULT_COOL_TEMP
+        return ICE_DEFAULT_HEAT_TEMP
+
+    async def _ice_command_start(self) -> None:
+        pin = self.coordinator.entry.data.get(CONF_PIN)
+        if not pin:
+            raise HomeAssistantError(
+                "A vehicle PIN is required to send remote commands. Reconfigure the "
+                "integration and provide the PIN."
+            )
+        try:
+            await self.coordinator.client.async_remote_engine_start(
+                self._vin, pin, self._ice_target_temp_c()
+            )
+        except JlrApiError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self.coordinator.async_request_refresh()
 
     async def _ice_command(self, service_name: str) -> None:
         pin = self.coordinator.entry.data.get(CONF_PIN)
