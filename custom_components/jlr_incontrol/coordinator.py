@@ -37,6 +37,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.entry = entry
+        self._trips_warned: set[str] = set()
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -78,6 +79,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "status": {},
                 "position": {},
                 "trips": [],
+                "trips_error": None,
                 "status_ts": None,
             }
             try:
@@ -92,10 +94,27 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry["position"] = await self.client.async_get_position(vin)
             except JlrApiError as err:
                 _LOGGER.debug("position for %s unavailable: %s", vin, err)
-            try:
-                entry["trips"] = await self.client.async_get_trips(vin)
-            except JlrApiError as err:
-                _LOGGER.debug("trips for %s unavailable: %s", vin, err)
+            if self._journey_log_enabled(entry["attributes"]):
+                try:
+                    entry["trips"] = await self.client.async_get_trips(vin)
+                except JlrApiError as err:
+                    entry["trips_error"] = str(err)
+                    if vin in self._trips_warned:
+                        _LOGGER.debug("trips for %s unavailable: %s", vin, err)
+                    else:
+                        self._trips_warned.add(vin)
+                        _LOGGER.warning(
+                            "Trip data for %s is unavailable (%s). If this "
+                            "persists, check that Journeys is enabled in the "
+                            "InControl app - trips are not recorded while the "
+                            "vehicle's journey privacy setting is on",
+                            vin,
+                            err,
+                        )
+            else:
+                entry["trips_error"] = (
+                    "journey logging (JL) is not enabled for this vehicle"
+                )
 
             entry["status_ts"] = entry["position"].get("timestamp") or entry[
                 "status"
@@ -103,6 +122,22 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entry["position_stale"] = self._is_stale(entry["status_ts"])
             data["vehicles"][vin] = entry
         return data
+
+    @staticmethod
+    def _journey_log_enabled(attributes: dict[str, Any]) -> bool:
+        """True if the vehicle reports the journey log (JL) service as enabled.
+
+        Trips only exist when JLR's journey logging is active; with it off
+        (journey privacy mode) the trips endpoint stalls or returns nothing,
+        so skip the call. If the service list is missing, err on trying.
+        """
+        services = attributes.get("availableServices")
+        if not isinstance(services, list) or not services:
+            return True
+        for service in services:
+            if isinstance(service, dict) and service.get("serviceType") == "JL":
+                return bool(service.get("serviceEnabled", True))
+        return False
 
     @staticmethod
     def _is_stale(timestamp: str | None) -> bool:
