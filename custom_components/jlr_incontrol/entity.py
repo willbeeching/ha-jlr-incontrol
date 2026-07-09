@@ -16,6 +16,20 @@ def is_electric(attributes: dict[str, Any]) -> bool:
     return str(attributes.get("fuelType", "")).lower() == "electric"
 
 
+def is_electrified(attributes: dict[str, Any], status: dict[str, Any]) -> bool:
+    """True for anything with a charge port (BEV or plug-in hybrid).
+
+    ICE cars still report EV_* status keys with UNKNOWN sentinels (seen live on
+    a diesel L460), so key presence alone would create phantom EV entities.
+    Fall back to a meaningful charging status for unexpected fuelType strings.
+    """
+    fuel = str(attributes.get("fuelType", "")).lower()
+    if "electric" in fuel or "hybrid" in fuel:
+        return True
+    charging = str(status.get("EV_CHARGING_STATUS", "")).upper()
+    return charging not in ("", "NONE", "UNKNOWN")
+
+
 class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
     """Base entity bound to a single vehicle (by VIN)."""
 

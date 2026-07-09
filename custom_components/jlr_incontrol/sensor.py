@@ -43,7 +43,7 @@ from .const import (
     PRESSURE_UNIT_PSI,
 )
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity, is_electric
+from .entity import JlrVehicleEntity, is_electric, is_electrified
 
 
 def _to_float(value: Any) -> float | None:
@@ -89,6 +89,9 @@ class JlrSensorDescription(SensorEntityDescription):
     value_fn: Callable[[str], Any] = _to_float
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] = field(default=_no_attrs)
     suppress_for_ev: bool = False
+    # Only create on vehicles with a charge port; ICE cars report EV_* keys
+    # with UNKNOWN sentinels, so key presence alone is not enough.
+    requires_ev: bool = False
 
 
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
@@ -231,6 +234,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        requires_ev=True,
     ),
     JlrSensorDescription(
         key="ev_range",
@@ -242,6 +246,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         icon="mdi:map-marker-distance",
+        requires_ev=True,
     ),
     JlrSensorDescription(
         key="ev_range_combined",
@@ -255,6 +260,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         icon="mdi:map-marker-distance",
         value_fn=_combined_range,
         suppress_for_ev=True,
+        requires_ev=True,
     ),
     JlrSensorDescription(
         key="ev_time_to_full",
@@ -265,6 +271,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
         icon="mdi:timer-sand",
+        requires_ev=True,
     ),
     JlrSensorDescription(
         key="ev_charging_status",
@@ -272,6 +279,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         status_key="EV_CHARGING_STATUS",
         value_fn=lambda v: str(v).replace("_", " ").title(),
         icon="mdi:ev-station",
+        requires_ev=True,
     ),
 )
 
@@ -285,6 +293,8 @@ def _should_create_sensor(
     if description.status_key not in status:
         return False
     if description.suppress_for_ev and is_electric(attributes):
+        return False
+    if description.requires_ev and not is_electrified(attributes, status):
         return False
     return True
 
@@ -338,13 +348,18 @@ async def async_setup_entry(
         entities.append(JlrAllInfoSensor(coordinator, vin))
     async_add_entities(entities)
 
-    # Trips support was removed (the webview edge 504s on the legacy /trips
-    # backend); drop last-trip entities left behind by earlier versions.
+    # Drop entities left behind by earlier versions: the last-trip sensor
+    # (trips support was removed — the webview edge 504s on the legacy /trips
+    # backend) and EV sensors created on ICE cars before electrified gating.
     ent_reg = er.async_get(hass)
-    for vin in coordinator.data.get("vehicles", {}):
-        stale = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{vin}_last_trip")
-        if stale:
-            ent_reg.async_remove(stale)
+    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
+        stale_keys = ["last_trip"]
+        if not is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {})):
+            stale_keys.extend(d.key for d in EV_SENSORS)
+        for key in stale_keys:
+            stale = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{vin}_{key}")
+            if stale:
+                ent_reg.async_remove(stale)
 
 
 class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):

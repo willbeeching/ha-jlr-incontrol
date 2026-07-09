@@ -12,11 +12,12 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity
+from .entity import JlrVehicleEntity, is_electrified
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -29,6 +30,9 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # being fed to the predicate (unfitted hardware often reports UNKNOWN,
     # which would otherwise read as e.g. "window open" or "warning active").
     unknown_is_none: bool = True
+    # Only create on vehicles with a charge port; ICE cars report EV_* keys
+    # with UNKNOWN sentinels, so key presence alone is not enough.
+    requires_ev: bool = False
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -110,6 +114,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         is_on=lambda v: v in ("CHARGING", "BULKCHARGED"),
         unknown_is_none=False,
+        requires_ev=True,
     ),
     JlrBinaryDescription(
         key="ev_plugged_in",
@@ -118,6 +123,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.PLUG,
         is_on=lambda v: v not in ("NOTCONNECTED", "UNKNOWN", ""),
         unknown_is_none=False,
+        requires_ev=True,
     ),
 )
 
@@ -156,8 +162,30 @@ async def async_setup_entry(
             description.key not in REAR_DOOR_KEYS
             or _has_rear_doors(vehicle.get("attributes", {}))
         )
+        and (
+            not description.requires_ev
+            or is_electrified(
+                vehicle.get("attributes", {}), vehicle.get("status", {})
+            )
+        )
     ]
     async_add_entities(entities)
+
+    # Drop phantom entities created by earlier versions before the 2/3-door
+    # and electrified gating existed.
+    ent_reg = er.async_get(hass)
+    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
+        stale_keys: list[str] = []
+        if not _has_rear_doors(vehicle.get("attributes", {})):
+            stale_keys.extend(REAR_DOOR_KEYS)
+        if not is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {})):
+            stale_keys.extend(("ev_charging", "ev_plugged_in"))
+        for key in stale_keys:
+            stale = ent_reg.async_get_entity_id(
+                "binary_sensor", DOMAIN, f"{vin}_{key}"
+            )
+            if stale:
+                ent_reg.async_remove(stale)
 
 
 class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
