@@ -1,0 +1,79 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jaguar Land Rover InControl",
+        "description": "Sign in with your Land Rover Remote / InControl account. The PIN is only needed for remote commands (lock, climate, honk & flash).",
+        "data": {
+          "username": "Email",
+          "password": "Password",
+          "pin": "Vehicle security PIN (optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Could not reach the Jaguar Land Rover servers."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "fuel_level": { "name": "Fuel level" },
+      "distance_to_empty_fuel": { "name": "Fuel range" },
+      "odometer": { "name": "Odometer" },
+      "adblue_range": { "name": "AdBlue range" },
+      "distance_to_service": { "name": "Distance to service" },
+      "battery_voltage": { "name": "12V battery voltage" },
+      "battery_soc_12v": { "name": "12V battery charge" },
+      "engine_coolant_temp": { "name": "Engine coolant temperature" },
+      "tyre_pressure_fl": { "name": "Tyre pressure front left" },
+      "tyre_pressure_fr": { "name": "Tyre pressure front right" },
+      "tyre_pressure_rl": { "name": "Tyre pressure rear left" },
+      "tyre_pressure_rr": { "name": "Tyre pressure rear right" },
+      "ev_battery": { "name": "Battery" },
+      "ev_range": { "name": "Electric range" },
+      "ev_range_combined": { "name": "Combined range" },
+      "ev_time_to_full": { "name": "Time to full charge" },
+      "ev_charging_status": { "name": "Charging status" },
+      "last_updated": { "name": "Last updated" }
+    },
+    "binary_sensor": {
+      "door_front_left": { "name": "Front left door" },
+      "door_front_right": { "name": "Front right door" },
+      "door_rear_left": { "name": "Rear left door" },
+      "door_rear_right": { "name": "Rear right door" },
+      "boot": { "name": "Boot" },
+      "bonnet": { "name": "Bonnet" },
+      "window_front_left": { "name": "Front left window" },
+      "window_front_right": { "name": "Front right window" },
+      "window_rear_left": { "name": "Rear left window" },
+      "window_rear_right": { "name": "Rear right window" },
+      "sunroof": { "name": "Sunroof" },
+      "doors_locked": { "name": "Doors" },
+      "alarm": { "name": "Alarm" },
+      "brake_fluid_warning": { "name": "Brake fluid warning" },
+      "coolant_level_warning": { "name": "Coolant level warning" },
+      "oil_level_warning": { "name": "Oil level warning" },
+      "washer_fluid_warning": { "name": "Washer fluid warning" },
+      "adblue_warning": { "name": "AdBlue warning" },
+      "ev_charging": { "name": "Charging" },
+      "ev_plugged_in": { "name": "Plugged in" }
+    },
+    "device_tracker": {
+      "location": { "name": "Location" }
+    },
+    "lock": {
+      "doors": { "name": "Doors" }
+    },
+    "climate": {
+      "climate": { "name": "Climate" }
+    },
+    "button": {
+      "honk_flash": { "name": "Honk & flash" },
+      "refresh": { "name": "Refresh" }
+    }
+  }
+}

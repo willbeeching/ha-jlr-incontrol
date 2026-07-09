@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/willbeeching/ha-jlr-incontrol#readme
+    about: Setup, troubleshooting, and technical notes

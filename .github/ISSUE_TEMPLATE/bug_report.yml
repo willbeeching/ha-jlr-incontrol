@@ -1,0 +1,62 @@
+name: Bug Report
+description: Report a problem with the JLR InControl integration
+title: "[Bug]: "
+labels:
+  - bug
+assignees:
+  - willbeeching
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. This is an early, AI‑assisted integration talking to an undocumented
+        JLR API, so some rough edges are expected. Please include relevant Home Assistant log lines
+        from `custom_components.jlr_incontrol`.
+
+        **Never paste your InControl password, PIN, tokens, or full VIN into an issue.**
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the issue?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: What area is affected?
+      options:
+        - Setup / login
+        - Sensors / binary sensors
+        - Device tracker / location
+        - Remote command (lock / climate / honk & flash)
+        - Other
+    validations:
+      required: false
+
+  - type: input
+    id: vehicle
+    attributes:
+      label: Vehicle
+      placeholder: e.g. Land Rover Defender 2023 (PHEV), Jaguar I-PACE 2021
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Paste log output here (redact credentials, PIN, tokens, and VIN).
+      render: shell
+    validations:
+      required: false

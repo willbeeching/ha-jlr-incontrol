@@ -1,0 +1,69 @@
+name: Notify maintainer
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign and notify on new issues
+        if: github.event_name == 'issues'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const maintainer = "willbeeching";
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [maintainer],
+            });
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `@${maintainer} — new issue opened.`,
+            });
+
+      - name: Assign and notify on new comments
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const maintainer = "willbeeching";
+            const comment = context.payload.comment;
+
+            if (comment.user.type === "Bot") {
+              return;
+            }
+
+            if (comment.user.login === maintainer) {
+              return;
+            }
+
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [maintainer],
+            });
+
+            if (comment.body.includes(`@${maintainer}`)) {
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `@${maintainer} — new comment on this issue.`,
+            });

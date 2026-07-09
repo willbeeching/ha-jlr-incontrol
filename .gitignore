@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Home Assistant
+.storage/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Secrets — never commit real credentials, tokens, VINs, or account data
+secrets.yaml
+.env
+*.local

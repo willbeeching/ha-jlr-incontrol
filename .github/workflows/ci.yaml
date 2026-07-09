@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 black isort
+
+      - name: Check code formatting with Black
+        run: |
+          black --check custom_components/jlr_incontrol/
+
+      - name: Check import sorting with isort
+        run: |
+          isort --check-only custom_components/jlr_incontrol/
+
+      - name: Lint with flake8
+        run: |
+          flake8 custom_components/jlr_incontrol/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 custom_components/jlr_incontrol/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  hacs:
+    name: HACS Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+
+  hassfest:
+    name: Hassfest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master

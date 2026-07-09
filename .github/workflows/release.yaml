@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          echo "PREV_TAG=$PREV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          if [ -n "${{ steps.prev_tag.outputs.PREV_TAG }}" ]; then
+            CHANGELOG=$(git log ${{ steps.prev_tag.outputs.PREV_TAG }}..HEAD --pretty=format:"- %s" --no-merges)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+          fi
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create ZIP archive
+        run: |
+          cd custom_components
+          zip -r ../jlr_incontrol.zip jlr_incontrol/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "JLR InControl ${{ steps.get_version.outputs.VERSION }}"
+          body: |
+            ## What's Changed
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ## Installation
+
+            ### HACS (recommended)
+            Add `https://github.com/willbeeching/ha-jlr-incontrol` as a custom repository (category **Integration**), install, and restart Home Assistant.
+
+            ### Manual
+            Download `jlr_incontrol.zip`, extract into `config/custom_components/`, and restart Home Assistant.
+          files: jlr_incontrol.zip
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,13 @@
+{
+  "domain": "jlr_incontrol",
+  "name": "Jaguar Land Rover InControl",
+  "documentation": "https://github.com/willbeeching/ha-jlr-incontrol",
+  "issue_tracker": "https://github.com/willbeeching/ha-jlr-incontrol/issues",
+  "dependencies": [],
+  "codeowners": ["@willbeeching"],
+  "requirements": [],
+  "config_flow": true,
+  "iot_class": "cloud_polling",
+  "integration_type": "device",
+  "version": "1.0.0"
+}
