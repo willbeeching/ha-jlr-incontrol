@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/willbeeching/ha-jlr-incontrol/blob/master/LICENSE)
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 [![vibe-coded](https://img.shields.io/badge/vibe-coded-ff69b4?logo=musicbrainz&logoColor=white)](https://en.wikipedia.org/wiki/Vibe_coding)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20AI%20tokens-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/willbeeching)
 
 Bring your Jaguar or Land Rover (InControl) vehicle into Home Assistant — live status,
 location, and remote controls — using just your **InControl email and password**.
@@ -90,3 +91,10 @@ which may break the integration without warning. It was developed with AI assist
 release — provided "as is", with no warranty, and remote commands may not behave identically across
 models. Use it only with your own account and vehicles, and at your own risk. See `docs/` for the
 data model and technical notes.
+
+## Support
+
+This was reverse‑engineered and vibe‑coded over many late nights, and the AI tokens don't pay for
+themselves. If this integration saved you from getting up to check whether you locked the car,
+consider [buying me some AI tokens](https://buymeacoffee.com/willbeeching) ☕🤖. Entirely optional —
+bug reports and stars are appreciated just as much.
