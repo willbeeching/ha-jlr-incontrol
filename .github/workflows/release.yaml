@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to create (e.g. v1.0.0-beta.5)"
+        required: true
 
 jobs:
   release:
@@ -19,15 +24,26 @@ jobs:
 
       - name: Get version from tag
         id: get_version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_OUTPUT
 
       - name: Get previous tag
         id: prev_tag
         run: |
-          PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # The new tag does not exist yet on dispatch runs; the latest tag is the previous release.
+            PREV_TAG=$(git describe --abbrev=0 --tags 2>/dev/null || echo "")
+          else
+            PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+          fi
           echo "PREV_TAG=$PREV_TAG" >> $GITHUB_OUTPUT
 
       - name: Generate changelog
@@ -50,6 +66,8 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          target_commitish: ${{ github.sha }}
           name: "JLR InControl ${{ steps.get_version.outputs.VERSION }}"
           body: |
             ## What's Changed
