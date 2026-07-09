@@ -49,6 +49,9 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # The integration is not (yet) in the home-assistant/brands repo, which
+          # is expected for a custom integration; skip that check.
+          ignore: brands
 
   hassfest:
     name: Hassfest Validation
