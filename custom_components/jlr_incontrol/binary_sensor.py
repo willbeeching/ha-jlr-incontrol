@@ -164,9 +164,7 @@ async def async_setup_entry(
         )
         and (
             not description.requires_ev
-            or is_electrified(
-                vehicle.get("attributes", {}), vehicle.get("status", {})
-            )
+            or is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {}))
         )
     ]
     async_add_entities(entities)
@@ -181,9 +179,7 @@ async def async_setup_entry(
         if not is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {})):
             stale_keys.extend(("ev_charging", "ev_plugged_in"))
         for key in stale_keys:
-            stale = ent_reg.async_get_entity_id(
-                "binary_sensor", DOMAIN, f"{vin}_{key}"
-            )
+            stale = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, f"{vin}_{key}")
             if stale:
                 ent_reg.async_remove(stale)
 
