@@ -83,6 +83,10 @@ Under **Configure** on the integration entry you can override distance units (mi
 pressure units (kPa / bar / psi). Leave as "Use Home Assistant default" to let HA convert
 automatically.
 
+> **HACS beta releases:** enable **Show beta versions** on the custom repository in HACS
+> (⋮ menu → Show beta versions) so version tags like `v1.0.0-beta.3` appear instead of the
+> default branch commit hash.
+
 ## How it works
 
 Login is a standard password grant, and the integration then reads status and sends commands

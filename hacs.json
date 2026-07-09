@@ -1,5 +1,7 @@
 {
   "name": "Jaguar Land Rover InControl",
   "render_readme": true,
-  "homeassistant": "2024.4.0"
+  "homeassistant": "2024.4.0",
+  "zip_release": true,
+  "filename": "jlr_incontrol.zip"
 }
