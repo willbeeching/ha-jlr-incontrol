@@ -94,7 +94,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry["position"] = await self.client.async_get_position(vin)
             except JlrApiError as err:
                 _LOGGER.debug("position for %s unavailable: %s", vin, err)
-            if self._journey_log_enabled(entry["attributes"]):
+            if self.journey_log_enabled(entry["attributes"]):
                 try:
                     entry["trips"] = await self.client.async_get_trips(vin)
                 except JlrApiError as err:
@@ -124,7 +124,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return data
 
     @staticmethod
-    def _journey_log_enabled(attributes: dict[str, Any]) -> bool:
+    def journey_log_enabled(attributes: dict[str, Any]) -> bool:
         """True if the vehicle reports the journey log (JL) service as enabled.
 
         Trips only exist when JLR's journey logging is active; with it off

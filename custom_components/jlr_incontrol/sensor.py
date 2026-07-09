@@ -364,7 +364,10 @@ async def async_setup_entry(
             if _should_create_sensor(description, status, attributes)
         )
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
-        if vehicle.get("trips"):
+        # Create the trip sensor whenever journey logging is on, not only when
+        # a trip already exists — the first fetch being empty (or timing out)
+        # must not permanently hide the entity.
+        if vehicle.get("trips") or JlrCoordinator.journey_log_enabled(attributes):
             entities.append(JlrLastTripSensor(coordinator, vin, distance_unit))
         entities.append(JlrAllInfoSensor(coordinator, vin))
     async_add_entities(entities)
