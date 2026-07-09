@@ -25,6 +25,10 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
 
     status_key: str
     is_on: Callable[[str], bool]
+    # When True, an UNKNOWN/empty raw value maps to HA "unknown" instead of
+    # being fed to the predicate (unfitted hardware often reports UNKNOWN,
+    # which would otherwise read as e.g. "window open" or "warning active").
+    unknown_is_none: bool = True
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -105,6 +109,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         status_key="EV_CHARGING_STATUS",
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
         is_on=lambda v: v in ("CHARGING", "BULKCHARGED"),
+        unknown_is_none=False,
     ),
     JlrBinaryDescription(
         key="ev_plugged_in",
@@ -112,8 +117,25 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         status_key="EV_CHARGING_STATUS",
         device_class=BinarySensorDeviceClass.PLUG,
         is_on=lambda v: v not in ("NOTCONNECTED", "UNKNOWN", ""),
+        unknown_is_none=False,
     ),
 )
+
+# Entities that only make sense on cars with rear doors.
+REAR_DOOR_KEYS = {
+    "door_rear_left",
+    "door_rear_right",
+    "window_rear_left",
+    "window_rear_right",
+}
+
+
+def _has_rear_doors(attributes: dict) -> bool:
+    """False only when the attributes clearly report a 2/3-door body."""
+    try:
+        return int(str(attributes.get("numberOfDoors"))) >= 4
+    except (TypeError, ValueError):
+        return True
 
 
 async def async_setup_entry(
@@ -130,6 +152,10 @@ async def async_setup_entry(
         for vin, vehicle in coordinator.data.get("vehicles", {}).items()
         for description in VEHICLE_BINARY_SENSORS
         if description.status_key in vehicle.get("status", {})
+        and (
+            description.key not in REAR_DOOR_KEYS
+            or _has_rear_doors(vehicle.get("attributes", {}))
+        )
     ]
     async_add_entities(entities)
 
@@ -151,4 +177,7 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         raw = self._status_value(self.entity_description.status_key)
         if raw is None:
             return None
-        return self.entity_description.is_on(str(raw).upper())
+        value = str(raw).upper()
+        if self.entity_description.unknown_is_none and value in ("UNKNOWN", ""):
+            return None
+        return self.entity_description.is_on(value)
