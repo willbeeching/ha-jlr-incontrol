@@ -12,15 +12,15 @@ where you parked it, and (if you want) remote lock and climate control. All you 
 and password you use for the InControl app.
 
 There's no third-party cloud in the middle and nothing to plug into the car. The integration talks
-to JLR's own backend, so it runs anywhere Home Assistant does. Petrol, diesel, and electric models
-all work.
+to JLR's own backend, so it runs anywhere Home Assistant does.
 
 > [!WARNING]
 > **Early release, and AI-assisted.** I built this by reverse-engineering an undocumented API,
-> with a lot of help from AI coding tools. Expect rough edges. The read-only stuff (sensors,
-> location) is the best-tested part. The PIN-gated remote commands (lock, climate, honk & flash)
-> have had limited real-world testing and might not work on every vehicle. Use at your own risk,
-> and if something misbehaves, please
+> with a lot of help from AI coding tools. Expect rough edges. So far I've only tested this on
+> **ICE (petrol/diesel) 2022 models** — EVs, hybrids, and other years are untested. The read-only
+> stuff (sensors, location) is the best-tested part. The PIN-gated remote commands (lock, climate,
+> honk & flash) have had limited real-world testing and might not work on every vehicle. Use at
+> your own risk, and if something misbehaves, please
 > [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues).
 
 ## What you get
