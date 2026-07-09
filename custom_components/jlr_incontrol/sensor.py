@@ -29,9 +29,20 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import (
+    DISTANCE_UNIT_DEFAULT,
+    DISTANCE_UNIT_KM,
+    DISTANCE_UNIT_MILES,
+    DOMAIN,
+    OPT_DISTANCE_UNIT,
+    OPT_PRESSURE_UNIT,
+    PRESSURE_UNIT_BAR,
+    PRESSURE_UNIT_DEFAULT,
+    PRESSURE_UNIT_KPA,
+    PRESSURE_UNIT_PSI,
+)
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity
+from .entity import JlrVehicleEntity, is_electric
 
 
 def _to_float(value: Any) -> float | None:
@@ -43,6 +54,22 @@ def _to_float(value: Any) -> float | None:
 
 def _no_attrs(_status: dict[str, Any]) -> dict[str, Any]:
     return {}
+
+
+def _coolant_temp(value: str) -> float | None:
+    """Return coolant temp, treating sentinel values as unknown."""
+    temp = _to_float(value)
+    if temp is None or temp <= -40:
+        return None
+    return temp
+
+
+def _combined_range(value: str) -> float | None:
+    """Return combined range, treating negative sentinel as unknown."""
+    val = _to_float(value)
+    if val is None or val < 0:
+        return None
+    return val
 
 
 def _odometer_attrs(status: dict[str, Any]) -> dict[str, Any]:
@@ -60,6 +87,7 @@ class JlrSensorDescription(SensorEntityDescription):
     status_key: str
     value_fn: Callable[[str], Any] = _to_float
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] = field(default=_no_attrs)
+    suppress_for_ev: bool = False
 
 
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
@@ -71,6 +99,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
         icon="mdi:fuel",
+        suppress_for_ev=True,
     ),
     JlrSensorDescription(
         key="distance_to_empty_fuel",
@@ -81,6 +110,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
+        suppress_for_ev=True,
     ),
     JlrSensorDescription(
         key="odometer",
@@ -146,6 +176,8 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_coolant_temp,
+        suppress_for_ev=True,
     ),
 )
 
@@ -220,6 +252,8 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         icon="mdi:map-marker-distance",
+        value_fn=_combined_range,
+        suppress_for_ev=True,
     ),
     JlrSensorDescription(
         key="ev_time_to_full",
@@ -241,6 +275,71 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
 )
 
 
+def _should_create_sensor(
+    description: JlrSensorDescription,
+    status: dict[str, Any],
+    attributes: dict[str, Any],
+) -> bool:
+    """Return True if a sensor description should be created for this vehicle."""
+    if description.status_key not in status:
+        return False
+    if description.suppress_for_ev and is_electric(attributes):
+        return False
+    return True
+
+
+def _distance_unit_override(entry: ConfigEntry) -> str | None:
+    """Return a distance unit override from options, or None for HA default."""
+    unit = entry.options.get(OPT_DISTANCE_UNIT, DISTANCE_UNIT_DEFAULT)
+    if unit == DISTANCE_UNIT_MILES:
+        return UnitOfLength.MILES
+    if unit == DISTANCE_UNIT_KM:
+        return UnitOfLength.KILOMETERS
+    return None
+
+
+def _pressure_unit_override(entry: ConfigEntry) -> str | None:
+    """Return a pressure unit override from options, or None for HA default."""
+    unit = entry.options.get(OPT_PRESSURE_UNIT, PRESSURE_UNIT_DEFAULT)
+    if unit == PRESSURE_UNIT_KPA:
+        return UnitOfPressure.KPA
+    if unit == PRESSURE_UNIT_BAR:
+        return UnitOfPressure.BAR
+    if unit == PRESSURE_UNIT_PSI:
+        return UnitOfPressure.PSI
+    return None
+
+
+def _trip_distance_km(trip: dict[str, Any]) -> float | None:
+    """Extract trip distance in km from a trip record."""
+    for key in ("distance", "distanceKm", "distanceKM", "tripDistance"):
+        value = _to_float(trip.get(key))
+        if value is not None:
+            return value
+    metres = _to_float(trip.get("distanceMetres") or trip.get("distanceMeters"))
+    if metres is not None:
+        return round(metres / 1000, 1)
+    return None
+
+
+def _trip_attrs(trip: dict[str, Any]) -> dict[str, Any]:
+    """Build attributes for the last-trip sensor."""
+    attrs: dict[str, Any] = {}
+    for src, dst in (
+        ("startTime", "start_time"),
+        ("endTime", "end_time"),
+        ("startDateTime", "start_time"),
+        ("endDateTime", "end_time"),
+        ("averageFuelConsumption", "average_fuel_consumption"),
+        ("averageEnergyConsumption", "average_energy_consumption"),
+        ("energyConsumption", "energy_consumption"),
+        ("tripId", "trip_id"),
+    ):
+        if trip.get(src) is not None:
+            attrs[dst] = trip[src]
+    return attrs
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -251,15 +350,23 @@ async def async_setup_entry(
     left showing unknown.
     """
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
+    distance_unit = _distance_unit_override(entry)
+    pressure_unit = _pressure_unit_override(entry)
     entities: list[Any] = []
     for vin, vehicle in coordinator.data.get("vehicles", {}).items():
         status = vehicle.get("status", {})
+        attributes = vehicle.get("attributes", {})
         entities.extend(
-            JlrVehicleSensor(coordinator, vin, description)
+            JlrVehicleSensor(
+                coordinator, vin, description, distance_unit, pressure_unit
+            )
             for description in (*VEHICLE_SENSORS, *TYRE_SENSORS, *EV_SENSORS)
-            if description.status_key in status
+            if _should_create_sensor(description, status, attributes)
         )
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
+        if vehicle.get("trips"):
+            entities.append(JlrLastTripSensor(coordinator, vin, distance_unit))
+        entities.append(JlrAllInfoSensor(coordinator, vin))
     async_add_entities(entities)
 
 
@@ -269,11 +376,20 @@ class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
     entity_description: JlrSensorDescription
 
     def __init__(
-        self, coordinator: JlrCoordinator, vin: str, description: JlrSensorDescription
+        self,
+        coordinator: JlrCoordinator,
+        vin: str,
+        description: JlrSensorDescription,
+        distance_unit: str | None,
+        pressure_unit: str | None,
     ) -> None:
         super().__init__(coordinator, vin)
         self.entity_description = description
         self._attr_unique_id = f"{vin}_{description.key}"
+        if distance_unit and description.device_class == SensorDeviceClass.DISTANCE:
+            self._attr_suggested_unit_of_measurement = distance_unit
+        if pressure_unit and description.device_class == SensorDeviceClass.PRESSURE:
+            self._attr_suggested_unit_of_measurement = pressure_unit
 
     @property
     def native_value(self) -> Any:
@@ -313,3 +429,55 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"stale": self._vehicle.get("position_stale", False)}
+
+
+class JlrLastTripSensor(JlrVehicleEntity, SensorEntity):
+    """Distance of the most recent trip."""
+
+    _attr_translation_key = "last_trip"
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_icon = "mdi:map-marker-path"
+
+    def __init__(
+        self, coordinator: JlrCoordinator, vin: str, distance_unit: str | None
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_last_trip"
+        if distance_unit:
+            self._attr_suggested_unit_of_measurement = distance_unit
+
+    @property
+    def native_value(self) -> float | None:
+        trips = self._vehicle.get("trips") or []
+        if not trips:
+            return None
+        return _trip_distance_km(trips[0])
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        trips = self._vehicle.get("trips") or []
+        if not trips:
+            return {}
+        return _trip_attrs(trips[0])
+
+
+class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):
+    """Flattened vehicle status as attributes (disabled by default)."""
+
+    _attr_translation_key = "all_info"
+    _attr_icon = "mdi:database"
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_all_info"
+
+    @property
+    def native_value(self) -> str:
+        return "ok"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return dict(self._vehicle.get("status", {}))

@@ -11,6 +11,11 @@ from .const import DOMAIN
 from .coordinator import JlrCoordinator
 
 
+def is_electric(attributes: dict[str, Any]) -> bool:
+    """Return True when the vehicle is a pure BEV."""
+    return str(attributes.get("fuelType", "")).lower() == "electric"
+
+
 class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
     """Base entity bound to a single vehicle (by VIN)."""
 
@@ -27,6 +32,11 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
     @property
     def _attributes(self) -> dict[str, Any]:
         return self._vehicle.get("attributes", {})
+
+    @property
+    def is_electric(self) -> bool:
+        """Whether this vehicle is a pure BEV."""
+        return is_electric(self._attributes)
 
     @property
     def _position(self) -> dict[str, Any]:

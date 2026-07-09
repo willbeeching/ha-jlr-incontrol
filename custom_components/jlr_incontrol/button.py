@@ -1,4 +1,4 @@
-"""Buttons for JLR InControl (honk & flash, refresh)."""
+"""Buttons for JLR InControl (honk & flash, refresh, update from vehicle)."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ async def async_setup_entry(
     entities: list[ButtonEntity] = []
     for vin in coordinator.data.get("vehicles", {}):
         entities.append(JlrRefreshButton(coordinator, vin))
+        entities.append(JlrUpdateFromVehicleButton(coordinator, vin))
         if has_pin:
             entities.append(JlrHonkFlashButton(coordinator, vin))
     async_add_entities(entities)
@@ -58,12 +59,7 @@ class JlrHonkFlashButton(JlrVehicleEntity, ButtonEntity):
 
 
 class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
-    """Re-poll the vehicle data.
-
-    TODO: a true "refresh from vehicle" (VHS health-status refresh) is a PIN-gated
-    remote service. For now this just re-fetches the cached status/position from the
-    backend.
-    """
+    """Re-poll the cached vehicle data from the JLR backend."""
 
     _attr_translation_key = "refresh"
     _attr_icon = "mdi:refresh"
@@ -73,4 +69,22 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
         self._attr_unique_id = f"{vin}_refresh"
 
     async def async_press(self) -> None:
+        await self.coordinator.async_request_refresh()
+
+
+class JlrUpdateFromVehicleButton(JlrVehicleEntity, ButtonEntity):
+    """Request a vehicle health status refresh (VHS), then re-poll."""
+
+    _attr_translation_key = "update_from_vehicle"
+    _attr_icon = "mdi:car-connected"
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_update_from_vehicle"
+
+    async def async_press(self) -> None:
+        try:
+            await self.coordinator.client.async_send_vhs(self._vin)
+        except JlrApiError as err:
+            raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()

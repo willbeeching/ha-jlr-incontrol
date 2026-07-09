@@ -6,7 +6,8 @@ import uuid
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import JlrApiError, JlrAuthError, JlrClient
@@ -16,7 +17,16 @@ from .const import (
     CONF_PIN,
     CONF_USER_ID,
     CONF_USERNAME,
+    DISTANCE_UNIT_DEFAULT,
+    DISTANCE_UNIT_KM,
+    DISTANCE_UNIT_MILES,
     DOMAIN,
+    OPT_DISTANCE_UNIT,
+    OPT_PRESSURE_UNIT,
+    PRESSURE_UNIT_BAR,
+    PRESSURE_UNIT_DEFAULT,
+    PRESSURE_UNIT_KPA,
+    PRESSURE_UNIT_PSI,
 )
 
 STEP_USER_SCHEMA = vol.Schema(
@@ -27,11 +37,43 @@ STEP_USER_SCHEMA = vol.Schema(
     }
 )
 
+OPTIONS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(
+            OPT_DISTANCE_UNIT,
+            default=DISTANCE_UNIT_DEFAULT,
+        ): vol.In(
+            {
+                DISTANCE_UNIT_DEFAULT: "Use Home Assistant default",
+                DISTANCE_UNIT_MILES: "Miles",
+                DISTANCE_UNIT_KM: "Kilometres",
+            }
+        ),
+        vol.Optional(
+            OPT_PRESSURE_UNIT,
+            default=PRESSURE_UNIT_DEFAULT,
+        ): vol.In(
+            {
+                PRESSURE_UNIT_DEFAULT: "Use Home Assistant default",
+                PRESSURE_UNIT_KPA: "kPa",
+                PRESSURE_UNIT_BAR: "bar",
+                PRESSURE_UNIT_PSI: "psi",
+            }
+        ),
+    }
+)
+
 
 class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the JLR InControl config flow."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry):  # type: ignore[no-untyped-def]
+        """Get the options flow for this handler."""
+        return JlrOptionsFlowHandler()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -74,3 +116,28 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
         )
+
+
+class JlrOptionsFlowHandler(OptionsFlow):
+    """Handle JLR InControl options."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage unit options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        options = self.config_entry.options
+        schema = self.add_suggested_values_to_schema(
+            OPTIONS_SCHEMA,
+            {
+                OPT_DISTANCE_UNIT: options.get(
+                    OPT_DISTANCE_UNIT, DISTANCE_UNIT_DEFAULT
+                ),
+                OPT_PRESSURE_UNIT: options.get(
+                    OPT_PRESSURE_UNIT, PRESSURE_UNIT_DEFAULT
+                ),
+            },
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

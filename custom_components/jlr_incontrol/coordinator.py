@@ -74,6 +74,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "attributes": {},
                 "status": {},
                 "position": {},
+                "trips": [],
                 "status_ts": None,
             }
             try:
@@ -88,6 +89,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry["position"] = await self.client.async_get_position(vin)
             except JlrApiError as err:
                 _LOGGER.debug("position for %s unavailable: %s", vin, err)
+            try:
+                entry["trips"] = await self.client.async_get_trips(vin)
+            except JlrApiError as err:
+                _LOGGER.debug("trips for %s unavailable: %s", vin, err)
 
             entry["status_ts"] = entry["position"].get("timestamp") or entry[
                 "status"

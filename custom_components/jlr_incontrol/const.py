@@ -51,6 +51,8 @@ MEDIA_START_SERVICE = (
 # The Accept a command POST must send for its response. Validated live: v4 works;
 # v5 and plain application/json both return HTTP 406.
 MEDIA_SERVICE_STATUS = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v4+json"
+MEDIA_PHEV_SERVICE = "application/vnd.wirelesscar.ngtp.if9.PhevService-v1+json"
+MEDIA_TRIPLIST = "application/vnd.ngtp.org.triplist-v2+json"
 
 # ---- Config entry keys ----
 CONF_USERNAME = "username"
@@ -59,6 +61,17 @@ CONF_PIN = "pin"
 CONF_DEVICE_ID = "device_id"
 CONF_USER_ID = "user_id"
 
+# ---- Options keys ----
+OPT_DISTANCE_UNIT = "distance_unit"
+OPT_PRESSURE_UNIT = "pressure_unit"
+DISTANCE_UNIT_DEFAULT = "default"
+DISTANCE_UNIT_MILES = "miles"
+DISTANCE_UNIT_KM = "km"
+PRESSURE_UNIT_DEFAULT = "default"
+PRESSURE_UNIT_KPA = "kpa"
+PRESSURE_UNIT_BAR = "bar"
+PRESSURE_UNIT_PSI = "psi"
+
 # ---- Remote service codes (serviceName) ----
 SERVICE_LOCK = "RDL"
 SERVICE_UNLOCK = "RDU"
@@ -66,6 +79,9 @@ SERVICE_ENGINE_ON = "REON"  # remote-start climate (heat/precondition)
 SERVICE_ENGINE_OFF = "REOFF"
 SERVICE_HONK_FLASH = "HBLF"
 SERVICE_ALARM_OFF = "ALOFF"
+SERVICE_PRECONDITIONING = "ECC"  # electric climate control (BEV/PHEV)
+SERVICE_VHS = "VHS"  # vehicle health status refresh
+SERVICE_CHARGE = "CP"  # charge-now control
 
 # serviceName -> path segment used to start the service.
 SERVICE_ENDPOINTS: dict[str, str] = {
@@ -75,10 +91,36 @@ SERVICE_ENDPOINTS: dict[str, str] = {
     SERVICE_ENGINE_OFF: "engineOff",
     SERVICE_HONK_FLASH: "honkBlink",
     SERVICE_ALARM_OFF: "alarmOff",
+    SERVICE_PRECONDITIONING: "preconditioning",
+    SERVICE_VHS: "healthstatus",
+    SERVICE_CHARGE: "chargeProfile",
 }
+
+# Per-service start-request configuration.
+SERVICE_START_CONTENT_TYPES: dict[str, str] = {
+    SERVICE_PRECONDITIONING: MEDIA_PHEV_SERVICE,
+    SERVICE_CHARGE: MEDIA_PHEV_SERVICE,
+}
+
+# Services that authenticate with an empty PIN (per jlrpy / native-app behaviour).
+SERVICES_EMPTY_PIN: frozenset[str] = frozenset({SERVICE_PRECONDITIONING, SERVICE_VHS})
 
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=5)
 # A position older than this is flagged stale (informational attribute only).
 STALE_AFTER = timedelta(hours=24)
 
-PLATFORMS = ["sensor", "binary_sensor", "device_tracker", "lock", "climate", "button"]
+# ECC target temperature bounds (degrees Celsius).
+ECC_MIN_TEMP = 16.0
+ECC_MAX_TEMP = 28.0
+ECC_DEFAULT_TEMP = 21.0
+
+PLATFORMS = [
+    "sensor",
+    "binary_sensor",
+    "device_tracker",
+    "lock",
+    "climate",
+    "button",
+    "switch",
+    "diagnostics",
+]

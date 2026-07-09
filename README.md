@@ -16,10 +16,10 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 
 > [!WARNING]
 > **Early release, and AI-assisted.** I built this by reverse-engineering an undocumented API,
-> with a lot of help from AI coding tools. Expect rough edges. So far I've only tested this on
-> **ICE (petrol/diesel) 2022 models** — EVs, hybrids, and other years are untested. The read-only
-> stuff (sensors, location) is the best-tested part. The PIN-gated remote commands (lock, climate,
-> honk & flash) have had limited real-world testing and might not work on every vehicle. Use at
+> with a lot of help from AI coding tools. Expect rough edges. ICE (petrol/diesel) 2022 models
+> are the best-tested; BEV support (I-PACE) is newer and some EV-specific commands (ECC
+> preconditioning, VHS refresh, charge control) are implemented but not yet verified on the
+> webview backend. The read-only stuff (sensors, location) is the most reliable part. Use at
 > your own risk, and if something misbehaves, please
 > [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues).
 
@@ -27,12 +27,23 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 
 - Live vehicle status: fuel level and range, odometer, service/AdBlue distance, tyre pressures,
   12V battery, coolant temperature, and a fair bit more.
+- **BEV support:** battery SoC, electric range, charging status, time to full, and charge-now
+  control. ICE-only sensors (fuel level, coolant temp, combined range) are automatically hidden
+  on pure electric vehicles.
 - Every door's open/closed and lock state, all four windows, the sunroof, theft alarm status,
   and warnings for fluids and service as binary sensors.
 - A GPS `device_tracker` so you can see where the car is, along with heading, speed, and when it
   last phoned home.
-- If you provide your vehicle PIN: remote lock, climate pre-conditioning, alarm off, and
-  honk & flash, plus a button to request a fresh update from the car.
+- If you provide your vehicle PIN: remote lock, honk & flash, and alarm off.
+- **Climate:** ICE/PHEV uses remote engine start (REON/REOFF). BEVs use electric preconditioning
+  (ECC) with a target temperature — no PIN required for ECC.
+- **Update from vehicle** button (VHS) to force the car to report fresh status, plus a cheap
+  **Refresh** button that re-polls the server cache.
+- **Charge now** switch for BEVs (force charge on/off).
+- **Last trip** sensor with distance and trip metadata (when the trips API is available).
+- **All info** sensor (disabled by default) exposing the full flattened status dict as attributes.
+- Diagnostics download for troubleshooting (VIN/position redacted).
+- Configurable distance and pressure unit overrides in integration options.
 - Got more than one car on the account? They all show up automatically.
 
 ## Requirements
@@ -40,7 +51,8 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 - Home Assistant 2024.4 or newer
 - An InControl account with your vehicle(s) added to it
 - Your account email and password
-- Your vehicle security PIN, but only if you want the remote commands
+- Your vehicle security PIN for lock, honk & flash, alarm off, and charge control. BEV climate
+  (ECC) works without a PIN.
 
 ## Installation
 
@@ -60,12 +72,16 @@ folder and restart.
 1. Go to **Settings → Devices & Services → Add Integration** and search for
    **Jaguar Land Rover InControl**.
 2. Enter your InControl email and password.
-3. Optionally enter your vehicle PIN. If you leave it blank you get monitoring only, and the
-   lock/climate/honk entities simply aren't created. You can add the PIN later by reconfiguring
-   the entry.
+3. Optionally enter your vehicle PIN. If you leave it blank you get monitoring only (plus BEV
+   climate if you have an electric vehicle). You can add the PIN later by reconfiguring the entry.
 
-Each vehicle shows up as a device with its sensors, binary sensors, and (if you gave a PIN) the
-control entities.
+Each vehicle shows up as a device with its sensors, binary sensors, and control entities.
+
+### Options
+
+Under **Configure** on the integration entry you can override distance units (miles / km) and
+pressure units (kPa / bar / psi). Leave as "Use Home Assistant default" to let HA convert
+automatically.
 
 ## How it works
 
@@ -79,10 +95,15 @@ you shouldn't need to log in again.
 
 A couple of things worth knowing:
 
-- The status you see is whatever the car last reported. Hit the refresh button if you want it to
-  wake up and send fresh data.
+- The status you see is whatever the car last reported to JLR's servers. Use **Update from
+  vehicle** (VHS) to wake the car and push fresh data, or **Refresh** to re-fetch the cached
+  copy from the backend.
+- The `last_updated` timestamp reflects when the car last reported position/status to JLR — it
+  may lag behind individual values like SoC during charging.
 - Remote commands wake the car, so they take a few seconds. The integration waits for the vehicle
   to confirm before reporting success or failure.
+- ECC preconditioning, VHS refresh, charge control, and trip data use endpoints documented from
+  the native-app API. They may need media-type tweaks on the webview edge — please report errors.
 
 ## Disclaimer
 

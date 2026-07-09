@@ -34,8 +34,14 @@ from .const import (
     MEDIA_JSON,
     MEDIA_SERVICE_STATUS,
     MEDIA_START_SERVICE,
+    MEDIA_TRIPLIST,
     MEDIA_USER,
+    SERVICE_CHARGE,
     SERVICE_ENDPOINTS,
+    SERVICE_PRECONDITIONING,
+    SERVICE_START_CONTENT_TYPES,
+    SERVICE_VHS,
+    SERVICES_EMPTY_PIN,
     TELEMATICS_PROGRAM,
     TOKENS_BASIC_AUTH,
 )
@@ -229,6 +235,23 @@ class JlrClient:
                 raise self._error("position", resp.status)
             return (await resp.json()).get("position", {})
 
+    async def async_get_trips(self, vin: str, count: int = 25) -> list[dict[str, Any]]:
+        """Return recent trip records for a vehicle."""
+        await self.async_connect()
+        async with self._session.get(
+            f"{IF9_BASE}/vehicles/{vin}/trips?count={count}",
+            headers=self._webview_headers(MEDIA_TRIPLIST),
+        ) as resp:
+            if resp.status != 200:
+                raise self._error("trips", resp.status)
+            payload = await resp.json()
+        trips = payload.get("trips")
+        if isinstance(trips, list):
+            return trips
+        if isinstance(payload, list):
+            return payload
+        return []
+
     @staticmethod
     def _flatten_status(payload: dict[str, Any]) -> dict[str, str]:
         """Flatten the coreStatus/evStatus key/value lists into a single dict."""
@@ -251,17 +274,23 @@ class JlrClient:
         self,
         vin: str,
         service_name: str,
-        pin: str,
+        pin: str = "",
+        service_parameters: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """Run a PIN-gated remote command via the classic two-step webview flow.
 
         1. authenticate {pin, serviceName} -> service token
         2. POST the service endpoint with {token} -> customerServiceId / status
+
+        Some services (ECC, VHS) authenticate with an empty PIN per the native-app
+        behaviour documented in jlrpy.
         """
         await self.async_connect()
         endpoint = SERVICE_ENDPOINTS.get(service_name)
         if endpoint is None:
             raise JlrApiError(f"unknown service {service_name}")
+
+        auth_pin = "" if service_name in SERVICES_EMPTY_PIN else pin
 
         # a) get a one-time service token.
         auth_headers = self._webview_headers(MEDIA_JSON)
@@ -269,7 +298,7 @@ class JlrClient:
         async with self._session.post(
             f"{IF9_BASE}/vehicles/{vin}/users/{self._user_id}/authenticate",
             headers=auth_headers,
-            data=json.dumps({"pin": pin, "serviceName": service_name}),
+            data=json.dumps({"pin": auth_pin, "serviceName": service_name}),
         ) as resp:
             if resp.status not in (200, 201):
                 raise self._error(f"authenticate ({service_name})", resp.status)
@@ -278,12 +307,18 @@ class JlrClient:
             raise JlrApiError(f"authenticate ({service_name}) returned no token")
 
         # b) start the service. The response Accept MUST be ServiceStatus-v4 (v5/json 406).
+        content_type = SERVICE_START_CONTENT_TYPES.get(
+            service_name, MEDIA_START_SERVICE
+        )
         svc_headers = self._webview_headers(MEDIA_SERVICE_STATUS)
-        svc_headers["Content-Type"] = MEDIA_START_SERVICE
+        svc_headers["Content-Type"] = content_type
+        body: dict[str, Any] = {"token": token}
+        if service_parameters:
+            body["serviceParameters"] = service_parameters
         async with self._session.post(
             f"{IF9_BASE}/vehicles/{vin}/{endpoint}",
             headers=svc_headers,
-            data=json.dumps({"token": token}),
+            data=json.dumps(body),
         ) as resp:
             if resp.status not in (200, 202):
                 raise self._error(f"service {service_name}", resp.status)
@@ -296,6 +331,42 @@ class JlrClient:
         if not service_id:
             return started
         return await self._await_service(vin, service_id, started)
+
+    async def async_send_preconditioning(
+        self, vin: str, *, start: bool, target_temp_c: float = 21.0
+    ) -> dict[str, Any]:
+        """Start or stop electric climate control (ECC)."""
+        if start:
+            parameters = [
+                {"key": "PRECONDITIONING", "value": "START"},
+                {
+                    "key": "TARGET_TEMPERATURE_CELSIUS",
+                    "value": str(int(round(target_temp_c * 10))),
+                },
+            ]
+        else:
+            parameters = [{"key": "PRECONDITIONING", "value": "STOP"}]
+        return await self.async_send_command(
+            vin,
+            SERVICE_PRECONDITIONING,
+            service_parameters=parameters,
+        )
+
+    async def async_send_charge_now(
+        self, vin: str, *, enable: bool, pin: str
+    ) -> dict[str, Any]:
+        """Force charge on or off (CP)."""
+        value = "FORCE_ON" if enable else "FORCE_OFF"
+        return await self.async_send_command(
+            vin,
+            SERVICE_CHARGE,
+            pin,
+            service_parameters=[{"key": "CHARGE_NOW_SETTING", "value": value}],
+        )
+
+    async def async_send_vhs(self, vin: str) -> dict[str, Any]:
+        """Request a vehicle health status refresh (VHS)."""
+        return await self.async_send_command(vin, SERVICE_VHS)
 
     async def _await_service(
         self, vin: str, service_id: str, started: dict[str, Any]

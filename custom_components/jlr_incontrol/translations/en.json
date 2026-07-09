@@ -9,6 +9,13 @@
           "password": "Password",
           "pin": "Vehicle security PIN (optional)"
         }
+      },
+      "init": {
+        "title": "Jaguar Land Rover InControl options",
+        "data": {
+          "distance_unit": "Distance unit",
+          "pressure_unit": "Pressure unit"
+        }
       }
     },
     "error": {
@@ -38,7 +45,9 @@
       "ev_range_combined": { "name": "Combined range" },
       "ev_time_to_full": { "name": "Time to full charge" },
       "ev_charging_status": { "name": "Charging status" },
-      "last_updated": { "name": "Last updated" }
+      "last_updated": { "name": "Last updated" },
+      "last_trip": { "name": "Last trip" },
+      "all_info": { "name": "All info" }
     },
     "binary_sensor": {
       "door_front_left": { "name": "Front left door" },
@@ -73,7 +82,11 @@
     },
     "button": {
       "honk_flash": { "name": "Honk & flash" },
-      "refresh": { "name": "Refresh" }
+      "refresh": { "name": "Refresh" },
+      "update_from_vehicle": { "name": "Update from vehicle" }
+    },
+    "switch": {
+      "charge_now": { "name": "Charge now" }
     }
   }
 }

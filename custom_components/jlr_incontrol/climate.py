@@ -1,8 +1,7 @@
 """Climate (remote start / preconditioning) for JLR InControl.
 
-A minimal on/off climate entity: HEAT starts remote climate (REON), OFF stops it
-(REOFF). State is read from ``CLIMATE_STATUS_OPERATING_STATUS``. Commands are
-PIN-gated and need live-PIN validation.
+ICE/PHEV: HEAT starts remote climate (REON), OFF stops it (REOFF).
+BEV: uses ECC electric preconditioning with a target temperature.
 """
 
 from __future__ import annotations
@@ -19,7 +18,15 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import JlrApiError
-from .const import CONF_PIN, DOMAIN, SERVICE_ENGINE_OFF, SERVICE_ENGINE_ON
+from .const import (
+    CONF_PIN,
+    DOMAIN,
+    ECC_DEFAULT_TEMP,
+    ECC_MAX_TEMP,
+    ECC_MIN_TEMP,
+    SERVICE_ENGINE_OFF,
+    SERVICE_ENGINE_ON,
+)
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity
 
@@ -31,15 +38,19 @@ async def async_setup_entry(
 ) -> None:
     """Set up JLR climate entities.
 
-    Remote climate is a PIN-gated command, so the climate entity is only added
-    when a PIN is configured.
+    ICE/PHEV remote climate is PIN-gated (REON/REOFF). BEV electric preconditioning
+    (ECC) authenticates with an empty PIN, so the climate entity is created for
+    electric vehicles even when no account PIN is configured.
     """
-    if not entry.data.get(CONF_PIN):
-        return
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        JlrClimate(coordinator, vin) for vin in coordinator.data.get("vehicles", {})
-    )
+    has_pin = bool(entry.data.get(CONF_PIN))
+    entities: list[JlrClimate] = []
+    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
+        attributes = vehicle.get("attributes", {})
+        is_ev = str(attributes.get("fuelType", "")).lower() == "electric"
+        if has_pin or is_ev:
+            entities.append(JlrClimate(coordinator, vin))
+    async_add_entities(entities)
 
 
 class JlrClimate(JlrVehicleEntity, ClimateEntity):
@@ -48,13 +59,23 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
     _attr_translation_key = "climate"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.HEAT]
-    _attr_supported_features = (
-        ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
-    )
+    _attr_min_temp = ECC_MIN_TEMP
+    _attr_max_temp = ECC_MAX_TEMP
+    _attr_target_temperature = ECC_DEFAULT_TEMP
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
         self._attr_unique_id = f"{vin}_climate"
+        if self.is_electric:
+            self._attr_supported_features = (
+                ClimateEntityFeature.TURN_ON
+                | ClimateEntityFeature.TURN_OFF
+                | ClimateEntityFeature.TARGET_TEMPERATURE
+            )
+        else:
+            self._attr_supported_features = (
+                ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
+            )
 
     @property
     def hvac_mode(self) -> HVACMode:
@@ -69,13 +90,25 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
         else:
             await self.async_turn_on()
 
+    async def async_set_temperature(self, **kwargs: float) -> None:
+        if temperature := kwargs.get("temperature"):
+            self._attr_target_temperature = temperature
+        if self.hvac_mode != HVACMode.OFF:
+            await self.async_turn_on()
+
     async def async_turn_on(self) -> None:
-        await self._command(SERVICE_ENGINE_ON)
+        if self.is_electric:
+            await self._ecc_command(start=True)
+        else:
+            await self._ice_command(SERVICE_ENGINE_ON)
 
     async def async_turn_off(self) -> None:
-        await self._command(SERVICE_ENGINE_OFF)
+        if self.is_electric:
+            await self._ecc_command(start=False)
+        else:
+            await self._ice_command(SERVICE_ENGINE_OFF)
 
-    async def _command(self, service_name: str) -> None:
+    async def _ice_command(self, service_name: str) -> None:
         pin = self.coordinator.entry.data.get(CONF_PIN)
         if not pin:
             raise HomeAssistantError(
@@ -85,6 +118,17 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
         try:
             await self.coordinator.client.async_send_command(
                 self._vin, service_name, pin
+            )
+        except JlrApiError as err:
+            raise HomeAssistantError(str(err)) from err
+        await self.coordinator.async_request_refresh()
+
+    async def _ecc_command(self, *, start: bool) -> None:
+        try:
+            await self.coordinator.client.async_send_preconditioning(
+                self._vin,
+                start=start,
+                target_temp_c=self.target_temperature or ECC_DEFAULT_TEMP,
             )
         except JlrApiError as err:
             raise HomeAssistantError(str(err)) from err
