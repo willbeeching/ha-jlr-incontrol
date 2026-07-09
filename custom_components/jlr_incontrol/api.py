@@ -52,6 +52,12 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Hard per-request ceiling. HA's shared session has no useful default (aiohttp's
+# 300s total), and the IF9 edge can stall indefinitely on endpoints an account
+# doesn't have (seen live with /trips), which hangs the first refresh until HA
+# cancels the whole config entry setup.
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
 
 class JlrAuthError(Exception):
     """Raised when authentication fails (bad credentials)."""
@@ -120,14 +126,12 @@ class JlrClient:
             "Content-Type": MEDIA_JSON,
             "Accept": MEDIA_JSON,
         }
-        async with self._session.post(
-            IFAS_TOKENS_URL, headers=headers, data=json.dumps(body)
-        ) as resp:
-            if resp.status != 200:
-                raise JlrAuthError(
-                    f"token request ({body['grant_type']}) returned {resp.status}"
-                )
-            tokens = await resp.json()
+        what = f"token request ({body['grant_type']})"
+        status, tokens = await self._request(
+            "POST", IFAS_TOKENS_URL, headers=headers, data=json.dumps(body), what=what
+        )
+        if status != 200 or not isinstance(tokens, dict):
+            raise JlrAuthError(f"{what} returned {status}")
         self._access_token = tokens["access_token"]
         self._authorization_token = tokens.get("authorization_token")
         self._refresh_token = tokens.get("refresh_token", self._refresh_token)
@@ -167,24 +171,28 @@ class JlrClient:
             "expires_in": "86400",
             "deviceID": self._device_id,
         }
-        async with self._session.post(
+        status, _ = await self._request(
+            "POST",
             f"{IFOP_BASE}/users/{quote(self._username)}/clients",
             headers=headers,
             data=json.dumps(body),
-        ) as resp:
-            if resp.status not in (200, 204):
-                raise JlrApiError(f"device registration returned {resp.status}")
+            what="device registration",
+        )
+        if status not in (200, 204):
+            raise JlrApiError(f"device registration returned {status}")
         self._device_registered = True
 
     async def async_get_user_id(self) -> str:
         """Resolve and cache the numeric IF9 user id."""
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/users?loginName={quote(self._username)}",
             headers=self._webview_headers(MEDIA_USER),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("user lookup", resp.status)
-            self._user_id = (await resp.json()).get("userId")
+            what="user lookup",
+        )
+        if status != 200:
+            raise self._error("user lookup", status)
+        self._user_id = (payload or {}).get("userId")
         if not self._user_id:
             raise JlrApiError("user lookup did not return a userId")
         return self._user_id
@@ -200,58 +208,67 @@ class JlrClient:
     async def async_get_vehicles(self) -> list[dict[str, Any]]:
         """Return the account's vehicles (uses application/json; vnd.* 406s here)."""
         await self.async_connect()
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/users/{self._user_id}/vehicles",
             headers=self._webview_headers(MEDIA_JSON),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("vehicle list", resp.status)
-            return (await resp.json()).get("vehicles", [])
+            what="vehicle list",
+        )
+        if status != 200:
+            raise self._error("vehicle list", status)
+        return (payload or {}).get("vehicles", [])
 
     async def async_get_attributes(self, vin: str) -> dict[str, Any]:
         """Return the raw vehicle attributes (make / model / capabilities)."""
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/vehicles/{vin}/attributes",
             headers=self._webview_headers(MEDIA_JSON),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("attributes", resp.status)
-            return await resp.json()
+            what="attributes",
+        )
+        if status != 200:
+            raise self._error("attributes", status)
+        return payload or {}
 
     async def async_get_status(self, vin: str) -> dict[str, Any]:
         """Return the flattened vehicle status ({key: value} from coreStatus/evStatus)."""
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/vehicles/{vin}/status",
             headers=self._webview_headers(MEDIA_HEALTHSTATUS),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("status", resp.status)
-            payload = await resp.json()
-        return self._flatten_status(payload)
+            what="status",
+        )
+        if status != 200:
+            raise self._error("status", status)
+        return self._flatten_status(payload or {})
 
     async def async_get_position(self, vin: str) -> dict[str, Any]:
         """Return the vehicle position ({latitude, longitude, timestamp, ...})."""
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/vehicles/{vin}/position",
             headers=self._webview_headers(MEDIA_JSON),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("position", resp.status)
-            return (await resp.json()).get("position", {})
+            what="position",
+        )
+        if status != 200:
+            raise self._error("position", status)
+        return (payload or {}).get("position", {})
 
     async def async_get_trips(self, vin: str, count: int = 25) -> list[dict[str, Any]]:
         """Return recent trip records for a vehicle."""
         await self.async_connect()
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/vehicles/{vin}/trips?count={count}",
             headers=self._webview_headers(MEDIA_TRIPLIST),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("trips", resp.status)
-            payload = await resp.json()
-        trips = payload.get("trips")
-        if isinstance(trips, list):
-            return trips
+            what="trips",
+        )
+        if status != 200:
+            raise self._error("trips", status)
+        if isinstance(payload, dict):
+            trips = payload.get("trips")
+            if isinstance(trips, list):
+                return trips
         if isinstance(payload, list):
             return payload
         return []
@@ -282,15 +299,16 @@ class JlrClient:
         auth_pin = "" if service_name in SERVICES_EMPTY_PIN else pin
         auth_headers = self._webview_headers(MEDIA_JSON)
         auth_headers["Content-Type"] = MEDIA_AUTHENTICATE
-        async with self._session.post(
+        status, payload = await self._request(
+            "POST",
             f"{IF9_BASE}/vehicles/{vin}/users/{self._user_id}/authenticate",
             headers=auth_headers,
             data=json.dumps({"pin": auth_pin, "serviceName": service_name}),
-        ) as resp:
-            if resp.status not in (200, 201):
-                raise self._error(f"authenticate ({service_name})", resp.status)
-            payload = await resp.json()
-        if not payload.get("token"):
+            what=f"authenticate ({service_name})",
+        )
+        if status not in (200, 201):
+            raise self._error(f"authenticate ({service_name})", status)
+        if not payload or not payload.get("token"):
             raise JlrApiError(f"authenticate ({service_name}) returned no token")
         return payload
 
@@ -329,14 +347,16 @@ class JlrClient:
         body: dict[str, Any] = {"token": token}
         if service_parameters:
             body["serviceParameters"] = service_parameters
-        async with self._session.post(
+        status, started = await self._request(
+            "POST",
             f"{IF9_BASE}/vehicles/{vin}/{endpoint}",
             headers=svc_headers,
             data=json.dumps(body),
-        ) as resp:
-            if resp.status not in (200, 202):
-                raise self._error(f"service {service_name}", resp.status)
-            started = await resp.json()
+            what=f"service {service_name}",
+        )
+        if status not in (200, 202):
+            raise self._error(f"service {service_name}", status)
+        started = started or {}
 
         # The 202 only means "accepted/started" — the vehicle may still fail it
         # (e.g. Failed/timeout when the car is asleep). Poll to a terminal state so
@@ -396,16 +416,16 @@ class JlrClient:
         await self.async_connect()
         headers = self._webview_headers(accept)
         headers["Content-Type"] = content_type
-        async with self._session.post(
+        status, payload = await self._request(
+            "POST",
             f"{IF9_BASE}/vehicles/{vin}/{endpoint}",
             headers=headers,
             data=json.dumps(body),
-        ) as resp:
-            if resp.status not in (200, 202, 204):
-                raise self._error(error_label, resp.status)
-            if resp.status == 204:
-                return {}
-            return await resp.json()
+            what=error_label,
+        )
+        if status not in (200, 202, 204):
+            raise self._error(error_label, status)
+        return payload or {}
 
     async def _async_enable_provisioning(self, vin: str, pin: str) -> None:
         """Enable provisioning mode (required before ICE RCC settings)."""
@@ -490,15 +510,50 @@ class JlrClient:
     ) -> dict[str, Any]:
         """Poll the status of a previously started remote command."""
         await self.async_connect()
-        async with self._session.get(
+        status, payload = await self._request(
+            "GET",
             f"{IF9_BASE}/vehicles/{vin}/services/{customer_service_id}",
             headers=self._webview_headers(MEDIA_SERVICE_STATUS),
-        ) as resp:
-            if resp.status != 200:
-                raise self._error("service status", resp.status)
-            return await resp.json()
+            what="service status",
+        )
+        if status != 200:
+            raise self._error("service status", status)
+        return payload or {}
 
     # ----------------------------------------------------------------- helpers
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        data: str | None = None,
+        what: str,
+    ) -> tuple[int, Any]:
+        """Run a request with a hard timeout; return (status, parsed JSON or None).
+
+        Transport failures and stalls surface as JlrApiError so callers (and the
+        coordinator's per-endpoint best-effort fetches) never see raw aiohttp
+        errors or hang past REQUEST_TIMEOUT.
+        """
+        try:
+            async with self._session.request(
+                method, url, headers=headers, data=data, timeout=REQUEST_TIMEOUT
+            ) as resp:
+                payload: Any = None
+                if resp.status != 204:
+                    try:
+                        payload = await resp.json()
+                    except (aiohttp.ContentTypeError, ValueError):
+                        payload = None
+                return resp.status, payload
+        except TimeoutError as err:
+            raise JlrApiError(
+                f"{what} timed out after {REQUEST_TIMEOUT.total:.0f}s"
+            ) from err
+        except aiohttp.ClientError as err:
+            raise JlrApiError(f"{what} failed: {err}") from err
+
     def _webview_headers(self, accept: str) -> dict[str, str]:
         return {
             **BROWSER_HEADERS,

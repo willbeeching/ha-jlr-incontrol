@@ -47,12 +47,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
-            await self.client.async_connect()
-            vehicles = await self.client.async_get_vehicles()
+            return await self._async_fetch()
         except JlrAuthError as err:
             raise ConfigEntryAuthFailed(f"authentication failed: {err}") from err
         except JlrApiError as err:
             raise UpdateFailed(f"could not reach the JLR backend: {err}") from err
+
+    async def _async_fetch(self) -> dict[str, Any]:
+        await self.client.async_connect()
+        vehicles = await self.client.async_get_vehicles()
 
         # Persist the resolved user id so future setups skip the lookup.
         if (
