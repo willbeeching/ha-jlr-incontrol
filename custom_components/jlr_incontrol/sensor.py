@@ -26,6 +26,7 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
@@ -310,36 +311,6 @@ def _pressure_unit_override(entry: ConfigEntry) -> str | None:
     return None
 
 
-def _trip_distance_km(trip: dict[str, Any]) -> float | None:
-    """Extract trip distance in km from a trip record."""
-    for key in ("distance", "distanceKm", "distanceKM", "tripDistance"):
-        value = _to_float(trip.get(key))
-        if value is not None:
-            return value
-    metres = _to_float(trip.get("distanceMetres") or trip.get("distanceMeters"))
-    if metres is not None:
-        return round(metres / 1000, 1)
-    return None
-
-
-def _trip_attrs(trip: dict[str, Any]) -> dict[str, Any]:
-    """Build attributes for the last-trip sensor."""
-    attrs: dict[str, Any] = {}
-    for src, dst in (
-        ("startTime", "start_time"),
-        ("endTime", "end_time"),
-        ("startDateTime", "start_time"),
-        ("endDateTime", "end_time"),
-        ("averageFuelConsumption", "average_fuel_consumption"),
-        ("averageEnergyConsumption", "average_energy_consumption"),
-        ("energyConsumption", "energy_consumption"),
-        ("tripId", "trip_id"),
-    ):
-        if trip.get(src) is not None:
-            attrs[dst] = trip[src]
-    return attrs
-
-
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -364,13 +335,16 @@ async def async_setup_entry(
             if _should_create_sensor(description, status, attributes)
         )
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
-        # Create the trip sensor whenever journey logging is on, not only when
-        # a trip already exists — the first fetch being empty (or timing out)
-        # must not permanently hide the entity.
-        if vehicle.get("trips") or JlrCoordinator.journey_log_enabled(attributes):
-            entities.append(JlrLastTripSensor(coordinator, vin, distance_unit))
         entities.append(JlrAllInfoSensor(coordinator, vin))
     async_add_entities(entities)
+
+    # Trips support was removed (the webview edge 504s on the legacy /trips
+    # backend); drop last-trip entities left behind by earlier versions.
+    ent_reg = er.async_get(hass)
+    for vin in coordinator.data.get("vehicles", {}):
+        stale = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{vin}_last_trip")
+        if stale:
+            ent_reg.async_remove(stale)
 
 
 class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
@@ -432,38 +406,6 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"stale": self._vehicle.get("position_stale", False)}
-
-
-class JlrLastTripSensor(JlrVehicleEntity, SensorEntity):
-    """Distance of the most recent trip."""
-
-    _attr_translation_key = "last_trip"
-    _attr_device_class = SensorDeviceClass.DISTANCE
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
-    _attr_icon = "mdi:map-marker-path"
-
-    def __init__(
-        self, coordinator: JlrCoordinator, vin: str, distance_unit: str | None
-    ) -> None:
-        super().__init__(coordinator, vin)
-        self._attr_unique_id = f"{vin}_last_trip"
-        if distance_unit:
-            self._attr_suggested_unit_of_measurement = distance_unit
-
-    @property
-    def native_value(self) -> float | None:
-        trips = self._vehicle.get("trips") or []
-        if not trips:
-            return None
-        return _trip_distance_km(trips[0])
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        trips = self._vehicle.get("trips") or []
-        if not trips:
-            return {}
-        return _trip_attrs(trips[0])
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):

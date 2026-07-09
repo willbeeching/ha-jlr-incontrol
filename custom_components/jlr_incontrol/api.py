@@ -36,7 +36,6 @@ from .const import (
     MEDIA_JSON,
     MEDIA_SERVICE_STATUS,
     MEDIA_START_SERVICE,
-    MEDIA_TRIPLIST,
     MEDIA_USER,
     SERVICE_CHARGE,
     SERVICE_ENDPOINTS,
@@ -53,9 +52,10 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 # Hard per-request ceiling. HA's shared session has no useful default (aiohttp's
-# 300s total), and the IF9 edge can stall indefinitely on endpoints an account
-# doesn't have (seen live with /trips), which hangs the first refresh until HA
-# cancels the whole config entry setup.
+# 300s total), and the IF9 edge can stall indefinitely on endpoints its backends
+# no longer serve (seen live with the legacy /trips endpoint, which negotiates
+# media types but then 504s), which hangs the first refresh until HA cancels the
+# whole config entry setup.
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
 
 
@@ -254,24 +254,12 @@ class JlrClient:
             raise self._error("position", status)
         return (payload or {}).get("position", {})
 
-    async def async_get_trips(self, vin: str, count: int = 25) -> list[dict[str, Any]]:
-        """Return recent trip records for a vehicle."""
-        await self.async_connect()
-        status, payload = await self._request(
-            "GET",
-            f"{IF9_BASE}/vehicles/{vin}/trips?count={count}",
-            headers=self._webview_headers(MEDIA_TRIPLIST),
-            what="trips",
-        )
-        if status != 200:
-            raise self._error("trips", status)
-        if isinstance(payload, dict):
-            trips = payload.get("trips")
-            if isinstance(trips, list):
-                return trips
-        if isinstance(payload, list):
-            return payload
-        return []
+    # NOTE: there is deliberately no trips/journeys support. The /trips endpoint
+    # is routed on the webview edge (wrong Accept -> JBoss 406) but the legacy
+    # backend behind it never answers with the correct triplist-v2 media type —
+    # it 504s after ~70s. The modern app dropped trips entirely (no trip
+    # endpoints in its JS bundle) and the old direct /if9/jlr/ path is behind
+    # the Approov wall, so there is nothing reliable to build on.
 
     @staticmethod
     def _flatten_status(payload: dict[str, Any]) -> dict[str, str]:

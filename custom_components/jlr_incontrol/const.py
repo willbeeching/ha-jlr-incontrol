@@ -52,7 +52,6 @@ MEDIA_START_SERVICE = (
 # v5 and plain application/json both return HTTP 406.
 MEDIA_SERVICE_STATUS = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v4+json"
 MEDIA_PHEV_SERVICE = "application/vnd.wirelesscar.ngtp.if9.PhevService-v1+json"
-MEDIA_TRIPLIST = "application/vnd.ngtp.org.triplist-v2+json"
 
 # ---- Config entry keys ----
 CONF_USERNAME = "username"

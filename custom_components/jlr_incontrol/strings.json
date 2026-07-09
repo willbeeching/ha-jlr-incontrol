@@ -46,7 +46,6 @@
       "ev_time_to_full": { "name": "Time to full charge" },
       "ev_charging_status": { "name": "Charging status" },
       "last_updated": { "name": "Last updated" },
-      "last_trip": { "name": "Last trip" },
       "all_info": { "name": "All info" }
     },
     "binary_sensor": {

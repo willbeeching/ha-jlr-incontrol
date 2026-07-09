@@ -34,11 +34,7 @@ async def async_get_config_entry_diagnostics(
             "status": vehicle.get("status", {}),
             "status_ts": vehicle.get("status_ts"),
             "position_stale": vehicle.get("position_stale"),
-            "trip_count": len(vehicle.get("trips") or []),
-            "trips_error": vehicle.get("trips_error"),
         }
-        if vehicle.get("trips"):
-            redacted_vehicle["last_trip"] = vehicle["trips"][0]
         redacted["vehicles"][vin[-4:]] = async_redact_data(
             redacted_vehicle, REDACT_KEYS
         )

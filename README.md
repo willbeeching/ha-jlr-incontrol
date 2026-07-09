@@ -54,7 +54,6 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 - **Update from vehicle** button (VHS) to force the car to report fresh status, plus a cheap
   **Refresh** button that re-polls the server cache.
 - **Charge now** switch for BEVs (force charge on/off).
-- **Last trip** sensor with distance and trip metadata (when the trips API is available).
 - **All info** sensor (disabled by default) exposing the full flattened status dict as attributes.
 - Diagnostics download for troubleshooting (VIN/position redacted).
 - Configurable distance and pressure unit overrides in integration options.
@@ -120,8 +119,20 @@ A couple of things worth knowing:
   may lag behind individual values like SoC during charging.
 - Remote commands wake the car, so they take a few seconds. The integration waits for the vehicle
   to confirm before reporting success or failure.
-- ECC preconditioning, VHS refresh, charge control, and trip data use endpoints documented from
+- ECC preconditioning, VHS refresh, and charge control use endpoints documented from
   the native-app API. They may need media-type tweaks on the webview edge — please report errors.
+
+### Why there's no trip / journey data
+
+Short version: JLR turned it off. The `/trips` endpoint still exists on the webview edge (it
+negotiates media types — a wrong `Accept` returns a proper 406), but with the correct
+`triplist-v2` media type the legacy backend behind it never answers and eventually returns a
+504 Gateway Timeout (verified with waits of 70+ seconds). Two other signals confirm it's gone
+for good: the modern app/webview JS bundle contains no trip endpoints at all, and the old
+direct `/if9/jlr/` path that community integrations used for trips is now behind JLR's Approov
+attestation wall. A last-trip sensor would just sit there timing out and slow every refresh
+down, so this integration deliberately doesn't have one. If JLR ever resurfaces journeys in
+their API, it can come back.
 
 ## Disclaimer
 
