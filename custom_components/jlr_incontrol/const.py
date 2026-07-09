@@ -48,9 +48,13 @@ MEDIA_AUTHENTICATE = "application/vnd.wirelesscar.ngtp.if9.AuthenticateRequest-v
 MEDIA_START_SERVICE = (
     "application/vnd.wirelesscar.ngtp.if9.StartServiceConfiguration-v3+json"
 )
-# The Accept a command POST must send for its response. Validated live: v4 works;
-# v5 and plain application/json both return HTTP 406.
+# The Accept a command POST must send for its response. Validated live on the
+# classic endpoints (lock, honkBlink): v4 works; v5 and plain application/json
+# both return HTTP 406. The PhevService endpoints (preconditioning,
+# chargeProfile) are the opposite: they require v5 (v4 returns 406, seen live
+# on an I-Pace ECC start) — matching jlrpy's native-app behaviour.
 MEDIA_SERVICE_STATUS = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v4+json"
+MEDIA_SERVICE_STATUS_V5 = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v5+json"
 MEDIA_PHEV_SERVICE = "application/vnd.wirelesscar.ngtp.if9.PhevService-v1+json"
 
 # ---- Config entry keys ----
@@ -97,10 +101,16 @@ SERVICE_ENDPOINTS: dict[str, str] = {
     SERVICE_PROV: "prov",
 }
 
-# Per-service start-request configuration.
+# Per-service start-request configuration. The PhevService endpoints take the
+# charset suffix and ServiceStatus-v5 Accept exactly as the native app sends
+# them (jlrpy); ECC returns 406 without the v5 Accept.
 SERVICE_START_CONTENT_TYPES: dict[str, str] = {
-    SERVICE_PRECONDITIONING: MEDIA_PHEV_SERVICE,
-    SERVICE_CHARGE: MEDIA_PHEV_SERVICE,
+    SERVICE_PRECONDITIONING: f"{MEDIA_PHEV_SERVICE}; charset=utf-8",
+    SERVICE_CHARGE: f"{MEDIA_PHEV_SERVICE}; charset=utf-8",
+}
+SERVICE_START_ACCEPTS: dict[str, str] = {
+    SERVICE_PRECONDITIONING: MEDIA_SERVICE_STATUS_V5,
+    SERVICE_CHARGE: MEDIA_SERVICE_STATUS_V5,
 }
 
 # Services that authenticate with an empty PIN (per jlrpy / native-app behaviour).

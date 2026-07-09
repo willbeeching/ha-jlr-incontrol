@@ -42,6 +42,7 @@ from .const import (
     SERVICE_ENGINE_ON,
     SERVICE_PRECONDITIONING,
     SERVICE_PROV,
+    SERVICE_START_ACCEPTS,
     SERVICE_START_CONTENT_TYPES,
     SERVICE_VHS,
     SERVICES_EMPTY_PIN,
@@ -326,11 +327,15 @@ class JlrClient:
         auth_payload = await self._async_authenticate(vin, service_name, auth_pin)
         token = auth_payload["token"]
 
-        # b) start the service. The response Accept MUST be ServiceStatus-v4 (v5/json 406).
+        # b) start the service. The response Accept is per-endpoint: classic
+        # endpoints need ServiceStatus-v4 (v5/json 406), PhevService endpoints
+        # (ECC/CP) need v5 (v4 406s).
         content_type = SERVICE_START_CONTENT_TYPES.get(
             service_name, MEDIA_START_SERVICE
         )
-        svc_headers = self._webview_headers(MEDIA_SERVICE_STATUS)
+        svc_headers = self._webview_headers(
+            SERVICE_START_ACCEPTS.get(service_name, MEDIA_SERVICE_STATUS)
+        )
         svc_headers["Content-Type"] = content_type
         body: dict[str, Any] = {"token": token}
         if service_parameters:
