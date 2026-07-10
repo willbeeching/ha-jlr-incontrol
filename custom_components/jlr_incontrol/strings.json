@@ -71,7 +71,8 @@
       "washer_fluid_warning": { "name": "Washer fluid warning" },
       "adblue_warning": { "name": "AdBlue warning" },
       "ev_charging": { "name": "Charging" },
-      "ev_plugged_in": { "name": "Plugged in" }
+      "ev_plugged_in": { "name": "Plugged in" },
+      "ev_preconditioning": { "name": "Preconditioning" }
     },
     "device_tracker": {
       "location": { "name": "Location" }

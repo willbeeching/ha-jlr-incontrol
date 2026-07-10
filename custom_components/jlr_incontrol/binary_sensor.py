@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import CLIMATE_ACTIVE_STATES, DOMAIN
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, is_electrified
 
@@ -137,6 +137,17 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         status_key="EV_CHARGING_METHOD",
         device_class=BinarySensorDeviceClass.PLUG,
         is_on=lambda v: v in ("WIRED", "WIRELESS"),
+        requires_ev=True,
+    ),
+    # Plain running-state for EV preconditioning so wallbox controllers
+    # (EVCC) get a boolean without parsing the climate entity, whose modes
+    # are fixed by HA's HVACMode enum (#1).
+    JlrBinaryDescription(
+        key="ev_preconditioning",
+        translation_key="ev_preconditioning",
+        status_key="EV_PRECONDITION_OPERATING_STATUS",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        is_on=lambda v: v in CLIMATE_ACTIVE_STATES,
         requires_ev=True,
     ),
 )
