@@ -419,9 +419,7 @@ def _apply_unit_overrides(
                     )
             elif current != unit:
                 sensor_options["unit_of_measurement"] = unit
-                ent_reg.async_update_entity_options(
-                    entity_id, "sensor", sensor_options
-                )
+                ent_reg.async_update_entity_options(entity_id, "sensor", sensor_options)
 
 
 class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
