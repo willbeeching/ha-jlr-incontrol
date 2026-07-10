@@ -61,7 +61,7 @@
       "window_rear_right": { "name": "Rear right window" },
       "sunroof": { "name": "Sunroof" },
       "doors_locked": { "name": "Doors" },
-      "alarm": { "name": "Alarm" },
+      "alarm": { "name": "Alarm armed" },
       "brake_fluid_warning": { "name": "Brake fluid warning" },
       "coolant_level_warning": { "name": "Coolant level warning" },
       "oil_level_warning": { "name": "Oil level warning" },
