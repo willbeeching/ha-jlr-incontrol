@@ -116,9 +116,25 @@ SERVICE_START_ACCEPTS: dict[str, str] = {
 # Services that authenticate with an empty PIN (per jlrpy / native-app behaviour).
 SERVICES_EMPTY_PIN: frozenset[str] = frozenset({SERVICE_PRECONDITIONING, SERVICE_VHS})
 
-DEFAULT_SCAN_INTERVAL = timedelta(minutes=5)
+# ---- Polling ----
+# Be a polite client: poll fast only while something is happening (plugged
+# in, charging, climate running, values changing, recent user command) and
+# back off once the car has been quiet, so we don't hammer JLR's servers.
+SCAN_INTERVAL_ACTIVE = timedelta(minutes=5)
+SCAN_INTERVAL_IDLE = timedelta(minutes=20)
+# How long after the last observed change / user interaction to stay fast.
+ACTIVITY_WINDOW = timedelta(minutes=30)
+# Vehicle attributes (make/model/capabilities) effectively never change.
+ATTRIBUTES_TTL = timedelta(hours=24)
+DEFAULT_SCAN_INTERVAL = SCAN_INTERVAL_ACTIVE
 # A position older than this is flagged stale (informational attribute only).
 STALE_AFTER = timedelta(hours=24)
+
+# Climate operating states that count as "running" (shared by the climate
+# entity and the polling heuristic).
+CLIMATE_ACTIVE_STATES = frozenset(
+    {"COOLING", "HEATING", "PRECLIM", "ENGINE_ON", "RUNNING", "STARTUP", "ON"}
+)
 
 # ECC target temperature bounds (degrees Celsius).
 ECC_MIN_TEMP = 16.0

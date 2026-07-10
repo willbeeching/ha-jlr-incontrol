@@ -22,6 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .api import JlrApiError
 from .const import (
+    CLIMATE_ACTIVE_STATES,
     CLIMATE_ASSUMED_OFF_SECONDS,
     CLIMATE_ASSUMED_ON_SECONDS,
     CONF_PIN,
@@ -36,16 +37,6 @@ from .const import (
 )
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity
-
-_ACTIVE_STATES = {
-    "COOLING",
-    "HEATING",
-    "PRECLIM",
-    "ENGINE_ON",
-    "RUNNING",
-    "STARTUP",
-    "ON",
-}
 
 
 async def async_setup_entry(
@@ -119,7 +110,7 @@ class JlrClimate(JlrVehicleEntity, ClimateEntity):
             status = str(
                 self._status_value("CLIMATE_STATUS_OPERATING_STATUS") or ""
             ).upper()
-            active = status in _ACTIVE_STATES
+            active = status in CLIMATE_ACTIVE_STATES
         return self._active_mode() if active else HVACMode.OFF
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:

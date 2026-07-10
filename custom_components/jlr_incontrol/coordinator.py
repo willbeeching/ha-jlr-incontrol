@@ -14,12 +14,17 @@ from homeassistant.util import dt as dt_util
 
 from .api import JlrApiError, JlrAuthError, JlrClient
 from .const import (
+    ACTIVITY_WINDOW,
+    ATTRIBUTES_TTL,
+    CLIMATE_ACTIVE_STATES,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
     CONF_USER_ID,
     CONF_USERNAME,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    SCAN_INTERVAL_ACTIVE,
+    SCAN_INTERVAL_IDLE,
     STALE_AFTER,
 )
 
@@ -43,6 +48,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # is the only freshness signal that always works.
         self._last_snapshot: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         self._last_changed: dict[str, str] = {}
+        # Attributes (make/model/capabilities) effectively never change; cache
+        # them so every poll costs one request less per vehicle.
+        self._attributes_cache: dict[str, tuple[dict[str, Any], Any]] = {}
+        # Keep polling fast for a while after any user interaction.
+        self._boost_until = dt_util.utcnow() + ACTIVITY_WINDOW
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -85,10 +95,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "position": {},
                 "status_ts": None,
             }
-            try:
-                entry["attributes"] = await self.client.async_get_attributes(vin)
-            except JlrApiError as err:
-                _LOGGER.debug("attributes for %s unavailable: %s", vin, err)
+            entry["attributes"] = await self._async_get_attributes(vin)
             try:
                 entry["status"] = await self.client.async_get_status(vin)
             except JlrApiError as err:
@@ -113,7 +120,65 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             entry["position_stale"] = self._is_stale(entry["status_ts"])
             data["vehicles"][vin] = entry
+
+        interval = self._pick_interval(data)
+        if interval != self.update_interval:
+            _LOGGER.debug("polling interval changed to %s", interval)
+            self.update_interval = interval
         return data
+
+    async def _async_get_attributes(self, vin: str) -> dict[str, Any]:
+        """Return vehicle attributes, cached for ATTRIBUTES_TTL."""
+        cached = self._attributes_cache.get(vin)
+        now = dt_util.utcnow()
+        if cached and now - cached[1] < ATTRIBUTES_TTL:
+            return cached[0]
+        try:
+            attributes = await self.client.async_get_attributes(vin)
+        except JlrApiError as err:
+            _LOGGER.debug("attributes for %s unavailable: %s", vin, err)
+            return cached[0] if cached else {}
+        self._attributes_cache[vin] = (attributes, now)
+        return attributes
+
+    def _pick_interval(self, data: dict[str, Any]):
+        """Fast while something is happening, slow once the car is quiet.
+
+        Being a polite client matters for an unofficial integration: a parked,
+        asleep car doesn't need a full sweep every five minutes. Driving is
+        caught by the change detector (position/odometer move every poll).
+        """
+        now = dt_util.utcnow()
+        if now < self._boost_until:
+            return SCAN_INTERVAL_ACTIVE
+        for ts in self._last_changed.values():
+            parsed = dt_util.parse_datetime(ts)
+            if parsed and now - parsed < ACTIVITY_WINDOW:
+                return SCAN_INTERVAL_ACTIVE
+        for entry in data.get("vehicles", {}).values():
+            status = entry.get("status", {})
+            if str(status.get("EV_CHARGING_METHOD", "")).upper() in (
+                "WIRED",
+                "WIRELESS",
+            ):
+                return SCAN_INTERVAL_ACTIVE
+            if str(status.get("EV_CHARGING_STATUS", "")).upper() in (
+                "CHARGING",
+                "BULKCHARGED",
+                "INITIALIZATION",
+            ):
+                return SCAN_INTERVAL_ACTIVE
+            if (
+                str(status.get("CLIMATE_STATUS_OPERATING_STATUS", "")).upper()
+                in CLIMATE_ACTIVE_STATES
+            ):
+                return SCAN_INTERVAL_ACTIVE
+        return SCAN_INTERVAL_IDLE
+
+    async def async_request_refresh(self) -> None:
+        """A manual refresh or a command means someone is engaged: poll fast."""
+        self._boost_until = dt_util.utcnow() + ACTIVITY_WINDOW
+        await super().async_request_refresh()
 
     @staticmethod
     def _newest(*timestamps: str | None) -> str | None:

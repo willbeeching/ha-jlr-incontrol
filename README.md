@@ -111,8 +111,13 @@ through the same webview API that JLR's own apps use, with a registered device i
 credentials, device id, user id, and vehicle info are fetched at setup and stored in your own
 Home Assistant config entry. None of it goes anywhere else.
 
-Status is polled every 5 minutes by default. Tokens are long-lived and refresh automatically, so
-you shouldn't need to log in again.
+Polling is adaptive, to keep the load on JLR's servers low (being a polite client is the best
+way to keep an unofficial integration alive): every 5 minutes while something is happening —
+the car is plugged in or charging, the climate is running, values are changing (e.g. while
+driving), or you've recently pressed a button or sent a command — and every 20 minutes once
+the car has been quiet for half an hour. Vehicle attributes (make/model/capabilities) are
+cached for a day rather than re-fetched on every poll. Tokens are long-lived and refresh
+automatically, so you shouldn't need to log in again.
 
 A couple of things worth knowing:
 
