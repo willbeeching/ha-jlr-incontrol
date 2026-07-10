@@ -26,15 +26,18 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 > | Vehicle | Powertrain | Year |
 > |---|---|---|
 > | Jaguar I-PACE | BEV | 2020 |
+> | Jaguar I-PACE | BEV | 2021 |
 > | Range Rover Sport | PHEV | — |
 > | Discovery Sport | PHEV | 2025 |
 > | Defender | ICE | 2022 |
 > | Range Rover | ICE | 2022 |
+> | Range Rover (L405) | ICE | 2019 |
 >
 > ICE 2022 models remain the best-tested for remote commands. BEV and PHEV support is newer but
-> early community reports are positive. Some EV-specific commands (ECC preconditioning, VHS
-> refresh, charge control) are implemented from native-app API docs and may still need tweaks on
-> the webview backend — please report errors.
+> early community reports are positive — ECC preconditioning is now confirmed working on the
+> I-PACE (see [issue #3](https://github.com/willbeeching/ha-jlr-incontrol/issues/3)). VHS
+> refresh and charge control are implemented from native-app API docs and may still need tweaks
+> on the webview backend — please report errors.
 
 ## What you get
 
