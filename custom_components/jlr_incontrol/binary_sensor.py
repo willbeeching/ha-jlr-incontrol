@@ -128,13 +128,15 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         unknown_is_none=False,
         requires_ev=True,
     ),
+    # The app reads plugged-in from EV_CHARGING_METHOD (WIRED/NOTCONNECTED).
+    # EV_CHARGING_STATUS falls to "No Message" after unplugging, which read
+    # as still plugged in (verified live on an I-Pace, #1).
     JlrBinaryDescription(
         key="ev_plugged_in",
         translation_key="ev_plugged_in",
-        status_key="EV_CHARGING_STATUS",
+        status_key="EV_CHARGING_METHOD",
         device_class=BinarySensorDeviceClass.PLUG,
-        is_on=lambda v: v not in ("NOTCONNECTED", "UNKNOWN", ""),
-        unknown_is_none=False,
+        is_on=lambda v: v in ("WIRED", "WIRELESS"),
         requires_ev=True,
     ),
 )

@@ -91,12 +91,34 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry["position"] = await self.client.async_get_position(vin)
             except JlrApiError as err:
                 _LOGGER.debug("position for %s unavailable: %s", vin, err)
-            entry["status_ts"] = entry["position"].get("timestamp") or entry[
-                "status"
-            ].get("LAST_UPDATED_TIME")
+            # Whichever signal is fresher: the position timestamp goes static
+            # while the car is parked, but status values keep updating.
+            entry["status_ts"] = self._newest(
+                entry["position"].get("timestamp"),
+                entry["status"].get("LAST_UPDATED_TIME"),
+            )
             entry["position_stale"] = self._is_stale(entry["status_ts"])
             data["vehicles"][vin] = entry
         return data
+
+    @staticmethod
+    def _newest(*timestamps: str | None) -> str | None:
+        """Return the newest parseable timestamp string, or the first non-empty."""
+        best: str | None = None
+        best_dt = None
+        for ts in timestamps:
+            if not ts:
+                continue
+            parsed = dt_util.parse_datetime(ts)
+            if parsed is None:
+                if best is None:
+                    best = ts
+                continue
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=dt_util.UTC)
+            if best_dt is None or parsed > best_dt:
+                best, best_dt = ts, parsed
+        return best
 
     @staticmethod
     def _is_stale(timestamp: str | None) -> bool:

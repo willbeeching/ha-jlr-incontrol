@@ -269,14 +269,27 @@ class JlrClient:
 
     @staticmethod
     def _flatten_status(payload: dict[str, Any]) -> dict[str, str]:
-        """Flatten the coreStatus/evStatus key/value lists into a single dict."""
+        """Flatten the coreStatus/evStatus key/value lists into a single dict.
+
+        Some vehicles never report a LAST_UPDATED_TIME status key; when the
+        raw items carry per-item lastUpdatedTime fields, synthesise it from
+        the newest one so freshness isn't pinned to the (static while parked)
+        position timestamp.
+        """
         status: dict[str, str] = {}
+        newest_item_ts = ""
         vehicle_status = payload.get("vehicleStatus", {})
         for group in ("coreStatus", "evStatus"):
             for item in vehicle_status.get(group, []):
                 key = item.get("key")
                 if key is not None:
                     status[key] = item.get("value")
+                item_ts = item.get("lastUpdatedTime")
+                # ISO timestamps in a consistent format sort lexicographically.
+                if isinstance(item_ts, str) and item_ts > newest_item_ts:
+                    newest_item_ts = item_ts
+        if newest_item_ts and not status.get("LAST_UPDATED_TIME"):
+            status["LAST_UPDATED_TIME"] = newest_item_ts
         return status
 
     # ---------------------------------------------------------------- commands
