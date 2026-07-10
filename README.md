@@ -25,7 +25,7 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 >
 > | Vehicle | Powertrain | Year |
 > |---|---|---|
-> | Jaguar I-PACE | BEV | 2020 |
+> | Jaguar I-PACE | BEV | 2019 |
 > | Jaguar I-PACE | BEV | 2021 |
 > | Range Rover Sport | PHEV | — |
 > | Discovery Sport | PHEV | 2025 |

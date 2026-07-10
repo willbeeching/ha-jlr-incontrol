@@ -201,20 +201,29 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
 
 
 def _tyre_kpa(value: str) -> float | None:
-    """Raw tyre value is kPa*10; return kPa."""
+    """Normalise the raw tyre value to kPa.
+
+    The scale differs by vehicle generation: an L405/L663 reports kPa*10
+    (e.g. 2470) while an I-Pace reports plain kPa (e.g. 279). Real tyre
+    pressures sit around 180-350 kPa, so anything above 1000 must be the
+    *10 scale.
+    """
     raw = _to_float(value)
-    return round(raw / 10, 1) if raw is not None else None
+    if raw is None:
+        return None
+    if raw > 1000:
+        return round(raw / 10, 1)
+    return round(raw, 1)
 
 
 def _tyre_description(key: str, status_key: str) -> JlrSensorDescription:
     """Build a tyre-pressure sensor: kPa native, bar exposed as an attribute."""
 
     def _bar_attr(status: dict[str, Any]) -> dict[str, Any]:
-        raw = _to_float(status.get(status_key))
-        if raw is None:
+        kpa = _tyre_kpa(status.get(status_key))
+        if kpa is None:
             return {}
-        # raw = kPa*10, and 1 bar = 100 kPa -> bar = (raw / 10) / 100.
-        return {"bar": round((raw / 10) / 100, 2)}
+        return {"bar": round(kpa / 100, 2)}
 
     return JlrSensorDescription(
         key=key,
