@@ -19,6 +19,11 @@ REDACT_KEYS = {
     "longitude",
     "vin",
     "serial_number",
+    # The attributes payload uses camelCase and includes the number plate and
+    # telematics identifiers (leaked unredacted in a public attachment, #1).
+    "registrationNumber",
+    "serialNumber",
+    "imei",
 }
 
 
