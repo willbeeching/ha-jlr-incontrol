@@ -255,44 +255,10 @@ class JlrClient:
             raise self._error("position", status)
         return (payload or {}).get("position", {})
 
-    # Candidate Accept types for reading the charge profile. The endpoint is
-    # routed and alive on the webview edge (fast JBoss 406s, verified live) but
-    # every type below 406'd against an ICE account with no charge data; a
-    # PHEV/BEV may negotiate one and reveal the CP override state, which would
-    # let the charge switch read the truth instead of mirroring
-    # EV_CHARGING_STATUS. Probed via the diagnostics download.
-    _CHARGE_PROFILE_ACCEPTS = (
-        "application/vnd.wirelesscar.ngtp.if9.PhevService-v1+json",
-        "application/vnd.wirelesscar.ngtp.if9.PhevService-v2+json",
-        "application/vnd.wirelesscar.ngtp.if9.ChargeProfile-v1+json",
-        "application/vnd.wirelesscar.ngtp.if9.PhevStatus-v1+json",
-        "application/vnd.wirelesscar.ngtp.if9.ServiceConfiguration-v3+json",
-        MEDIA_JSON,
-        "*/*",
-    )
-
-    async def async_probe_charge_profile(self, vin: str) -> list[dict[str, Any]]:
-        """Try candidate Accepts on GET /chargeProfile (diagnostics aid only)."""
-        await self.async_connect()
-        results: list[dict[str, Any]] = []
-        for accept in self._CHARGE_PROFILE_ACCEPTS:
-            try:
-                status, payload = await self._request(
-                    "GET",
-                    f"{IF9_BASE}/vehicles/{vin}/chargeProfile",
-                    headers=self._webview_headers(accept),
-                    what="charge profile probe",
-                )
-            except JlrApiError as err:
-                results.append({"accept": accept, "error": str(err)})
-                continue
-            entry: dict[str, Any] = {"accept": accept, "status": status}
-            if status == 200 and payload is not None:
-                entry["body"] = payload
-            results.append(entry)
-            if status == 200:
-                break  # found the negotiated type; no need to keep probing
-        return results
+    # NOTE: there is no charge-profile READ endpoint — verified against a live
+    # charging BEV (GET /chargeProfile: 406 for every media type, 204 empty for
+    # */*) and confirmed in the app's code, which only has charge WRITES. The
+    # charge override state rides in /status as EV_CHARGE_NOW_SETTING.
 
     # NOTE: there is deliberately no trips/journeys support. The /trips endpoint
     # is routed on the webview edge (wrong Accept -> JBoss 406) but the legacy

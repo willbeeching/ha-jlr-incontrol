@@ -1,6 +1,16 @@
-"""Charge control switch for JLR InControl (BEV/PHEV)."""
+"""Charge control switch for JLR InControl (BEV/PHEV).
+
+The switch reads EV_CHARGE_NOW_SETTING — the direct status readback of the CP
+override this switch writes (CHARGE_NOW_SETTING = FORCE_ON/FORCE_OFF). There
+is no charge-read endpoint (the app's own code has none; a live charging
+I-Pace with no override reports DEFAULT here while EV_CHARGING_STATUS says
+CHARGING), so mirroring charging status showed a phantom ON whenever the car
+auto-started a charge.
+"""
 
 from __future__ import annotations
+
+import time
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
@@ -13,7 +23,8 @@ from .const import CONF_PIN, DOMAIN
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity
 
-_CHARGING_STATES = {"CHARGING", "INITIALIZATION", "DELAYSTART"}
+# How long to trust a confirmed command over the (minutes-stale) server cache.
+ASSUMED_STATE_SECONDS = 5 * 60
 
 
 async def async_setup_entry(
@@ -28,7 +39,7 @@ async def async_setup_entry(
         attributes = vehicle.get("attributes", {})
         if str(attributes.get("fuelType", "")).lower() != "electric":
             continue
-        if "EV_CHARGING_STATUS" not in vehicle.get("status", {}):
+        if "EV_CHARGE_NOW_SETTING" not in vehicle.get("status", {}):
             continue
         entities.append(JlrChargeSwitch(coordinator, vin))
     async_add_entities(entities)
@@ -43,11 +54,19 @@ class JlrChargeSwitch(JlrVehicleEntity, SwitchEntity):
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
         self._attr_unique_id = f"{vin}_charge_now"
+        self._assumed_on: bool | None = None
+        self._assumed_expiry: float = 0.0
 
     @property
-    def is_on(self) -> bool:
-        status = str(self._status_value("EV_CHARGING_STATUS") or "").upper()
-        return status in _CHARGING_STATES
+    def is_on(self) -> bool | None:
+        if self._assumed_on is not None and time.monotonic() < self._assumed_expiry:
+            return self._assumed_on
+        setting = str(self._status_value("EV_CHARGE_NOW_SETTING") or "").upper()
+        if setting == "FORCE_ON":
+            return True
+        if setting in ("FORCE_OFF", "DEFAULT"):
+            return False
+        return None
 
     async def async_turn_on(self, **kwargs: object) -> None:
         await self._set_charge(enable=True)
@@ -73,4 +92,8 @@ class JlrChargeSwitch(JlrVehicleEntity, SwitchEntity):
             # not a failure (#1).
             if "parameterAlreadyInRequestedState" not in str(err):
                 raise HomeAssistantError(str(err)) from err
+        # Trust the confirmed command until the cached status catches up.
+        self._assumed_on = enable
+        self._assumed_expiry = time.monotonic() + ASSUMED_STATE_SECONDS
+        self.async_write_ha_state()
         await self.coordinator.async_request_refresh()
