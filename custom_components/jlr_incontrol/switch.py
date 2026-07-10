@@ -67,5 +67,10 @@ class JlrChargeSwitch(JlrVehicleEntity, SwitchEntity):
                 self._vin, enable=enable, pin=pin
             )
         except JlrApiError as err:
-            raise HomeAssistantError(str(err)) from err
+            # The switch mirrors EV_CHARGING_STATUS, so it reads ON when the
+            # car auto-started charging on plug-in with no CP override active.
+            # Asking the car to match a state it is already in is a no-op,
+            # not a failure (#1).
+            if "parameterAlreadyInRequestedState" not in str(err):
+                raise HomeAssistantError(str(err)) from err
         await self.coordinator.async_request_refresh()

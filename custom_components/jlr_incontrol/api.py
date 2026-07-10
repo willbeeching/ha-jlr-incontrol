@@ -496,7 +496,17 @@ class JlrClient:
                 )
             await asyncio.sleep(3)
             status = await self.async_get_service_status(vin, service_id)
-        return status  # still pending after the poll window; treat as best-effort
+        # Still pending after the poll window. Log it so a command the vehicle
+        # quietly never executes (seen with VHS on an I-Pace, #1) is at least
+        # visible instead of looking like success.
+        _LOGGER.warning(
+            "%s command was accepted but still pending after %ds; the vehicle "
+            "may be asleep or may not support this service (last status: %s)",
+            status.get("serviceType", "command"),
+            30,
+            status.get("status"),
+        )
+        return status
 
     async def async_get_service_status(
         self, vin: str, customer_service_id: str
