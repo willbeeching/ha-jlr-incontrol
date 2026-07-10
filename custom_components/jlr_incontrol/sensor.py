@@ -375,6 +375,54 @@ async def async_setup_entry(
             if stale:
                 ent_reg.async_remove(stale)
 
+    _apply_unit_overrides(ent_reg, coordinator, distance_unit, pressure_unit)
+
+
+def _apply_unit_overrides(
+    ent_reg: er.EntityRegistry,
+    coordinator: JlrCoordinator,
+    distance_unit: str | None,
+    pressure_unit: str | None,
+) -> None:
+    """Push the configured display units into the entity registry.
+
+    suggested_unit_of_measurement only applies when an entity is FIRST
+    registered, so changing the unit options after setup silently did
+    nothing for existing entities (#4). Options changes reload the entry,
+    which lands here with the registry already populated.
+    """
+    for vin in coordinator.data.get("vehicles", {}):
+        for description in (*VEHICLE_SENSORS, *TYRE_SENSORS, *EV_SENSORS):
+            if description.device_class == SensorDeviceClass.DISTANCE:
+                unit = distance_unit
+            elif description.device_class == SensorDeviceClass.PRESSURE:
+                unit = pressure_unit
+            else:
+                continue
+            entity_id = ent_reg.async_get_entity_id(
+                "sensor", DOMAIN, f"{vin}_{description.key}"
+            )
+            if not entity_id:
+                continue
+            reg_entry = ent_reg.async_get(entity_id)
+            if reg_entry is None:
+                continue
+            sensor_options = dict(reg_entry.options.get("sensor", {}))
+            current = sensor_options.get("unit_of_measurement")
+            if unit is None:
+                # Back to "Use Home Assistant default": drop any override so
+                # the suggested/native unit applies again.
+                if current is not None:
+                    sensor_options.pop("unit_of_measurement", None)
+                    ent_reg.async_update_entity_options(
+                        entity_id, "sensor", sensor_options or None
+                    )
+            elif current != unit:
+                sensor_options["unit_of_measurement"] = unit
+                ent_reg.async_update_entity_options(
+                    entity_id, "sensor", sensor_options
+                )
+
 
 class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
     """A vehicle status sensor."""
