@@ -126,12 +126,18 @@ ECC_MAX_TEMP = 28.0
 ECC_DEFAULT_TEMP = 21.0
 
 # ICE remote climate uses an RCC scale of 31 (LO/cool) – 57 (HI/heat).
+# 15.5C maps to RCC 31 = LO and 28.5C to RCC 57 = HI, matching the car's dial.
 ICE_RCC_MIN = 31
 ICE_RCC_MAX = 57
-ICE_MIN_TEMP = 16.0
+ICE_MIN_TEMP = 15.5
 ICE_MAX_TEMP = 28.5
-ICE_DEFAULT_HEAT_TEMP = 22.0
-ICE_DEFAULT_COOL_TEMP = 18.0
+ICE_DEFAULT_TEMP = 21.0
+
+# How long to assume remote climate keeps running after a confirmed start.
+# The cached CLIMATE_STATUS_OPERATING_STATUS lags by minutes, so without this
+# the thermostat shows Off while the engine is running and can't be stopped.
+CLIMATE_ASSUMED_ON_SECONDS = 30 * 60  # JLR remote start auto-stops around here
+CLIMATE_ASSUMED_OFF_SECONDS = 15 * 60
 
 PLATFORMS = [
     "sensor",
