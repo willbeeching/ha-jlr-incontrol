@@ -288,7 +288,11 @@ class JlrClient:
                 # ISO timestamps in a consistent format sort lexicographically.
                 if isinstance(item_ts, str) and item_ts > newest_item_ts:
                     newest_item_ts = item_ts
-        if newest_item_ts and not status.get("LAST_UPDATED_TIME"):
+        # Per-item timestamps are authoritative: on cars that do report a
+        # LAST_UPDATED_TIME key it can lag the individual values (the "frozen
+        # last_updated" from the first field reports).
+        existing = status.get("LAST_UPDATED_TIME") or ""
+        if newest_item_ts and newest_item_ts > existing:
             status["LAST_UPDATED_TIME"] = newest_item_ts
         return status
 
