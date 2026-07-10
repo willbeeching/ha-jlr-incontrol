@@ -369,6 +369,8 @@ async def async_setup_entry(
         )
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
         entities.append(JlrAllInfoSensor(coordinator, vin))
+        if is_electrified(attributes, status) and "EV_CHARGING_METHOD" in status:
+            entities.append(JlrEvccStatusSensor(coordinator, vin))
     async_add_entities(entities)
 
     # Drop entities left behind by earlier versions: the last-trip sensor
@@ -510,3 +512,33 @@ class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._vehicle.get("status", {}))
+
+
+class JlrEvccStatusSensor(JlrVehicleEntity, SensorEntity):
+    """IEC 61851-style connector state (A/B/C) for EVCC-style automations.
+
+    Mapping verified live across all four wallbox states on an I-Pace (#1):
+    A = disconnected, B = connected but not charging (incl. INITIALIZATION
+    while the wallbox withholds power), C = charging.
+    """
+
+    _attr_translation_key = "evcc_status"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["A", "B", "C"]
+    _attr_icon = "mdi:ev-plug-type2"
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_evcc_status"
+
+    @property
+    def native_value(self) -> str | None:
+        method = str(self._status_value("EV_CHARGING_METHOD") or "").upper()
+        if method in ("", "UNKNOWN"):
+            return None
+        if method == "NOTCONNECTED":
+            return "A"
+        charging = str(self._status_value("EV_CHARGING_STATUS") or "").upper()
+        if charging in ("CHARGING", "BULKCHARGED"):
+            return "C"
+        return "B"

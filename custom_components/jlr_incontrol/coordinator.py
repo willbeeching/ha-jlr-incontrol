@@ -37,6 +37,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=DEFAULT_SCAN_INTERVAL,
         )
         self.entry = entry
+        # Change detection for the last-updated signal: some cars (I-Pace)
+        # report no LAST_UPDATED_TIME at all and the position timestamp goes
+        # static while parked, so observing when polled data actually changes
+        # is the only freshness signal that always works.
+        self._last_snapshot: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        self._last_changed: dict[str, str] = {}
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -91,11 +97,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry["position"] = await self.client.async_get_position(vin)
             except JlrApiError as err:
                 _LOGGER.debug("position for %s unavailable: %s", vin, err)
+            snapshot = (entry["status"], entry["position"])
+            if self._last_snapshot.get(vin) not in (None, snapshot):
+                self._last_changed[vin] = dt_util.utcnow().isoformat()
+            self._last_snapshot[vin] = snapshot
+
             # Whichever signal is fresher: the position timestamp goes static
-            # while the car is parked, but status values keep updating.
+            # while the car is parked, the LAST_UPDATED_TIME key is missing on
+            # some cars, and the change stamp resets on HA restart — together
+            # they cover each other.
             entry["status_ts"] = self._newest(
                 entry["position"].get("timestamp"),
                 entry["status"].get("LAST_UPDATED_TIME"),
+                self._last_changed.get(vin),
             )
             entry["position_stale"] = self._is_stale(entry["status_ts"])
             data["vehicles"][vin] = entry

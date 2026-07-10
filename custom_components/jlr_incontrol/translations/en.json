@@ -46,6 +46,7 @@
       "ev_time_to_full": { "name": "Time to full charge" },
       "ev_charging_status": { "name": "Charging status" },
       "alarm_state": { "name": "Alarm state" },
+      "evcc_status": { "name": "EVCC status" },
       "last_updated": { "name": "Last updated" },
       "all_info": { "name": "All info" }
     },
