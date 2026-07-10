@@ -96,7 +96,9 @@ class JlrSensorDescription(SensorEntityDescription):
 
 def _alarm_state(value: str) -> str:
     """Humanise the THEFT_ALARM_STATUS enum (ALARM_NOT_SET__DOOR_OPEN etc.)."""
-    return str(value).removeprefix("ALARM_").replace("__", "_").replace("_", " ").title()
+    return (
+        str(value).removeprefix("ALARM_").replace("__", "_").replace("_", " ").title()
+    )
 
 
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
