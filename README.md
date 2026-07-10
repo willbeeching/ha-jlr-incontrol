@@ -118,7 +118,10 @@ A couple of things worth knowing:
 
 - The status you see is whatever the car last reported to JLR's servers. Use **Update from
   vehicle** (VHS) to wake the car and push fresh data, or **Refresh** to re-fetch the cached
-  copy from the backend.
+  copy from the backend. Verified live: VHS refreshes the core/health block (doors, 12V
+  battery, diagnostics). EV charge data (SoC, charging state) comes from a separate vehicle
+  subsystem that VHS doesn't touch, so on a BEV a VHS can "succeed" without those values
+  changing.
 - The `last_updated` timestamp reflects when the car last reported position/status to JLR — it
   may lag behind individual values like SoC during charging.
 - Locked and alarm-armed are independent states: a car can be locked with the alarm off. A
@@ -139,6 +142,11 @@ direct `/if9/jlr/` path that community integrations used for trips is now behind
 attestation wall. A last-trip sensor would just sit there timing out and slow every refresh
 down, so this integration deliberately doesn't have one. If JLR ever resurfaces journeys in
 their API, it can come back.
+
+The legacy owner web portal (`incontrol.jaguar.com`) was also checked as an alternative
+source: it still has a Journeys feature, but it lives behind its own web SSO cookie login
+(a separate auth world from the token flow this integration uses), and its trips backend is
+the same service that times out. Not a viable path either.
 
 ### Why there's no Guardian Mode
 
