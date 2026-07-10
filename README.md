@@ -120,6 +120,8 @@ A couple of things worth knowing:
   copy from the backend.
 - The `last_updated` timestamp reflects when the car last reported position/status to JLR — it
   may lag behind individual values like SoC during charging.
+- Locked and alarm-armed are independent states: a car can be locked with the alarm off. A
+  remote lock command both locks and arms. Alarm state changes reach the backend in ~30 seconds.
 - Remote commands wake the car, so they take a few seconds. The integration waits for the vehicle
   to confirm before reporting success or failure.
 - ECC preconditioning, VHS refresh, and charge control use endpoints documented from
@@ -136,6 +138,16 @@ direct `/if9/jlr/` path that community integrations used for trips is now behind
 attestation wall. A last-trip sensor would just sit there timing out and slow every refresh
 down, so this integration deliberately doesn't have one. If JLR ever resurfaces journeys in
 their API, it can come back.
+
+### Why there's no Guardian Mode
+
+Half-supported by the backend, not by our path to it. The Guardian endpoints (`gm/status`,
+`gm/alarms`) exist and respond quickly, and PIN authentication for the `GM` service works —
+but the webview edge this integration relies on doesn't expose usable Guardian reads: the
+endpoints are POST-only there and reject every content type, the settings paths 404, and the
+webview app's own code contains no Guardian feature at all. The native app does Guardian over
+its Approov-attested path, which we can't use. Toggling Guardian Mode in the JLR app also has
+no effect on any status key this integration can see, so there's nothing to sense either.
 
 ## Disclaimer
 

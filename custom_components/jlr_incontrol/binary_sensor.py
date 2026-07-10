@@ -95,12 +95,22 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
     ),
     # No SAFETY device class here: that renders on/off as Unsafe/Safe, which
     # reads backwards for an armed alarm (locked car showed "Unsafe", #4).
+    # Armed is independent of locked — a car can be locked with the alarm off;
+    # a remote lock both locks and arms (verified live, ~30s to reflect).
     JlrBinaryDescription(
         key="alarm",
         translation_key="alarm",
         status_key="THEFT_ALARM_STATUS",
         icon="mdi:shield-car",
-        is_on=lambda v: v in ("ALARM_ARMED", "ALARM_TRIGGERED"),
+        is_on=lambda v: v == "ALARM_ARMED",
+    ),
+    # The app's own enum has three going-off variants.
+    JlrBinaryDescription(
+        key="alarm_triggered",
+        translation_key="alarm_triggered",
+        status_key="THEFT_ALARM_STATUS",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on=lambda v: v in ("ALARM_TRIGGER", "ALARM_TRIGGERED", "ALARM_SOUNDING"),
     ),
     # Service / fluid warnings.
     _warning("brake_fluid_warning", "BRAKE_FLUID_WARN"),

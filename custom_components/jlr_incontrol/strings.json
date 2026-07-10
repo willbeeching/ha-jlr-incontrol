@@ -45,6 +45,7 @@
       "ev_range_combined": { "name": "Combined range" },
       "ev_time_to_full": { "name": "Time to full charge" },
       "ev_charging_status": { "name": "Charging status" },
+      "alarm_state": { "name": "Alarm state" },
       "last_updated": { "name": "Last updated" },
       "all_info": { "name": "All info" }
     },
@@ -62,6 +63,7 @@
       "sunroof": { "name": "Sunroof" },
       "doors_locked": { "name": "Doors" },
       "alarm": { "name": "Alarm armed" },
+      "alarm_triggered": { "name": "Alarm triggered" },
       "brake_fluid_warning": { "name": "Brake fluid warning" },
       "coolant_level_warning": { "name": "Coolant level warning" },
       "oil_level_warning": { "name": "Oil level warning" },

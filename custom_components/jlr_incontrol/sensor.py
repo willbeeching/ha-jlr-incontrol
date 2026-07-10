@@ -94,7 +94,19 @@ class JlrSensorDescription(SensorEntityDescription):
     requires_ev: bool = False
 
 
+def _alarm_state(value: str) -> str:
+    """Humanise the THEFT_ALARM_STATUS enum (ALARM_NOT_SET__DOOR_OPEN etc.)."""
+    return str(value).removeprefix("ALARM_").replace("__", "_").replace("_", " ").title()
+
+
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
+    JlrSensorDescription(
+        key="alarm_state",
+        translation_key="alarm_state",
+        status_key="THEFT_ALARM_STATUS",
+        value_fn=_alarm_state,
+        icon="mdi:shield-car",
+    ),
     JlrSensorDescription(
         key="fuel_level",
         translation_key="fuel_level",
