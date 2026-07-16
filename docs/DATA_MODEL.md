@@ -60,22 +60,35 @@ speed**. Reverse-geocoded into street/city/postcode/country for display.
 Feature-gate every entity on the vehicle's `services` + `vehicleCapability` + `computedValues`
 rather than assuming all exist for every VIN.
 
-## Range Rover model codes
+## JLR model codes (InControl-capable)
 
 Reference for reading `vehicleTypeCode` / matching community reports to a generation. Status-key
 shapes can differ between generations (e.g. tyre pressure is kPa×10 on L405/L663 but plain kPa on
 the I-Pace), so the generation is useful context when a value looks off. With thanks to @Sooty70.
 
-| Years | Model | Model code | Notes |
-|---|---|---|---|
-| 1970–1996 | Range Rover | Classic | Original Range Rover (2 & 4 door) |
-| 1994–2002 | Range Rover | P38A (P38) | Second generation |
-| 2002–2012 | Range Rover | L322 | Third generation |
-| 2005–2013 | Range Rover Sport | L320 | First generation Sport |
-| 2011–2018 | Range Rover Evoque | L538 | First generation Evoque |
-| 2012–2021 | Range Rover | L405 | Fourth generation (aluminium body) |
-| 2013–2022 | Range Rover Sport | L494 | Second generation Sport |
-| 2017–present | Range Rover Velar | L560 | Introduced between Evoque & Sport |
-| 2018–present | Range Rover Evoque | L551 | Second generation Evoque |
-| 2021–present | Range Rover | L460 | Fifth generation |
-| 2022–present | Range Rover Sport | L461 | Third generation Sport |
+Only models with InControl telematics are listed — this integration can't talk to a car that
+isn't internet-connected, so pre-connectivity models (old Defender L316, Range Rover Classic/P38/
+L322, Freelander, Discovery 1–4, the older Jaguar saloons, etc.) are omitted. **Connectivity
+depends on model *year*, not just the chassis code:** InControl arrived around the **2016 model
+year**, so codes that started earlier but ran past it (marked *2016 MY+* below) are only connected
+on later cars, and any of these still needs an active InControl subscription.
+
+| Brand | Model | Model code | Years | Notes |
+|---|---|---|---|---|
+| Land Rover | Defender | L663 | 2020–present | |
+| Land Rover | Discovery 5 | L462 | 2017–present | |
+| Land Rover | Discovery Sport | L550 | 2014–present | 2016 MY+ |
+| Range Rover | Range Rover | L405 | 2012–2021 | 2016 MY+ (aluminium body) |
+| Range Rover | Range Rover | L460 | 2021–present | Fifth generation |
+| Range Rover | Range Rover Sport | L494 | 2013–2022 | 2016 MY+ |
+| Range Rover | Range Rover Sport | L461 | 2022–present | |
+| Range Rover | Range Rover Evoque | L538 | 2011–2018 | 2016 MY+ |
+| Range Rover | Range Rover Evoque | L551 | 2018–present | |
+| Range Rover | Range Rover Velar | L560 | 2017–present | |
+| Jaguar | XJ | X351 | 2010–2019 | 2016 MY+ |
+| Jaguar | XF | X260 | 2015–2024 | |
+| Jaguar | XE | X760 | 2015–2024 | |
+| Jaguar | F-Type | X152 | 2013–2024 | 2016 MY+ |
+| Jaguar | F-Pace | X761 | 2016–present | |
+| Jaguar | E-Pace | X540 | 2017–present | |
+| Jaguar | I-Pace | X590 | 2018–present | BEV |
