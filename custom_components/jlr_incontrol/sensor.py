@@ -371,6 +371,8 @@ async def async_setup_entry(
         entities.append(JlrAllInfoSensor(coordinator, vin))
         if is_electrified(attributes, status) and "EV_CHARGING_METHOD" in status:
             entities.append(JlrEvccStatusSensor(coordinator, vin))
+        if is_electrified(attributes, status) and "EV_CHARGE_NOW_SETTING" in status:
+            entities.append(JlrChargeNowSettingSensor(coordinator, vin))
     async_add_entities(entities)
 
     # Drop entities left behind by earlier versions: the last-trip sensor
@@ -542,3 +544,27 @@ class JlrEvccStatusSensor(JlrVehicleEntity, SensorEntity):
         if charging in ("CHARGING", "BULKCHARGED"):
             return "C"
         return "B"
+
+
+class JlrChargeNowSettingSensor(JlrVehicleEntity, SensorEntity):
+    """The raw CP charge-now override (DEFAULT / FORCE_ON / FORCE_OFF).
+
+    A read-only view of the tri-state override, replacing the old binary
+    switch that couldn't tell DEFAULT (no override) from FORCE_OFF (charge
+    actively suppressed) — both looked like "off" (#6). Drive it with the
+    Force charge on / Force charge off buttons.
+    """
+
+    _attr_translation_key = "charge_now_setting"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["DEFAULT", "FORCE_ON", "FORCE_OFF"]
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_charge_now_setting"
+
+    @property
+    def native_value(self) -> str | None:
+        value = self.coordinator.charge_now_setting(self._vin)
+        return value if value in self._attr_options else None

@@ -57,7 +57,8 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
   temperature — no PIN required for ECC.
 - **Update from vehicle** button (VHS) to force the car to report fresh status, plus a cheap
   **Refresh** button that re-polls the server cache.
-- **Charge now** switch for BEVs (force charge on/off).
+- **Force charge on / off** buttons for BEVs, with a **Charge now setting** sensor showing the
+  live override state (`DEFAULT` / `FORCE_ON` / `FORCE_OFF`).
 - **All info** sensor (disabled by default) exposing the full flattened status dict as attributes.
 - Diagnostics download for troubleshooting (VIN/position redacted).
 - Configurable distance and pressure unit overrides in integration options.

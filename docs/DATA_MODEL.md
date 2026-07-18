@@ -54,7 +54,7 @@ speed**. Reverse-geocoded into street/city/postcode/country for display.
 | `device_tracker` | lat/lon + reverse-geocoded address attributes |
 | `lock` | doors (RDL/RDU) — model a transitional state (commands are async) |
 | `climate` | preconditioning: ECC (BEV/PHEV) or REON/REOFF (ICE), target temperature |
-| `switch`/`button` | charging on/off (CP), cabin air (CAC), honk & flash (HBLF, button), silence alarm (ALOFF, button), Guardian Mode (GM) |
+| `button` | force charge on/off (CP — two write actions; the API can't write DEFAULT), honk & flash (HBLF), update from vehicle (VHS), refresh; charge-now override is read via a `charge_now_setting` enum sensor |
 | `number` | charge target SoC, climate target temperature |
 
 Feature-gate every entity on the vehicle's `services` + `vehicleCapability` + `computedValues`

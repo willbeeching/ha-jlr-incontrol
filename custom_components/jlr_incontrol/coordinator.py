@@ -16,6 +16,7 @@ from .api import JlrApiError, JlrAuthError, JlrClient
 from .const import (
     ACTIVITY_WINDOW,
     ATTRIBUTES_TTL,
+    CHARGE_NOW_ASSUMED_WINDOW,
     CLIMATE_ACTIVE_STATES,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
@@ -53,6 +54,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._attributes_cache: dict[str, tuple[dict[str, Any], Any]] = {}
         # Keep polling fast for a while after any user interaction.
         self._boost_until = dt_util.utcnow() + ACTIVITY_WINDOW
+        # Optimistic charge-override readback after a Force charge button, held
+        # until JLR's (minutes-stale) EV_CHARGE_NOW_SETTING catches up so the
+        # charge-now-setting sensor reflects the press immediately.
+        self._charge_now_assumed: dict[str, tuple[str, Any]] = {}
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -179,6 +184,26 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """A manual refresh or a command means someone is engaged: poll fast."""
         self._boost_until = dt_util.utcnow() + ACTIVITY_WINDOW
         await super().async_request_refresh()
+
+    def note_charge_now(self, vin: str, value: str) -> None:
+        """Record the CP override just written, so the sensor updates at once."""
+        self._charge_now_assumed[vin] = (
+            value,
+            dt_util.utcnow() + CHARGE_NOW_ASSUMED_WINDOW,
+        )
+
+    def charge_now_setting(self, vin: str) -> str | None:
+        """Return EV_CHARGE_NOW_SETTING, preferring a recent optimistic write."""
+        assumed = self._charge_now_assumed.get(vin)
+        if assumed and dt_util.utcnow() < assumed[1]:
+            return assumed[0]
+        raw = (
+            self.data.get("vehicles", {})
+            .get(vin, {})
+            .get("status", {})
+            .get("EV_CHARGE_NOW_SETTING")
+        )
+        return str(raw).upper() if raw is not None else None
 
     @staticmethod
     def _newest(*timestamps: str | None) -> str | None:

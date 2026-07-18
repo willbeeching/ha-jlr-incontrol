@@ -47,6 +47,7 @@
       "ev_charging_status": { "name": "Charging status" },
       "alarm_state": { "name": "Alarm state" },
       "evcc_status": { "name": "EVCC status" },
+      "charge_now_setting": { "name": "Charge now setting" },
       "last_updated": { "name": "Last updated" },
       "all_info": { "name": "All info" }
     },
@@ -86,10 +87,9 @@
     "button": {
       "honk_flash": { "name": "Honk & flash" },
       "refresh": { "name": "Refresh" },
-      "update_from_vehicle": { "name": "Update from vehicle" }
-    },
-    "switch": {
-      "charge_now": { "name": "Charge now" }
+      "update_from_vehicle": { "name": "Update from vehicle" },
+      "force_charge_on": { "name": "Force charge on" },
+      "force_charge_off": { "name": "Force charge off" }
     }
   }
 }

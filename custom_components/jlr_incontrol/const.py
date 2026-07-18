@@ -155,6 +155,10 @@ ICE_DEFAULT_TEMP = 21.0
 CLIMATE_ASSUMED_ON_SECONDS = 30 * 60  # JLR remote start auto-stops around here
 CLIMATE_ASSUMED_OFF_SECONDS = 15 * 60
 
+# How long the charge-now-setting sensor trusts a just-pressed Force charge
+# button over the (minutes-stale) EV_CHARGE_NOW_SETTING readback.
+CHARGE_NOW_ASSUMED_WINDOW = timedelta(minutes=5)
+
 # NOTE: diagnostics is intentionally not here — it is not an entity platform
 # (HA discovers diagnostics.py itself). Forwarding to it logged a setup warning
 # and, worse, broke async_unload_platforms so any options change wedged the
@@ -166,5 +170,4 @@ PLATFORMS = [
     "lock",
     "climate",
     "button",
-    "switch",
 ]
