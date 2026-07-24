@@ -200,20 +200,29 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
 )
 
 
+# A real car tyre lives around 180-350 kPa; nothing sane exceeds this. JLR
+# returns a near-int16-max sentinel (~32750 -> 3275 kPa -> 475 psi on all
+# four wheels) when a fresh read has no valid pressure, seen live on an XF
+# (#7). Reject anything above this as unknown rather than showing garbage.
+_TYRE_KPA_MAX = 600.0
+
+
 def _tyre_kpa(value: str) -> float | None:
-    """Normalise the raw tyre value to kPa.
+    """Normalise the raw tyre value to kPa, rejecting sentinels.
 
     The scale differs by vehicle generation: an L405/L663 reports kPa*10
     (e.g. 2470) while an I-Pace reports plain kPa (e.g. 279). Real tyre
     pressures sit around 180-350 kPa, so anything above 1000 must be the
-    *10 scale.
+    *10 scale. A plausibility clamp on the *result* catches bad-read
+    sentinels regardless of which scale the car uses.
     """
     raw = _to_float(value)
     if raw is None:
         return None
-    if raw > 1000:
-        return round(raw / 10, 1)
-    return round(raw, 1)
+    kpa = round(raw / 10, 1) if raw > 1000 else round(raw, 1)
+    if kpa <= 0 or kpa > _TYRE_KPA_MAX:
+        return None
+    return kpa
 
 
 def _tyre_description(key: str, status_key: str) -> JlrSensorDescription:
