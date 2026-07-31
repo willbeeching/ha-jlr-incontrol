@@ -45,6 +45,7 @@
       "ev_range_combined": { "name": "Combined range" },
       "ev_time_to_full": { "name": "Time to full charge" },
       "ev_charging_status": { "name": "Charging status" },
+      "ev_precondition_remaining": { "name": "Preconditioning time remaining" },
       "alarm_state": { "name": "Alarm state" },
       "evcc_status": { "name": "EVCC status" },
       "charge_now_setting": { "name": "Charge now setting" },

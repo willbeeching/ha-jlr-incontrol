@@ -43,9 +43,9 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 
 - Live vehicle status: fuel level and range, odometer, service/AdBlue distance, tyre pressures,
   12V battery, coolant temperature, and a fair bit more.
-- **BEV support:** battery SoC, electric range, charging status, time to full, and charge-now
-  control. ICE-only sensors (fuel level, coolant temp, combined range) are automatically hidden
-  on pure electric vehicles.
+- **BEV support:** battery SoC, electric range, charging status, time to full, preconditioning
+  time remaining, and charge control. ICE-only sensors (fuel level, coolant temp, combined range)
+  are automatically hidden on pure electric vehicles.
 - Every door's open/closed and lock state, all four windows, the sunroof, theft alarm status,
   and warnings for fluids and service as binary sensors.
 - A GPS `device_tracker` so you can see where the car is, along with heading, speed, and when it

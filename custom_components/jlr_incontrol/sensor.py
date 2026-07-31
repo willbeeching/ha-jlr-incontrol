@@ -313,6 +313,20 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         icon="mdi:ev-station",
         requires_ev=True,
     ),
+    # EV preconditioning countdown. The ICE CLIMATE_STATUS_REMAINING_RUNTIME
+    # sensor doesn't tick during ECC preconditioning, but this EV-specific key
+    # does (#8).
+    JlrSensorDescription(
+        key="ev_precondition_remaining",
+        translation_key="ev_precondition_remaining",
+        status_key="EV_PRECONDITION_REMAINING_RUNTIME_MINUTES",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:timer-sand",
+        requires_ev=True,
+    ),
 )
 
 
