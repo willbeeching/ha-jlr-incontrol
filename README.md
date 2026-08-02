@@ -134,6 +134,12 @@ A couple of things worth knowing:
   remote lock command both locks and arms. Alarm state changes reach the backend in ~30 seconds.
 - Remote commands wake the car, so they take a few seconds. The integration waits for the vehicle
   to confirm before reporting success or failure.
+- **Preconditioning time remaining** is a point-in-time value, not a live countdown. The car
+  reports it once when preconditioning starts (~29 minutes on an I-PACE) and only refreshes it
+  on a VHS, so it will sit still rather than tick down — and occasionally reports 0 at the start.
+  Preconditioning started from the JLR app can take ~5 minutes to appear in Home Assistant at
+  all. If you want a ticking countdown, see [docs/RECIPES.md](docs/RECIPES.md) — it's better done
+  locally in HA than by repeatedly waking the car.
 - ECC preconditioning, VHS refresh, and charge control use endpoints documented from
   the native-app API. They may need media-type tweaks on the webview edge — please report errors.
 
@@ -163,6 +169,12 @@ endpoints are POST-only there and reject every content type, the settings paths 
 webview app's own code contains no Guardian feature at all. The native app does Guardian over
 its Approov-attested path, which we can't use. Toggling Guardian Mode in the JLR app also has
 no effect on any status key this integration can see, so there's nothing to sense either.
+
+## Recipes
+
+Template sensors, automations, and dashboard snippets that build on these entities live in
+[docs/RECIPES.md](docs/RECIPES.md) — including a local preconditioning countdown and how to get
+fresh lock/alarm state without waking the car on a timer. Contributions very welcome.
 
 ## Disclaimer
 
