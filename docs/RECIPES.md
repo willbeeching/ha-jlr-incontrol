@@ -32,6 +32,8 @@ the initial value comes back as 0.
 
 ### Local preconditioning countdown
 
+_Contributed by [@ismarslomic](https://github.com/ismarslomic). Tested on a Jaguar I-PACE 2021._
+
 The JLR integration reports the remaining preconditioning time from the vehicle, but this value does not provide a
 continuously updating countdown. This solution stores the expected end time and calculates the remaining time locally in
 Home Assistant.
@@ -40,16 +42,16 @@ Home Assistant.
   to finish.
 - **Step 2: Keep the end time synchronized**: Creates an automation that runs when preconditioning starts or stops. When
   it starts, the automation refreshes the vehicle data, retrieves the reported remaining time and calculates the
-- expected end time. It uses 29 minutes as a fallback if no valid value is received. When preconditioning stops,
-- the stored end time is reset to the current time.
+  expected end time. It uses 29 minutes as a fallback if no valid value is received. When preconditioning stops,
+  the stored end time is reset to the current time.
 - **Step 3: Calculate the remaining time locally**: Creates a template sensor that calculates the remaining whole
-- minutes from the stored end time. It updates every minute and whenever a referenced entity changes, returns `0`
-- when preconditioning is off, and never reports a negative value.
+  minutes from the stored end time. It updates every minute and whenever a referenced entity changes, returns `0`
+  when preconditioning is off, and never reports a negative value.
 
 The result is a reliable, continuously updating countdown without repeatedly requesting new data from the vehicle. This
 provides smoother dashboard updates while reducing unnecessary calls to the JLR service.
 
-### Step 1: Store the expected end time
+#### Step 1: Store the expected end time
 
 1. In Home Assistant, go to **Settings → Devices & services → Helpers**.
 2. Select **Create helper → Date and/or time**.
@@ -63,7 +65,7 @@ provides smoother dashboard updates while reducing unnecessary calls to the JLR 
 
 The date and time selected in this helper represent when the vehicle should finish preconditioning.
 
-### Step 2: Keep the end time synchronized
+#### Step 2: Keep the end time synchronized
 
 This automation updates the local preconditioning end time whenever preconditioning starts or stops. When
 preconditioning starts, the automation refreshes the vehicle data and waits for an updated remaining-time value. It
@@ -157,15 +159,13 @@ actions:
 mode: restart
 ```
 
-### Step 3: Calculate the remaining time locally
+#### Step 3: Calculate the remaining time locally
 
-Create a template sensor that calculates the remaining preconditioning time from the end-time helper created in step 2.
-It returns `0` when preconditioning is off and counts down toward the end time while it is running.
-
-Step 3 creates a local countdown sensor. While preconditioning is active, it calculates the remaining whole minutes from
-the end time stored in step 1, rounding up and never returning a negative value. The sensor updates every minute and
-whenever a referenced entity changes. It returns `0` when preconditioning is off and becomes unavailable if the required
-entities do not contain valid states.
+Create a template sensor that calculates the remaining preconditioning time from the end-time helper created in step 1
+and kept up to date by the automation in step 2. While preconditioning is active it calculates the remaining whole
+minutes, rounding up and never returning a negative value. The sensor updates every minute and whenever a referenced
+entity changes. It returns `0` when preconditioning is off, and becomes unavailable if the required entities do not
+contain valid states.
 
 1. Go to **Settings → Devices & services → Helpers**.
 2. Select **Create helper → Template → Sensor**.
@@ -207,7 +207,7 @@ entities do not contain valid states.
 6. Select **Create**.
 
 The sensor is available only when the integration reports a valid preconditioning state and the end-time helper contains
-a valid date and time. You can now use this sensor to display an count down while precondition is activated.
+a valid date and time. You can now use this sensor to display a countdown while preconditioning is active.
 
 ## Fresh lock & alarm state on arrival
 
