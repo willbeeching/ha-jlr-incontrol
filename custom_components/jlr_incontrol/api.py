@@ -26,6 +26,8 @@ import aiohttp
 
 from .const import (
     BROWSER_HEADERS,
+    DIAGNOSTIC_HEADERS,
+    FORBIDDEN_HINT,
     ICE_RCC_MAX,
     ICE_RCC_MIN,
     IF9_BASE,
@@ -78,6 +80,7 @@ class JlrClient:
         password: str,
         device_id: str | None = None,
         user_id: str | None = None,
+        refresh_token: str | None = None,
     ) -> None:
         self._session = session
         self._username = username
@@ -87,7 +90,8 @@ class JlrClient:
         self._user_id = user_id
         self._access_token: str | None = None
         self._authorization_token: str | None = None
-        self._refresh_token: str | None = None
+        # Seeded from the entry so a restart refreshes rather than re-logging in.
+        self._refresh_token: str | None = refresh_token
         self._expires_at: float = 0.0
         self._device_registered = False
 
@@ -100,6 +104,11 @@ class JlrClient:
     def user_id(self) -> str | None:
         """The resolved IF9 user id (persist it in the entry)."""
         return self._user_id
+
+    @property
+    def refresh_token(self) -> str | None:
+        """The current refresh token (persist it; JLR rotates these)."""
+        return self._refresh_token
 
     # ------------------------------------------------------------------ auth
     async def async_login(self) -> None:
@@ -131,6 +140,13 @@ class JlrClient:
         status, tokens = await self._request(
             "POST", IFAS_TOKENS_URL, headers=headers, data=json.dumps(body), what=what
         )
+        if status == 403:
+            # Deliberately NOT JlrAuthError: a 403 here is a refusal, not a
+            # rejection of the credentials (seen live with a password that
+            # logs in fine elsewhere). Raising an auth error sends the user to
+            # a reauth prompt to retype details that were never wrong; a plain
+            # API error lets the coordinator back off and retry instead.
+            raise JlrApiError(FORBIDDEN_HINT.format(what=what))
         if status != 200 or not isinstance(tokens, dict):
             raise JlrAuthError(f"{what} returned {status}")
         self._access_token = tokens["access_token"]
@@ -571,6 +587,8 @@ class JlrClient:
                         payload = await resp.json()
                     except (aiohttp.ContentTypeError, ValueError):
                         payload = None
+                if resp.status >= 400:
+                    await self._log_error_response(resp, what, payload)
                 return resp.status, payload
         except TimeoutError as err:
             raise JlrApiError(
@@ -578,6 +596,43 @@ class JlrClient:
             ) from err
         except aiohttp.ClientError as err:
             raise JlrApiError(f"{what} failed: {err}") from err
+
+    async def _log_error_response(
+        self, resp: aiohttp.ClientResponse, what: str, payload: Any
+    ) -> None:
+        """Debug-log what a failing response actually said.
+
+        A refusal from JLR's own API and one from an edge/WAF appliance in front
+        of it can carry the same status code, and the parser above drops any
+        non-JSON body — so a 403 arrived as nothing but "returned 403" with no
+        way to tell the two apart. Capture the body and the headers that
+        identify the responder.
+        """
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        if payload is not None:
+            body = json.dumps(payload)
+        else:
+            try:
+                body = await resp.text()
+            except (aiohttp.ClientError, UnicodeDecodeError):
+                body = "<unreadable>"
+        # Debug logs get pasted into public issues; never echo the password back
+        # out if an error body happens to quote the request.
+        if self._password and self._password in body:
+            body = body.replace(self._password, "**REDACTED**")
+        seen = {
+            name: resp.headers[name]
+            for name in DIAGNOSTIC_HEADERS
+            if name in resp.headers
+        }
+        _LOGGER.debug(
+            "%s returned %s; headers=%s; body=%.500s",
+            what,
+            resp.status,
+            seen,
+            body.strip() or "<empty>",
+        )
 
     def _webview_headers(self, accept: str) -> dict[str, str]:
         return {
@@ -598,4 +653,6 @@ class JlrClient:
             )
         if status == 401:
             return JlrAuthError(f"{what} returned 401 (token expired or invalid)")
+        if status == 403:
+            return JlrApiError(FORBIDDEN_HINT.format(what=what))
         return JlrApiError(f"{what} returned {status}")

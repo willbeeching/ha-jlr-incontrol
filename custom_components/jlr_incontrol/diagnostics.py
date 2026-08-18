@@ -8,11 +8,14 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_PASSWORD, CONF_PIN, DOMAIN
+from .const import CONF_PASSWORD, CONF_PIN, CONF_REFRESH_TOKEN, DOMAIN
 
 REDACT_KEYS = {
     CONF_PASSWORD,
     CONF_PIN,
+    # A live credential now that it's persisted in the entry — must never reach
+    # a diagnostics attachment on a public issue.
+    CONF_REFRESH_TOKEN,
     "latitude",
     "longitude",
     "vin",

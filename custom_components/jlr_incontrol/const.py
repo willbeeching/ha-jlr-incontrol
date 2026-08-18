@@ -37,6 +37,29 @@ BROWSER_HEADERS = {
     "Referer": WEBVIEW_REFERER,
 }
 
+# Response headers worth capturing when a request fails: they identify whether
+# JLR's API answered or an edge/WAF appliance in front of it refused us, and
+# carry the reference id their support would need.
+DIAGNOSTIC_HEADERS = (
+    "Server",
+    "Content-Type",
+    "WWW-Authenticate",
+    "Retry-After",
+    "X-Reference-Error",
+    "CF-Ray",
+    "X-Akamai-Request-ID",
+    "Akamai-GRN",
+)
+
+# A 403 means JLR understood the request and refused it — which is not the same
+# as bad credentials, and is usually either a throttle or an edge rule.
+FORBIDDEN_HINT = (
+    "{what} returned 403 (refused by JLR — the request was understood but "
+    "rejected). This is not necessarily a credentials problem: it is commonly "
+    "a temporary account/IP throttle, or an edge rule change. Enable debug "
+    "logging for this integration to capture the response body and headers."
+)
+
 # ---- Telematics program ----
 TELEMATICS_PROGRAM = "landroverprogram"
 
@@ -63,6 +86,9 @@ CONF_PASSWORD = "password"
 CONF_PIN = "pin"
 CONF_DEVICE_ID = "device_id"
 CONF_USER_ID = "user_id"
+# Persisted so a restart resumes with a cheap refresh grant instead of spending
+# a full password login every time (which is what abuse detection notices).
+CONF_REFRESH_TOKEN = "refresh_token"
 
 # ---- Options keys ----
 OPT_DISTANCE_UNIT = "distance_unit"

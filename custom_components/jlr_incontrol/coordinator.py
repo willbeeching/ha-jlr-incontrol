@@ -20,6 +20,7 @@ from .const import (
     CLIMATE_ACTIVE_STATES,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
     CONF_USER_ID,
     CONF_USERNAME,
     DEFAULT_SCAN_INTERVAL,
@@ -64,6 +65,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entry.data[CONF_PASSWORD],
             device_id=entry.data.get(CONF_DEVICE_ID),
             user_id=entry.data.get(CONF_USER_ID),
+            refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -78,14 +80,20 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self.client.async_connect()
         vehicles = await self.client.async_get_vehicles()
 
-        # Persist the resolved user id so future setups skip the lookup.
-        if (
-            self.client.user_id
-            and self.entry.data.get(CONF_USER_ID) != self.client.user_id
-        ):
+        # Persist the resolved user id (so future setups skip the lookup) and the
+        # current refresh token (so a restart renews instead of re-logging in;
+        # JLR rotates these, so re-check every poll rather than only at setup).
+        updates = {
+            key: value
+            for key, value in (
+                (CONF_USER_ID, self.client.user_id),
+                (CONF_REFRESH_TOKEN, self.client.refresh_token),
+            )
+            if value and self.entry.data.get(key) != value
+        }
+        if updates:
             self.hass.config_entries.async_update_entry(
-                self.entry,
-                data={**self.entry.data, CONF_USER_ID: self.client.user_id},
+                self.entry, data={**self.entry.data, **updates}
             )
 
         data: dict[str, Any] = {"vehicles": {}}
