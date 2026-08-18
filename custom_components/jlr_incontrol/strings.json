@@ -30,6 +30,13 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Vehicle security PIN",
+        "description": "The PIN unlocks the remote commands (lock, climate, honk & flash, charging). Leave it blank for monitoring only. This does not sign you in again.",
+        "data": {
+          "pin": "Vehicle security PIN"
+        }
       }
     },
     "error": {
@@ -40,7 +47,9 @@
     },
     "abort": {
       "already_configured": "This account is already configured.",
-      "reauth_successful": "Signed in again successfully."
+      "reauth_successful": "Signed in again successfully.",
+      "reconfigure_successful": "Vehicle PIN updated.",
+      "unknown_entry": "That configuration entry no longer exists."
     }
   },
   "entity": {

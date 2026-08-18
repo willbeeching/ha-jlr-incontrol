@@ -51,6 +51,8 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
 
 STEP_CODE_SCHEMA = vol.Schema({vol.Required("code"): str})
 
+STEP_RECONFIGURE_SCHEMA = vol.Schema({vol.Optional(CONF_PIN, default=""): str})
+
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional(
@@ -217,6 +219,37 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(client.user_id or self._username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title=self._username, data=data)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Add, change or remove the vehicle PIN without signing in again.
+
+        The PIN gates the remote commands, and plenty of people set the
+        integration up read-only first and want control later. Signing in again
+        would mean another emailed code for something that never touches
+        authentication.
+        """
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if entry is None:
+            return self.async_abort(reason="unknown_entry")
+
+        if user_input is not None:
+            pin = (user_input.get(CONF_PIN) or "").strip()
+            data = {**entry.data}
+            if pin:
+                data[CONF_PIN] = pin
+            else:
+                # Blank clears it, dropping back to monitoring only.
+                data.pop(CONF_PIN, None)
+            return self.async_update_reload_and_abort(entry, data=data)
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                STEP_RECONFIGURE_SCHEMA, {CONF_PIN: entry.data.get(CONF_PIN, "")}
+            ),
+        )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Sign in again after the refresh token stopped working."""
