@@ -8,23 +8,24 @@
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20AI%20tokens-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/willbeeching)
 
 > [!IMPORTANT]
-> ### ⚠️ Sign-in is broken on v1.2.1 and earlier — a fix is in beta
+> ### Update to v1.3.0 — earlier versions can no longer sign in
 >
 > On **18 August 2026** JLR shut down the legacy login endpoint this integration used, so every
-> install stopped being able to authenticate. It is a deliberate closure, not a temporary
-> outage, and it is nothing to do with your account or password.
+> version up to and including v1.2.1 stopped being able to authenticate. It is a deliberate
+> closure, not a temporary outage, and it is nothing to do with your account or password.
 >
-> **The fix is [v1.3.0-beta.3](https://github.com/willbeeching/ha-jlr-incontrol/releases/tag/v1.3.0-beta.3)**,
-> which moves sign-in to the same OpenID Connect flow JLR's own app uses. It's confirmed working
-> on a Range Rover and a Defender, and is in beta while a few more people try it.
+> **[v1.3.0](https://github.com/willbeeching/ha-jlr-incontrol/releases/tag/v1.3.0) fixes this**
+> by moving sign-in to the same OpenID Connect flow JLR's own app uses. Update through HACS and
+> restart.
 >
-> **To get it:** in HACS, open **⋮** → **Show beta versions** on this repository, update to
-> `v1.3.0-beta.3`, and restart. You will be asked to sign in again — JLR now emails you an
-> 8-digit verification code as part of signing in.
+> **You will be asked to sign in again**, and JLR now emails you an **8-digit verification code**
+> as part of signing in. That code is only needed when you sign in — day-to-day operation is
+> unattended as before, and your password is no longer stored.
 >
-> **Please report how you get on in [issue #10](https://github.com/willbeeching/ha-jlr-incontrol/issues/10)** —
-> especially if you have a **Jaguar** or use the **remote commands** (lock, climate, charging),
-> as those two paths are the least tested so far.
+> Please report anything odd in
+> [issue #10](https://github.com/willbeeching/ha-jlr-incontrol/issues/10) — particularly if you
+> have a **Jaguar** or use the **remote commands** (lock, climate, charging), which have had the
+> least testing on the new sign-in.
 
 Get your Jaguar or Land Rover into Home Assistant. Fuel level, doors, windows, tyre pressures,
 where you parked it, and (if you want) remote lock and climate control. All you need is the email
