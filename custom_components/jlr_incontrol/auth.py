@@ -79,6 +79,7 @@ class JlrLogin:
         self._state = secrets.token_urlsafe(16)
         self._nonce = secrets.token_urlsafe(16)
         self._callbacks: dict[str, Any] | None = None
+        self._stage = "start"
 
     async def async_close(self) -> None:
         """Drop the cookie jar and its session."""
@@ -116,9 +117,9 @@ class JlrLogin:
             self._fill(data, password)
             payload = data
         raise JlrLoginError(
-            "the JLR login journey did not reach the verification step; it may "
-            "have changed, or this account may use a sign-in method this "
-            "integration does not support"
+            f"the JLR login journey did not reach the verification step (stopped "
+            f"at '{self._stage}'); it may have changed, or this account may use a "
+            "sign-in method this integration does not support"
         )
 
     # ------------------------------------------------------------------ phase 2
@@ -192,10 +193,15 @@ class JlrLogin:
                     ) from None
                 if resp.status == 401:
                     raise JlrLoginError(
-                        str(body.get("message") or "email address or password rejected")
+                        f"{body.get('message') or 'rejected'} "
+                        f"(at sign-in step '{self._stage}')"
                     )
                 if resp.status != 200 or not isinstance(body, dict):
-                    raise JlrLoginError(f"JLR sign-in returned {resp.status}")
+                    raise JlrLoginError(
+                        f"JLR sign-in returned {resp.status} "
+                        f"(at sign-in step '{self._stage}')"
+                    )
+                self._stage = body.get("stage") or self._stage
                 return body
         except aiohttp.ClientError as err:
             raise JlrLoginError(f"could not reach JLR sign-in: {err}") from err
@@ -211,7 +217,9 @@ class JlrLogin:
                 _set(callback, "localAuthentication")
             elif kind == "ValidatedCreateUsernameCallback":
                 _set(callback, self._username)
-            elif kind == "HiddenValueCallback" and name == "webAuthnOutcome":
+            elif kind == "HiddenValueCallback" and (
+                "webauthn" in name.lower() or "webauthn" in stage.lower()
+            ):
                 # "unsupported" is what the app sends when the user dismisses
                 # the passkey prompt; it is what drops us to the password step.
                 _set(callback, "unsupported")
@@ -292,11 +300,18 @@ class JlrLogin:
             raise JlrLoginError(f"could not reach JLR sign-in: {err}") from err
 
 
+# ForgeRock labels a callback under different output keys depending on its
+# type: "id" for HiddenValueCallback, "prompt" for choices and inputs, "name"
+# for some others. Reading only one of them silently finds nothing.
+_NAME_KEYS = ("id", "name", "prompt")
+
+
 def _callback_name(callback: dict[str, Any]) -> str:
-    """The callback's ForgeRock output name, if it has one."""
-    for output in callback.get("output", []):
-        if output.get("name") == "name":
-            return str(output.get("value", ""))
+    """The callback's ForgeRock identifier, whichever key it arrived under."""
+    for key in _NAME_KEYS:
+        for output in callback.get("output", []):
+            if output.get("name") == key:
+                return str(output.get("value", ""))
     return ""
 
 
