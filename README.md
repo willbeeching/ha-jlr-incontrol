@@ -90,7 +90,8 @@ folder and restart.
 1. Go to **Settings → Devices & Services → Add Integration** and search for
    **Jaguar Land Rover InControl**.
 2. Enter your InControl email and password.
-3. Optionally enter your vehicle PIN. If you leave it blank you get monitoring only (plus BEV
+3. Enter the verification code JLR emails you.
+4. Optionally enter your vehicle PIN. If you leave it blank you get monitoring only (plus BEV
    climate if you have an electric vehicle). You can add the PIN later by reconfiguring the entry.
 
 Each vehicle shows up as a device with its sensors, binary sensors, and control entities.
@@ -107,18 +108,21 @@ automatically.
 
 ## How it works
 
-Login is a standard password grant, and the integration then reads status and sends commands
-through the same webview API that JLR's own apps use, with a registered device id. Your
-credentials, device id, user id, and vehicle info are fetched at setup and stored in your own
-Home Assistant config entry. None of it goes anywhere else.
+Sign-in uses the same OpenID Connect flow as JLR's own app, which finishes with a verification
+code emailed to you. After that the integration reads status and sends commands through the
+webview API the apps use, with a registered device id. Only a renewable token, your device id,
+and your user id are stored in your own Home Assistant config entry — your password is not
+kept. None of it goes anywhere else.
+
+Once set up it runs unattended: the token renews itself. You'll only be asked to sign in again
+(and for a fresh emailed code) if that renewal stops working.
 
 Polling is adaptive, to keep the load on JLR's servers low (being a polite client is the best
 way to keep an unofficial integration alive): every 5 minutes while something is happening —
 the car is plugged in or charging, the climate is running, values are changing (e.g. while
 driving), or you've recently pressed a button or sent a command — and every 20 minutes once
 the car has been quiet for half an hour. Vehicle attributes (make/model/capabilities) are
-cached for a day rather than re-fetched on every poll. Tokens are long-lived and refresh
-automatically, so you shouldn't need to log in again.
+cached for a day rather than re-fetched on every poll.
 
 A couple of things worth knowing:
 

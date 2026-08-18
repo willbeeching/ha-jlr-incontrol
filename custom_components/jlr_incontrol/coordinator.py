@@ -62,7 +62,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
-            entry.data[CONF_PASSWORD],
+            entry.data.get(CONF_PASSWORD),
             device_id=entry.data.get(CONF_DEVICE_ID),
             user_id=entry.data.get(CONF_USER_ID),
             refresh_token=entry.data.get(CONF_REFRESH_TOKEN),

@@ -1,7 +1,7 @@
 """Constants for the Jaguar Land Rover InControl integration.
 
-The working backend path is the **webview / password** flow (NOT the ForgeRock /
-Approov app path). A plain password grant on IFAS mints a bearer token; that token,
+The bearer token comes from the app's **ForgeRock OIDC** client (see auth.py);
+JLR edge-blocked the legacy IFAS password grant in August 2026. That token,
 combined with a registered device id and the browser-style ``Origin`` / ``Referer``
 headers, is accepted by the ``/if9/webview/*`` API — which bypasses the Approov
 edge wall (HTTP 498) that blocks the native-app IF9 host.
@@ -14,14 +14,50 @@ from datetime import timedelta
 DOMAIN = "jlr_incontrol"
 
 # ---- Base hosts (all validated live) ----
-IFAS_BASE = "https://ifas.prod-row.jlrmotor.com/ifas"
 IFOP_BASE = "https://ifop.prod-row.jlrmotor.com/ifop/jlr"
 IF9_BASE = "https://if9.prod-row.jlrmotor.com/if9/webview"
 
-# IFAS token endpoint (password / refresh grant).
-IFAS_TOKENS_URL = f"{IFAS_BASE}/webview/tokens"
-# Fixed IFAS client credential ("as:aspass"), base64-encoded.
-TOKENS_BASIC_AUTH = "Basic YXM6YXNwYXNz"
+# ---- Identity: ForgeRock OIDC ----
+# JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
+# every path, with or without credentials), killing the password grant this
+# integration used to mint its bearer token. The app's own ForgeRock client is
+# the replacement; the token it returns is still accepted by if9/webview below,
+# so only the token *source* changed — reads and commands are untouched.
+IDENTITY_BASE = "https://identity.jaguarlandrover.com/gateway"
+IDENTITY_REALM = "realms/root/realms/customer"
+AUTHENTICATE_URL = (
+    f"{IDENTITY_BASE}/json/{IDENTITY_REALM}/authenticate"
+    "?authIndexType=service&authIndexValue=b2c-acr-2"
+)
+AUTHORIZE_URL = f"{IDENTITY_BASE}/oauth2/{IDENTITY_REALM}/authorize"
+ACCESS_TOKEN_URL = f"{IDENTITY_BASE}/oauth2/{IDENTITY_REALM}/access_token"
+# ForgeRock AM refuses the authenticate endpoint without this.
+AUTH_API_VERSION = "resource=2.0, protocol=1.0"
+
+# The app's PUBLIC OAuth client (PKCE, no secret). An OAuth client identifies
+# the *app*, not the car, and the vehicles you get back come from the account —
+# so the Land Rover client is used for Jaguar accounts too. (The same already
+# holds for TELEMATICS_PROGRAM below, which has been "landroverprogram" for
+# every user including Jaguar owners since day one.)
+IAM_CLIENT_ID = "icr-landrover"
+IAM_REDIRECT_URI = "icr-landrover://oauth2redirect"
+IAM_SCOPES = (
+    "openid profile email "
+    "urn:iam2-mgd-v1:scopes:customer:person "
+    "urn:iam2-mgd-v1:scopes:customer:auto-id "
+    "urn:iam2-mgd-v1:scopes:customer:TSDP_attributes "
+    "urn:iam2-mgd-v1:scopes:vehicle:vehicle-data "
+    "urn:iam2-mgd-v1:scopes:vehicle:vehicle-identity"
+)
+
+# The ForgeRock access token lives ~5 minutes, so the renewal margin has to be
+# proportional: a fixed margin larger than the lifetime would mark every token
+# expired the instant it arrived and refresh on every single request.
+TOKEN_RENEW_RATIO = 0.2
+TOKEN_RENEW_MARGIN_MIN = 15
+TOKEN_RENEW_MARGIN_MAX = 300
+# Guard against an unrecognised journey looping the callback chain forever.
+AUTH_MAX_STEPS = 12
 
 # ---- Browser / webview fingerprint ----
 # These headers are what get the webview API past the Approov edge wall. Every

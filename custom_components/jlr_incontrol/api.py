@@ -1,9 +1,14 @@
 """Async client for the Jaguar Land Rover "webview" backend.
 
-The whole flow below was validated live:
+The flow:
 
-    password grant (IFAS) -> device registration (IFOP) -> userId + vehicles (IF9
-    webview) -> per-vehicle status / position / attributes -> PIN-gated commands.
+    ForgeRock OIDC token (see auth.py) -> device registration (IFOP) -> userId +
+    vehicles (IF9 webview) -> per-vehicle status / position / attributes ->
+    PIN-gated commands.
+
+Only the token source is new: JLR edge-blocked the legacy IFAS password grant in
+August 2026. Everything from device registration onward is unchanged and still
+validated live.
 
 The trick that makes this work where the native-app IF9 host does not: the
 ``/if9/webview/*`` API is fronted by a browser-style edge that accepts a plain
@@ -20,18 +25,19 @@ import logging
 import time
 import uuid
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import aiohttp
 
 from .const import (
+    ACCESS_TOKEN_URL,
     BROWSER_HEADERS,
     DIAGNOSTIC_HEADERS,
     FORBIDDEN_HINT,
+    IAM_CLIENT_ID,
     ICE_RCC_MAX,
     ICE_RCC_MIN,
     IF9_BASE,
-    IFAS_TOKENS_URL,
     IFOP_BASE,
     MEDIA_AUTHENTICATE,
     MEDIA_HEALTHSTATUS,
@@ -49,7 +55,10 @@ from .const import (
     SERVICE_VHS,
     SERVICES_EMPTY_PIN,
     TELEMATICS_PROGRAM,
-    TOKENS_BASIC_AUTH,
+    TOKEN_RENEW_MARGIN_MAX,
+    TOKEN_RENEW_MARGIN_MIN,
+    TOKEN_RENEW_RATIO,
+    USER_AGENT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,7 +86,7 @@ class JlrClient:
         self,
         session: aiohttp.ClientSession,
         username: str,
-        password: str,
+        password: str | None = None,
         device_id: str | None = None,
         user_id: str | None = None,
         refresh_token: str | None = None,
@@ -89,7 +98,6 @@ class JlrClient:
         self._device_id = device_id or str(uuid.uuid4())
         self._user_id = user_id
         self._access_token: str | None = None
-        self._authorization_token: str | None = None
         # Seeded from the entry so a restart refreshes rather than re-logging in.
         self._refresh_token: str | None = refresh_token
         self._expires_at: float = 0.0
@@ -111,63 +119,56 @@ class JlrClient:
         return self._refresh_token
 
     # ------------------------------------------------------------------ auth
-    async def async_login(self) -> None:
-        """Obtain tokens via the IFAS password grant. Validated live."""
-        await self._token_request(
-            {
-                "grant_type": "password",
-                "username": self._username,
-                "password": self._password,
-            }
-        )
-
-    async def _refresh(self) -> None:
-        """Renew the access token using the refresh token."""
-        if not self._refresh_token:
-            raise JlrApiError("no refresh token available")
-        await self._token_request(
-            {"grant_type": "refresh_token", "refresh_token": self._refresh_token}
-        )
-
-    async def _token_request(self, body: dict[str, str]) -> None:
-        headers = {
-            **BROWSER_HEADERS,
-            "Authorization": TOKENS_BASIC_AUTH,
-            "Content-Type": MEDIA_JSON,
-            "Accept": MEDIA_JSON,
-        }
-        what = f"token request ({body['grant_type']})"
-        status, tokens = await self._request(
-            "POST", IFAS_TOKENS_URL, headers=headers, data=json.dumps(body), what=what
-        )
-        if status == 403:
-            # Deliberately NOT JlrAuthError: a 403 here is a refusal, not a
-            # rejection of the credentials (seen live with a password that
-            # logs in fine elsewhere). Raising an auth error sends the user to
-            # a reauth prompt to retype details that were never wrong; a plain
-            # API error lets the coordinator back off and retry instead.
-            raise JlrApiError(FORBIDDEN_HINT.format(what=what))
-        if status != 200 or not isinstance(tokens, dict):
-            raise JlrAuthError(f"{what} returned {status}")
+    def apply_tokens(self, tokens: dict[str, Any]) -> None:
+        """Adopt a freshly minted ForgeRock token set."""
         self._access_token = tokens["access_token"]
-        self._authorization_token = tokens.get("authorization_token")
         self._refresh_token = tokens.get("refresh_token", self._refresh_token)
-        # Token lives 24h; renew a little early.
-        self._expires_at = time.monotonic() + int(tokens.get("expires_in", 86400)) - 300
+        expires_in = int(tokens.get("expires_in", 300))
+        # Renew proportionally early. The ForgeRock token only lives ~5 minutes,
+        # so a fixed margin bigger than the lifetime would treat every token as
+        # already expired and refresh on every request.
+        margin = min(
+            TOKEN_RENEW_MARGIN_MAX,
+            max(TOKEN_RENEW_MARGIN_MIN, expires_in * TOKEN_RENEW_RATIO),
+        )
+        self._expires_at = time.monotonic() + expires_in - margin
         # A new token means the device may need re-registering.
         self._device_registered = False
 
+    async def _refresh(self) -> None:
+        """Renew the access token using the (rotating) refresh token."""
+        if not self._refresh_token:
+            raise JlrAuthError("no refresh token available; sign in again")
+        body = urlencode(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": self._refresh_token,
+                "client_id": IAM_CLIENT_ID,
+            }
+        )
+        what = "token refresh"
+        status, tokens = await self._request(
+            "POST",
+            ACCESS_TOKEN_URL,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": MEDIA_JSON,
+                "User-Agent": USER_AGENT,
+            },
+            data=body,
+            what=what,
+        )
+        if status != 200 or not isinstance(tokens, dict):
+            # A dead or already-rotated refresh token can only be fixed by
+            # signing in again, which needs a fresh emailed code.
+            raise JlrAuthError(f"{what} returned {status}; sign in again")
+        self.apply_tokens(tokens)
+
     async def async_ensure_token(self) -> None:
-        """Refresh (or re-login) if the access token is missing or near expiry."""
+        """Refresh the access token if it is missing or near expiry."""
         if self._access_token and time.monotonic() < self._expires_at:
             return
-        if self._refresh_token:
-            try:
-                await self._refresh()
-                return
-            except (JlrAuthError, JlrApiError):
-                _LOGGER.debug("token refresh failed, re-running password login")
-        await self.async_login()
+        await self._refresh()
 
     # -------------------------------------------------------- device / identity
     async def async_register_device(self) -> None:
@@ -184,8 +185,9 @@ class JlrClient:
         }
         body = {
             "access_token": self._access_token,
-            "authorization_token": self._authorization_token,
-            "expires_in": "86400",
+            # ForgeRock issues no separate authorization token.
+            "authorization_token": None,
+            "expires_in": 300,
             "deviceID": self._device_id,
         }
         status, _ = await self._request(
