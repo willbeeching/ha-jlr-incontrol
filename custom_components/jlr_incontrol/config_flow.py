@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -13,10 +14,7 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import callback
-from homeassistant.helpers.aiohttp_client import (
-    async_create_clientsession,
-    async_get_clientsession,
-)
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import JlrClient
 from .auth import JlrInvalidCode, JlrLogin, JlrLoginError
@@ -38,6 +36,8 @@ from .const import (
     PRESSURE_UNIT_KPA,
     PRESSURE_UNIT_PSI,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 STEP_USER_SCHEMA = vol.Schema(
     {
@@ -100,16 +100,18 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         await self._async_discard_login()
         # A dedicated session: the journey depends on its own cookie jar, which
         # must not leak into (or be disturbed by) Home Assistant's shared one.
-        login = JlrLogin(async_create_clientsession(self.hass), username)
+        login = JlrLogin(username)
         try:
             await login.async_begin(password)
         except JlrInvalidCode:
             await login.async_close()
             return {"base": "invalid_auth"}
         except JlrLoginError as err:
+            _LOGGER.error("JLR sign-in failed: %s", err)
             await login.async_close()
             return {"base": _login_error_code(err)}
         except Exception:  # noqa: BLE001 - surface as a generic connection error
+            _LOGGER.exception("Unexpected error during JLR sign-in")
             await login.async_close()
             return {"base": "cannot_connect"}
         self._login = login
@@ -150,8 +152,10 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             except JlrInvalidCode:
                 errors["base"] = "invalid_code"
             except JlrLoginError as err:
+                _LOGGER.error("JLR sign-in failed at the code step: %s", err)
                 errors["base"] = _login_error_code(err)
             except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error submitting the JLR code")
                 errors["base"] = "cannot_connect"
             else:
                 return await self._async_finish(tokens)
@@ -188,6 +192,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             # than after the entry is written.
             await client.async_get_vehicles()
         except Exception:  # noqa: BLE001 - any failure here means unusable tokens
+            _LOGGER.exception("JLR signed us in, but the API rejected the token")
             return self.async_show_form(
                 step_id="user",
                 data_schema=STEP_USER_SCHEMA,

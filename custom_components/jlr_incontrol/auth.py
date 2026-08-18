@@ -63,13 +63,17 @@ def _pkce() -> tuple[str, str]:
 class JlrLogin:
     """Drives one interactive ForgeRock login.
 
-    Holds its own cookie jar: the journey pins server affinity across several
-    hosts' cookies, and Home Assistant's shared session must not be polluted
-    with them. Call ``async_close`` when finished or abandoned.
+    Owns its own session and cookie jar: the journey pins server affinity
+    across several cookies, and Home Assistant's shared session must neither be
+    polluted with them nor closed by us. Call ``async_close`` when finished or
+    abandoned.
     """
 
-    def __init__(self, session: aiohttp.ClientSession, username: str) -> None:
-        self._session = session
+    def __init__(self, username: str) -> None:
+        # A private session, not one of Home Assistant's: the journey needs its
+        # own cookie jar, and HA warns if an integration closes a session it
+        # manages. We create it, we close it.
+        self._session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
         self._username = username
         self._verifier, self._challenge = _pkce()
         self._state = secrets.token_urlsafe(16)
@@ -178,7 +182,14 @@ class JlrLogin:
                     "User-Agent": USER_AGENT,
                 },
             ) as resp:
-                body = await resp.json(content_type=None)
+                try:
+                    body = await resp.json(content_type=None)
+                except ValueError:
+                    text = (await resp.text())[:400]
+                    raise JlrLoginError(
+                        f"JLR sign-in returned {resp.status} with a non-JSON "
+                        f"body: {' '.join(text.split())}"
+                    ) from None
                 if resp.status == 401:
                     raise JlrLoginError(
                         str(body.get("message") or "email address or password rejected")
@@ -270,7 +281,12 @@ class JlrLogin:
             ) as resp:
                 tokens = await resp.json(content_type=None)
                 if resp.status != 200 or not isinstance(tokens, dict):
-                    raise JlrLoginError(f"JLR token exchange returned {resp.status}")
+                    detail = ""
+                    if isinstance(tokens, dict):
+                        detail = f": {tokens.get('error', '')} {tokens.get('error_description', '')}"
+                    raise JlrLoginError(
+                        f"JLR token exchange returned {resp.status}{detail}".strip()
+                    )
                 return tokens
         except aiohttp.ClientError as err:
             raise JlrLoginError(f"could not reach JLR sign-in: {err}") from err
