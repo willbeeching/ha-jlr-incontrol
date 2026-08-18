@@ -112,9 +112,23 @@ folder and restart.
 2. Enter your InControl email and password.
 3. Enter the verification code JLR emails you.
 4. Optionally enter your vehicle PIN. If you leave it blank you get monitoring only (plus BEV
-   climate if you have an electric vehicle). You can add the PIN later by reconfiguring the entry.
+   climate if you have an electric vehicle) — you can add it later, see below.
 
 Each vehicle shows up as a device with its sensors, binary sensors, and control entities.
+
+### Adding or changing the vehicle PIN
+
+Plenty of people set this up read-only first and want the controls later. You don't have to
+remove and re-add the integration (and you won't need another verification code):
+
+**Settings → Devices & Services → Jaguar Land Rover InControl → ⋮ on the entry → Reconfigure**
+
+Enter the PIN and submit. The entry reloads and the PIN-gated entities appear: door lock,
+honk & flash, alarm off, charge control, and ICE/PHEV climate. Clearing the box removes the PIN
+again and drops you back to monitoring only. Your sign-in is untouched either way.
+
+The PIN is your **vehicle security PIN** — the one the InControl app asks for before a remote
+command, not your account password.
 
 ### Options
 
