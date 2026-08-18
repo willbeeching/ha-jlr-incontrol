@@ -621,6 +621,9 @@ class JlrClient:
         # out if an error body happens to quote the request.
         if self._password and self._password in body:
             body = body.replace(self._password, "**REDACTED**")
+        # Collapse whitespace: block pages are multi-line HTML, and a raw body
+        # would put everything after the first line beyond the log entry.
+        body = " ".join(body.split())
         seen = {
             name: resp.headers[name]
             for name in DIAGNOSTIC_HEADERS
