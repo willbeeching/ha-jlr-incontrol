@@ -48,7 +48,7 @@
       "api_rejected": "Signed in successfully, but Jaguar Land Rover then refused the connection. Check the logs for the reason and please report it."
     },
     "abort": {
-      "already_configured": "This account is already configured.",
+      "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
       "reauth_successful": "Signed in again successfully.",
       "reconfigure_successful": "Vehicle PIN updated.",
       "unknown_entry": "That configuration entry no longer exists."

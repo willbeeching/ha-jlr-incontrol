@@ -150,10 +150,19 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         """Collect credentials and start the sign-in journey."""
         errors: dict[str, str] = {}
         if user_input is not None:
+            username = user_input[CONF_USERNAME]
+            # Check for a duplicate *before* signing in. The unique-id check
+            # used to happen at the very end, so adding an account that already
+            # existed cost a full sign-in and a one-time code just to be told
+            # no — and a disabled entry still holds its unique id, so this is
+            # exactly what someone re-adding after a disable would hit (#10).
+            if any(
+                entry.data.get(CONF_USERNAME, "").casefold() == username.casefold()
+                for entry in self._async_current_entries()
+            ):
+                return self.async_abort(reason="already_configured")
             self._pin = user_input.get(CONF_PIN)
-            errors = await self._async_start_login(
-                user_input[CONF_USERNAME], user_input[CONF_PASSWORD]
-            )
+            errors = await self._async_start_login(username, user_input[CONF_PASSWORD])
             if not errors:
                 return await self.async_step_code()
 
