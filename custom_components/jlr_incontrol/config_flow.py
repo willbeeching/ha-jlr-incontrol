@@ -17,7 +17,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import JlrClient
-from .auth import JlrInvalidCode, JlrLogin, JlrLoginError
+from .auth import JlrInvalidCode, JlrLogin, JlrLoginError, JlrSessionExpired
 from .const import (
     CONF_DEVICE_ID,
     CONF_PASSWORD,
@@ -120,6 +120,24 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         self._username = username
         return {}
 
+    def _async_restart_form(self, error: str) -> ConfigFlowResult:
+        """Return to the start of sign-in with an explanation.
+
+        Once the journey is dead, re-showing the code form traps the user in a
+        loop asking for a code that can never be accepted — it survives a
+        reload and only clears on a Home Assistant restart (#10).
+        """
+        if self.source == SOURCE_REAUTH:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                data_schema=STEP_REAUTH_SCHEMA,
+                errors={"base": error},
+                description_placeholders={"email": self._username or ""},
+            )
+        return self.async_show_form(
+            step_id="user", data_schema=STEP_USER_SCHEMA, errors={"base": error}
+        )
+
     async def _async_discard_login(self) -> None:
         """Close any half-finished journey."""
         if self._login is not None:
@@ -148,17 +166,27 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Collect the emailed verification code and finish signing in."""
         errors: dict[str, str] = {}
-        if user_input is not None and self._login is not None:
+        if user_input is not None:
+            if self._login is None:
+                # No journey in progress (e.g. the flow was resumed later).
+                return self._async_restart_form("session_expired")
             try:
                 tokens = await self._login.async_complete(user_input["code"].strip())
             except JlrInvalidCode:
+                # The journey is still alive — let them retype the code.
                 errors["base"] = "invalid_code"
+            except JlrSessionExpired as err:
+                _LOGGER.error("JLR sign-in session expired: %s", err)
+                await self._async_discard_login()
+                return self._async_restart_form("session_expired")
             except JlrLoginError as err:
                 _LOGGER.error("JLR sign-in failed at the code step: %s", err)
-                errors["base"] = _login_error_code(err)
+                await self._async_discard_login()
+                return self._async_restart_form(_login_error_code(err))
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error submitting the JLR code")
-                errors["base"] = "cannot_connect"
+                await self._async_discard_login()
+                return self._async_restart_form("cannot_connect")
             else:
                 return await self._async_finish(tokens)
 
@@ -195,11 +223,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             await client.async_get_vehicles()
         except Exception:  # noqa: BLE001 - any failure here means unusable tokens
             _LOGGER.exception("JLR signed us in, but the API rejected the token")
-            return self.async_show_form(
-                step_id="user",
-                data_schema=STEP_USER_SCHEMA,
-                errors={"base": "cannot_connect"},
-            )
+            return self._async_restart_form("api_rejected")
         finally:
             await self._async_discard_login()
 

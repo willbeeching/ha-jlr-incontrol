@@ -19,7 +19,7 @@
       },
       "code": {
         "title": "Enter your verification code",
-        "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.",
+        "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.\n\nThe code expires quickly, so enter it as soon as it arrives — if the sign-in session times out you'll be asked for your password again.",
         "data": {
           "code": "Verification code"
         }
@@ -43,7 +43,9 @@
       "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Could not reach the Jaguar Land Rover servers.",
       "invalid_code": "That verification code was not accepted. Check the email and try again.",
-      "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details."
+      "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details.",
+      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit.",
+      "api_rejected": "Signed in successfully, but Jaguar Land Rover then refused the connection. Check the logs for the reason and please report it."
     },
     "abort": {
       "already_configured": "This account is already configured.",

@@ -49,7 +49,19 @@ class JlrLoginError(Exception):
 
 
 class JlrInvalidCode(JlrLoginError):
-    """Raised when the emailed verification code is rejected."""
+    """Raised when the emailed verification code is rejected.
+
+    Recoverable: the journey is still alive, so the user can retype the code.
+    """
+
+
+class JlrSessionExpired(JlrLoginError):
+    """Raised when the sign-in session died before the journey finished.
+
+    Not recoverable: JLR's sign-in session is short-lived and often expires
+    while the user is fetching the code from their inbox. Nothing entered from
+    this point can succeed — the whole journey has to start again.
+    """
 
 
 def _pkce() -> tuple[str, str]:
@@ -140,7 +152,12 @@ class JlrLogin:
             if data.get("stage") == STAGE_OTP_COLLECT:
                 self._callbacks = data
                 raise JlrInvalidCode("that verification code was not accepted")
-            raise JlrLoginError("JLR did not return a session after the code")
+            # Anything else means the journey moved somewhere we can't continue
+            # from — in practice the session having lapsed and JLR rewinding us.
+            raise JlrSessionExpired(
+                f"JLR did not return a session after the code (at sign-in step "
+                f"'{self._stage}')"
+            )
 
         auth_code = await self._async_authorize(token_id)
         return await self._async_exchange(auth_code)
@@ -192,10 +209,11 @@ class JlrLogin:
                         f"body: {' '.join(text.split())}"
                     ) from None
                 if resp.status == 401:
-                    raise JlrLoginError(
-                        f"{body.get('message') or 'rejected'} "
-                        f"(at sign-in step '{self._stage}')"
-                    )
+                    message = str(body.get("message") or "rejected")
+                    detail = f"{message} (at sign-in step '{self._stage}')"
+                    if "time" in message.lower() or "session" in message.lower():
+                        raise JlrSessionExpired(detail)
+                    raise JlrLoginError(detail)
                 if resp.status != 200 or not isinstance(body, dict):
                     raise JlrLoginError(
                         f"JLR sign-in returned {resp.status} "
