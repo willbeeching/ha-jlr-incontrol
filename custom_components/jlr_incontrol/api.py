@@ -79,6 +79,17 @@ class JlrApiError(Exception):
     """Raised when a backend request fails."""
 
 
+class JlrConnectionError(JlrApiError):
+    """Raised when a request never reached JLR at all.
+
+    DNS failures, refused connections and timeouts — as opposed to JLR
+    answering and refusing. Worth separating, because "we couldn't reach the
+    servers" and "the servers said no" send someone looking in completely
+    different places (seen live: a DNS timeout on jlrmotor.com reported as the
+    API rejecting a token, #10).
+    """
+
+
 class JlrClient:
     """Talks to the JLR webview backend on behalf of one account."""
 
@@ -593,11 +604,11 @@ class JlrClient:
                     await self._log_error_response(resp, what, payload)
                 return resp.status, payload
         except TimeoutError as err:
-            raise JlrApiError(
+            raise JlrConnectionError(
                 f"{what} timed out after {REQUEST_TIMEOUT.total:.0f}s"
             ) from err
         except aiohttp.ClientError as err:
-            raise JlrApiError(f"{what} failed: {err}") from err
+            raise JlrConnectionError(f"{what} failed: {err}") from err
 
     async def _log_error_response(
         self, resp: aiohttp.ClientResponse, what: str, payload: Any

@@ -16,7 +16,7 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import JlrClient
+from .api import JlrClient, JlrConnectionError
 from .auth import JlrInvalidCode, JlrLogin, JlrLoginError, JlrSessionExpired
 from .const import (
     CONF_DEVICE_ID,
@@ -230,6 +230,12 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             # same path the coordinator takes, so a bad token fails here rather
             # than after the entry is written.
             await client.async_get_vehicles()
+        except JlrConnectionError as err:
+            # Sign-in worked; we simply never reached the vehicle API. Saying
+            # "the API rejected the token" here sends people hunting a JLR-side
+            # problem when the fault is between them and JLR (#10).
+            _LOGGER.error("JLR signed us in, but the API is unreachable: %s", err)
+            return self._async_restart_form("cannot_reach_api")
         except Exception:  # noqa: BLE001 - any failure here means unusable tokens
             _LOGGER.exception("JLR signed us in, but the API rejected the token")
             return self._async_restart_form("api_rejected")
