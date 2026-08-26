@@ -48,7 +48,8 @@ stay that way.
 I'm sorry. I know a fair few people have built automations and dashboards on this, and it is
 genuinely useful right up until the moment it isn't. I'll keep it working for as long as there is
 something to work with, and if it does stop for good I'll say so plainly here rather than leave
-anyone guessing.
+anyone guessing. And if JLR ask me to stop, I will — see the
+[note to them](#a-note-to-jaguar-land-rover) at the end.
 
 ## What you get
 
@@ -139,10 +140,22 @@ Template sensors, automations and dashboard snippets that build on these entitie
 ## Disclaimer
 
 This is an unofficial community project with no affiliation to, or endorsement from, Jaguar Land
-Rover. It relies on undocumented APIs that JLR are actively closing off — see
+Rover. "Jaguar", "Land Rover" and "InControl" are their trademarks, used here only to describe what
+this connects to. It relies on undocumented APIs that JLR are actively closing off — see
 [Where this is heading](#where-this-is-heading) — and it can stop working without warning. It was developed with AI assistance, it comes with no warranty, and you
 should use it with your own account and vehicles at your own risk. There are technical notes and a
 data model write-up in `docs/` if you're curious.
+
+It reads one thing: your own vehicle's data, from your own account, into your own Home Assistant.
+Nothing is routed through me or anyone else, and it sends no commands to any car.
+
+### A note to Jaguar Land Rover
+
+If anyone at JLR would like this changed or taken down, please
+[open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) or get in touch through my
+GitHub profile and I'll do it. No argument and no lawyers required. This is a personal side
+project, not a product and not a commercial venture, built so owners can see their own car in their
+own home automation. If that isn't something you want, say so and it stops.
 
 ## Support
 
