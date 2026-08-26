@@ -8,24 +8,26 @@
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20AI%20tokens-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/willbeeching)
 
 > [!IMPORTANT]
-> ### Update to v1.3.0 — earlier versions can no longer sign in
+> ### Update to v1.4.0 — vehicle data now arrives in real time, remote commands are blocked
 >
-> On **18 August 2026** JLR shut down the legacy login endpoint this integration used, so every
-> version up to and including v1.2.1 stopped being able to authenticate. It is a deliberate
-> closure, not a temporary outage, and it is nothing to do with your account or password.
+> Around **25 August 2026** JLR extended their app-attestation wall (Approov) over the endpoints
+> this integration read vehicle data from. They answer `498` to anything that is not the signed
+> JLR app, and no combination of headers gets past it. Every version up to v1.3.4 shows the car
+> as **unavailable** as a result — often with nothing useful in the log.
 >
-> **[v1.3.0](https://github.com/willbeeching/ha-jlr-incontrol/releases/tag/v1.3.0) fixes this**
-> by moving sign-in to the same OpenID Connect flow JLR's own app uses. Update through HACS and
-> restart.
+> **[v1.4.0](https://github.com/willbeeching/ha-jlr-incontrol/releases/tag/v1.4.0) fixes the
+> readings** by moving them to the real-time telemetry websocket JLR's app uses, which is not
+> attested. This is genuinely better than what it replaces: status is **pushed the moment the car
+> reports it** instead of being polled every few minutes.
 >
-> **You will be asked to sign in again**, and JLR now emails you an **8-digit verification code**
-> as part of signing in. That code is only needed when you sign in — day-to-day operation is
-> unattended as before, and your password is no longer stored.
+> **Remote commands (lock, climate, charging, honk) do not work in v1.4.0.** They run over the
+> same walled endpoints and there is currently no way through. The buttons are still there and
+> will tell you plainly why they failed rather than silently doing nothing. Whether commands can
+> be moved to the websocket too is [being looked
+> at](https://github.com/willbeeching/ha-jlr-incontrol/issues/12).
 >
-> Please report anything odd in
-> [issue #10](https://github.com/willbeeching/ha-jlr-incontrol/issues/10) — particularly if you
-> have a **Jaguar** or use the **remote commands** (lock, climate, charging), which have had the
-> least testing on the new sign-in.
+> If your vehicles show generic names ("Land Rover") after updating, that is the same wall: the
+> endpoint serving make, model and nickname is blocked. Names already known are kept.
 
 Get your Jaguar or Land Rover into Home Assistant. Fuel level, doors, windows, tyre pressures,
 where you parked it, and (if you want) remote lock and climate control. All you need is the email
@@ -143,31 +145,37 @@ automatically.
 ## How it works
 
 Sign-in uses the same OpenID Connect flow as JLR's own app, which finishes with a verification
-code emailed to you. After that the integration reads status and sends commands through the
-webview API the apps use, with a registered device id. Only a renewable token, your device id,
-and your user id are stored in your own Home Assistant config entry — your password is not
-kept. None of it goes anywhere else.
+code emailed to you. Only a renewable token, your device id, and your user id are stored in your
+own Home Assistant config entry — your password is not kept. None of it goes anywhere else.
 
 Once set up it runs unattended: the token renews itself. You'll only be asked to sign in again
 (and for a fresh emailed code) if that renewal stops working.
 
-Polling is adaptive, to keep the load on JLR's servers low (being a polite client is the best
-way to keep an unofficial integration alive): every 5 minutes while something is happening —
-the car is plugged in or charging, the climate is running, values are changing (e.g. while
-driving), or you've recently pressed a button or sent a command — and every 20 minutes once
-the car has been quiet for half an hour. Vehicle attributes (make/model/capabilities) are
-cached for a day rather than re-fetched on every poll.
+**Vehicle data is pushed, not polled.** The integration holds open the same real-time telemetry
+connection JLR's app uses and subscribes to each vehicle on your account. The car's full status
+arrives the instant it is subscribed, and updates stream in as the vehicle reports them — so
+values change in Home Assistant when they change in the car, rather than up to twenty minutes
+later. One connection covers every vehicle.
+
+This is also the polite way round, which matters for an unofficial integration: instead of asking
+JLR's servers the same question on a timer forever, it waits to be told. The only thing still on a
+schedule is housekeeping every fifteen minutes — renew the token, keep the device registration
+alive, and notice a vehicle being added or removed.
 
 A couple of things worth knowing:
 
-- The status you see is whatever the car last reported to JLR's servers. Use **Update from
-  vehicle** (VHS) to wake the car and push fresh data, or **Refresh** to re-fetch the cached
-  copy from the backend. Verified live: VHS refreshes the core/health block (doors, 12V
-  battery, diagnostics). EV charge data (SoC, charging state) comes from a separate vehicle
-  subsystem that VHS doesn't touch, so on a BEV a VHS can "succeed" without those values
-  changing.
+- **Remote commands are currently blocked by JLR** (lock, unlock, climate, charging, honk and
+  flash, and the *Update from vehicle* / VHS button). They use endpoints that now demand app
+  attestation, and pressing one gives an error saying so. Reading works; controlling does not.
+- The status you see is whatever the car last reported to JLR's servers, which is not the same
+  as what the car is doing right now — the vehicle reports on its own schedule, and this
+  integration relays those reports as they arrive. While commands are blocked there is no way
+  to prompt the car for an update.
 - The `last_updated` timestamp reflects when the car last reported position/status to JLR — it
   may lag behind individual values like SoC during charging.
+- **Location may be missing.** The position endpoint is behind the same wall, and it is not yet
+  confirmed whether the telemetry connection carries position for every vehicle. Where it does
+  not, the device tracker simply has no coordinates rather than showing a wrong one.
 - Locked and alarm-armed are independent states: a car can be locked with the alarm off. A
   remote lock command both locks and arms. Alarm state changes reach the backend in ~30 seconds.
 - Remote commands wake the car, so they take a few seconds. The integration waits for the vehicle

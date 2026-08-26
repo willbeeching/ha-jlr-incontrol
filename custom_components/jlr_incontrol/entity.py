@@ -63,8 +63,16 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and self._vin in self.coordinator.data.get(
-            "vehicles", {}
+        """Available while the vehicle is known and telemetry is trusted.
+
+        The coordinator's own success flag only covers the housekeeping poll,
+        which keeps succeeding long after the data socket has died — so it is
+        not on its own a statement about whether these values mean anything.
+        """
+        return (
+            super().available
+            and self._vin in self.coordinator.data.get("vehicles", {})
+            and self.coordinator.telemetry_ok
         )
 
     @property

@@ -1,10 +1,14 @@
 """Constants for the Jaguar Land Rover InControl integration.
 
 The bearer token comes from the app's **ForgeRock OIDC** client (see auth.py);
-JLR edge-blocked the legacy IFAS password grant in August 2026. That token,
-combined with a registered device id and the browser-style ``Origin`` / ``Referer``
-headers, is accepted by the ``/if9/webview/*`` API — which bypasses the Approov
-edge wall (HTTP 498) that blocks the native-app IF9 host.
+JLR edge-blocked the legacy IFAS password grant in August 2026.
+
+That token still opens the identity and vehicle-list endpoints of the
+``/if9/webview/*`` API, but **not** the per-vehicle data ones: JLR extended the
+Approov attestation wall (HTTP 498) over those a week later, and the
+browser-style ``Origin`` / ``Referer`` headers below no longer talk past it.
+Vehicle data now comes over the telemetry websocket (see telemetry.py), which is
+not attested. The command endpoints are still on the walled REST path.
 """
 
 from __future__ import annotations
@@ -16,6 +20,30 @@ DOMAIN = "jlr_incontrol"
 # ---- Base hosts (all validated live) ----
 IFOP_BASE = "https://ifop.prod-row.jlrmotor.com/ifop/jlr"
 IF9_BASE = "https://if9.prod-row.jlrmotor.com/if9/webview"
+
+# ---- Real-time telemetry websocket ----
+# In August 2026 JLR put Approov attestation on the REST vehicle-data endpoints
+# (if9/webview/vehicles/{vin}/status | attributes | position). They answer 498 to
+# anything that cannot produce a device-bound attestation token, and the webview
+# Origin bypass no longer helps. This socket is NOT attested: it takes the plain
+# ForgeRock bearer and pushes the same VHS payload on subscribe, so it replaces
+# polling rather than working around it.
+WS_URL = "wss://if9-ws.prod-row.jlrmotor.com/if9_ws/websocketGateway/v2"
+WS_HOST = "if9-ws.prod-row.jlrmotor.com"
+# The device topic confirms each vehicle subscription; the VIN topics carry the
+# data. Subscribe to the device topic first or the confirmations are missed.
+WS_DEVICE_TOPIC = "/user/topic/DEVICE.{device_id}"
+WS_VIN_TOPIC = "/user/topic/VIN.{vin}"
+WS_ACK_DESTINATION = "/app/messageReceived"
+# Heart-beat we advertise, in milliseconds (the broker asks for 10s each way).
+WS_HEARTBEAT_MS = 20000
+# Give up on a session that has gone completely silent. Three missed beats, not
+# one: a single late frame is not a fault worth tearing the socket down for.
+WS_READ_TIMEOUT = timedelta(seconds=70)
+WS_BACKOFF_START = timedelta(seconds=5)
+WS_BACKOFF_MAX = timedelta(minutes=5)
+# Message type carrying the vehicle health status (the telemetry we want).
+WS_TYPE_STATUS = "VHS"
 
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
@@ -60,8 +88,9 @@ TOKEN_RENEW_MARGIN_MAX = 300
 AUTH_MAX_STEPS = 12
 
 # ---- Browser / webview fingerprint ----
-# These headers are what get the webview API past the Approov edge wall. Every
-# /if9/webview/* request MUST carry the Origin + Referer below or it returns 498/401.
+# Still required by the endpoints that do answer (identity, vehicle list): every
+# /if9/webview/* request without them returns 401. They are no longer sufficient
+# for the per-vehicle endpoints, which now want Approov attestation as well.
 USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
 WEBVIEW_ORIGIN = "https://webview.prod-row.jlrmotor.com"
 WEBVIEW_REFERER = "https://webview.prod-row.jlrmotor.com/"
@@ -85,6 +114,15 @@ DIAGNOSTIC_HEADERS = (
     "CF-Ray",
     "X-Akamai-Request-ID",
     "Akamai-GRN",
+)
+
+# 498 is Approov's. It means the edge wanted a device-bound attestation token
+# that only the signed app can mint — there is no header that talks past it.
+APPROOV_HINT = (
+    "{what} returned 498 — Jaguar Land Rover require app attestation (Approov) "
+    "on this endpoint, which Home Assistant cannot produce. Vehicle data now "
+    "arrives over the telemetry websocket instead; remote commands still use "
+    "this path and are blocked while the wall is up."
 )
 
 # A 403 means JLR understood the request and refused it — which is not the same
@@ -125,6 +163,10 @@ CONF_USER_ID = "user_id"
 # Persisted so a restart resumes with a cheap refresh grant instead of spending
 # a full password login every time (which is what abuse detection notices).
 CONF_REFRESH_TOKEN = "refresh_token"
+# Last known vehicle attributes, per VIN. Cached in the entry because the
+# endpoint that serves them is behind the Approov wall: without this a restart
+# would lose every vehicle's name, model and fuel type for good.
+CONF_ATTRIBUTES = "attributes"
 
 # ---- Options keys ----
 OPT_DISTANCE_UNIT = "distance_unit"
@@ -178,17 +220,24 @@ SERVICE_START_ACCEPTS: dict[str, str] = {
 # Services that authenticate with an empty PIN (per jlrpy / native-app behaviour).
 SERVICES_EMPTY_PIN: frozenset[str] = frozenset({SERVICE_PRECONDITIONING, SERVICE_VHS})
 
-# ---- Polling ----
-# Be a polite client: poll fast only while something is happening (plugged
-# in, charging, climate running, values changing, recent user command) and
-# back off once the car has been quiet, so we don't hammer JLR's servers.
-SCAN_INTERVAL_ACTIVE = timedelta(minutes=5)
-SCAN_INTERVAL_IDLE = timedelta(minutes=20)
-# How long after the last observed change / user interaction to stay fast.
-ACTIVITY_WINDOW = timedelta(minutes=30)
+# ---- Refresh cadence ----
+# Vehicle data arrives over the telemetry socket as it happens, so there is no
+# status polling any more and nothing to make adaptive. What remains on a timer
+# is housekeeping: renew the token, keep the device registration alive, notice a
+# vehicle being added or removed, and retry the attributes that are currently
+# walled. All of it is one or two cheap requests.
+SCAN_INTERVAL_HOUSEKEEPING = timedelta(minutes=15)
 # Vehicle attributes (make/model/capabilities) effectively never change.
 ATTRIBUTES_TTL = timedelta(hours=24)
-DEFAULT_SCAN_INTERVAL = SCAN_INTERVAL_ACTIVE
+# How long to leave the walled attributes endpoint alone after it refuses us.
+# Retrying it every housekeeping cycle would be hundreds of requests a day at a
+# door that is not going to open until JLR decide otherwise.
+ATTRIBUTES_RETRY = timedelta(hours=6)
+# How long the entities keep their last values after the socket drops before
+# going unavailable. Reconnects are routine — the STOMP session is bound to a
+# ~5 minute access token — so a brief gap must not flap every entity, while a
+# long one is a real outage and should look like one.
+TELEMETRY_GRACE = timedelta(minutes=30)
 # A position older than this is flagged stale (informational attribute only).
 STALE_AFTER = timedelta(hours=24)
 

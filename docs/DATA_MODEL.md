@@ -4,6 +4,20 @@ Reverse-engineered from the vehicle status DTOs and mappers. The IF9
 `healthstatus` response is a `coreStatus` list of `{key, value}` pairs (plus a separate `evStatus`
 list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 
+> [!NOTE]
+> **Where this now comes from.** Since late August 2026 the REST `/vehicles/{vin}/status`,
+> `/attributes` and `/position` endpoints are behind JLR's Approov attestation wall and answer
+> `498` to anything that is not the signed app. The same `coreStatus` / `evStatus` payload is
+> pushed over the telemetry websocket
+> (`wss://if9-ws.prod-row.jlrmotor.com/if9_ws/websocketGateway/v2`), which authenticates with the
+> plain ForgeRock bearer and is **not** attested. Subscribing to `/user/topic/VIN.<vin>` returns
+> the current snapshot immediately, then streams updates. Because the shape is identical, every
+> key below maps exactly as it always did — only the transport changed.
+>
+> Each item also carries its own `lastUpdatedTime`, which is what the freshness signal uses. The
+> STOMP envelope's `t` field is when the *broker* sent the message and advances on every
+> reconnect, so it is not a measure of how fresh the vehicle data is.
+
 ## Core status keys (confirmed from mappers)
 - **EV / charging**: `EV_STATE_OF_CHARGE`, `EV_CHARGING_STATUS`
   (CHARGING/FULLYCHARGED/PAUSED/NOTCONNECTED/INITIALIZATION/FAULT/BULKCHARGED/WAITINGTOCHARGE),
@@ -45,6 +59,13 @@ option codes), and `computedValues` (pre-computed booleans, e.g. `remoteDoorPerm
 ## Position
 `VehiclePositionResponse.position` = `{ longitude, latitude, timestamp }` only — **no heading or
 speed**. Reverse-geocoded into street/city/postcode/country for display.
+
+The REST endpoint that served this is now walled (498). The app models a
+`VehiclePosition{lat, lon, timestamp, vin}` arriving over the same telemetry socket as a non-`VHS`
+message type, but that has **not** been observed live yet, so the parser accepts the plausible
+spellings and the device tracker simply has no coordinates where nothing arrives. Attributes are
+in the same position: walled, with the last known set cached in the config entry so a restart does
+not cost every vehicle its name and model.
 
 ## HA entity mapping
 | Platform | Entities |

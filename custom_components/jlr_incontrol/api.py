@@ -10,11 +10,18 @@ Only the token source is new: JLR edge-blocked the legacy IFAS password grant in
 August 2026. Everything from device registration onward is unchanged and still
 validated live.
 
-The trick that makes this work where the native-app IF9 host does not: the
-``/if9/webview/*`` API is fronted by a browser-style edge that accepts a plain
-bearer token as long as the request carries the webview ``Origin`` / ``Referer``
-headers and a registered ``X-Device-Id`` / ``clientId``. That combination bypasses
-the Approov attestation wall (HTTP 498) that blocks the app's IF9 host.
+The ``/if9/webview/*`` API is fronted by a browser-style edge that accepts a
+plain bearer token as long as the request carries the webview ``Origin`` /
+``Referer`` headers and a registered ``X-Device-Id`` / ``clientId``. That used to
+be enough for everything. Since late August 2026 it is only enough for the
+identity and vehicle-list endpoints: the per-vehicle reads (status, attributes,
+position) and the command endpoints now demand Approov attestation as well and
+answer 498 without it.
+
+Vehicle data therefore comes from telemetry.py over the websocket, which is not
+attested. What is left here is auth, device registration, the vehicle list, the
+attributes attempt, and the commands — the last of which are blocked for as long
+as the wall stands, and say so.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ import aiohttp
 
 from .const import (
     ACCESS_TOKEN_URL,
+    APPROOV_HINT,
     BROWSER_HEADERS,
     DIAGNOSTIC_HEADERS,
     FORBIDDEN_HINT,
@@ -90,6 +98,40 @@ class JlrConnectionError(JlrApiError):
     """
 
 
+def flatten_status(payload: dict[str, Any]) -> dict[str, str]:
+    """Flatten the coreStatus/evStatus key/value lists into a single dict.
+
+    Shared by the REST status read and the telemetry socket: the VHS payload
+    pushed over the websocket has exactly the same shape as the one the REST
+    /status endpoint used to return, which is why the sensor layer above did
+    not have to change at all when the reads moved.
+
+    Some vehicles never report a LAST_UPDATED_TIME status key; when the raw
+    items carry per-item lastUpdatedTime fields, synthesise it from the newest
+    one so freshness isn't pinned to the (static while parked) position
+    timestamp.
+    """
+    status: dict[str, str] = {}
+    newest_item_ts = ""
+    vehicle_status = payload.get("vehicleStatus", payload)
+    for group in ("coreStatus", "evStatus"):
+        for item in vehicle_status.get(group, []) or []:
+            key = item.get("key")
+            if key is not None:
+                status[key] = item.get("value")
+            item_ts = item.get("lastUpdatedTime")
+            # ISO timestamps in a consistent format sort lexicographically.
+            if isinstance(item_ts, str) and item_ts > newest_item_ts:
+                newest_item_ts = item_ts
+    # Per-item timestamps are authoritative: on cars that do report a
+    # LAST_UPDATED_TIME key it can lag the individual values (the "frozen
+    # last_updated" from the first field reports).
+    existing = status.get("LAST_UPDATED_TIME") or ""
+    if newest_item_ts and newest_item_ts > existing:
+        status["LAST_UPDATED_TIME"] = newest_item_ts
+    return status
+
+
 class JlrClient:
     """Talks to the JLR webview backend on behalf of one account."""
 
@@ -118,6 +160,27 @@ class JlrClient:
     def device_id(self) -> str:
         """The stable device id used for this client (persist it in the entry)."""
         return self._device_id
+
+    @property
+    def username(self) -> str:
+        """The account this client is signed in as."""
+        return self._username
+
+    @property
+    def access_token(self) -> str | None:
+        """The current bearer, for callers that authenticate outside _request."""
+        return self._access_token
+
+    def seconds_until_renewal(self) -> float:
+        """How long the current access token is still good for, in seconds.
+
+        The telemetry socket binds its STOMP session to the bearer presented at
+        CONNECT, so it needs to know when to reconnect rather than waiting to be
+        disconnected.
+        """
+        if not self._access_token:
+            return 0.0
+        return max(0.0, self._expires_at - time.monotonic())
 
     @property
     def user_id(self) -> str | None:
@@ -270,7 +333,7 @@ class JlrClient:
         )
         if status != 200:
             raise self._error("status", status)
-        return self._flatten_status(payload or {})
+        return flatten_status(payload or {})
 
     async def async_get_position(self, vin: str) -> dict[str, Any]:
         """Return the vehicle position ({latitude, longitude, timestamp, ...})."""
@@ -295,35 +358,6 @@ class JlrClient:
     # it 504s after ~70s. The modern app dropped trips entirely (no trip
     # endpoints in its JS bundle) and the old direct /if9/jlr/ path is behind
     # the Approov wall, so there is nothing reliable to build on.
-
-    @staticmethod
-    def _flatten_status(payload: dict[str, Any]) -> dict[str, str]:
-        """Flatten the coreStatus/evStatus key/value lists into a single dict.
-
-        Some vehicles never report a LAST_UPDATED_TIME status key; when the
-        raw items carry per-item lastUpdatedTime fields, synthesise it from
-        the newest one so freshness isn't pinned to the (static while parked)
-        position timestamp.
-        """
-        status: dict[str, str] = {}
-        newest_item_ts = ""
-        vehicle_status = payload.get("vehicleStatus", {})
-        for group in ("coreStatus", "evStatus"):
-            for item in vehicle_status.get(group, []):
-                key = item.get("key")
-                if key is not None:
-                    status[key] = item.get("value")
-                item_ts = item.get("lastUpdatedTime")
-                # ISO timestamps in a consistent format sort lexicographically.
-                if isinstance(item_ts, str) and item_ts > newest_item_ts:
-                    newest_item_ts = item_ts
-        # Per-item timestamps are authoritative: on cars that do report a
-        # LAST_UPDATED_TIME key it can lag the individual values (the "frozen
-        # last_updated" from the first field reports).
-        existing = status.get("LAST_UPDATED_TIME") or ""
-        if newest_item_ts and newest_item_ts > existing:
-            status["LAST_UPDATED_TIME"] = newest_item_ts
-        return status
 
     # ---------------------------------------------------------------- commands
     #
@@ -663,10 +697,7 @@ class JlrClient:
     @staticmethod
     def _error(what: str, status: int) -> JlrApiError:
         if status == 498:
-            return JlrApiError(
-                f"{what} returned 498 (Approov edge wall) — the Origin/Referer/clientId "
-                "headers are required to pass this gate"
-            )
+            return JlrApiError(APPROOV_HINT.format(what=what))
         if status == 401:
             return JlrAuthError(f"{what} returned 401 (token expired or invalid)")
         if status == 403:

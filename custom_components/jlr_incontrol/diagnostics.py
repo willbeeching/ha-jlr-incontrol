@@ -34,7 +34,16 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     data = coordinator.data
-    redacted: dict[str, Any] = {"vehicles": {}}
+    redacted: dict[str, Any] = {
+        # Where the data is actually coming from. Without this a dump of empty
+        # vehicles looks the same whether the socket is down or the car is.
+        "telemetry": {
+            "connected": coordinator.telemetry.connected,
+            "trusted": coordinator.telemetry_ok,
+            "vehicles_subscribed": len(data.get("vehicles", {})),
+        },
+        "vehicles": {},
+    }
     for vin, vehicle in data.get("vehicles", {}).items():
         redacted_vehicle = {
             "role": vehicle.get("role"),

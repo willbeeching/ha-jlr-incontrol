@@ -8,8 +8,8 @@
   "dependencies": [],
   "documentation": "https://github.com/willbeeching/ha-jlr-incontrol",
   "integration_type": "device",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/willbeeching/ha-jlr-incontrol/issues",
   "requirements": [],
-  "version": "1.3.4"
+  "version": "1.4.0"
 }

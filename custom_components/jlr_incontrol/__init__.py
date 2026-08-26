@@ -12,7 +12,10 @@ from .coordinator import JlrCoordinator
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up JLR InControl from a config entry."""
     coordinator = JlrCoordinator(hass, entry)
+    # Housekeeping first (token, device registration, vehicle list), then the
+    # telemetry socket, which is where the vehicle data itself comes from.
     await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_start_telemetry()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -24,10 +27,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator: JlrCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        await coordinator.telemetry.async_stop()
     return unloaded
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the integration when options change."""
+    """Reload the integration when the *options* change.
+
+    Not on every entry change. JLR rotate the refresh token on each renewal and
+    the coordinator persists the new one, so a listener that reloads whenever
+    the entry is written turned a five-minute token into a five-minute teardown
+    and re-setup of the whole integration — entities dropping out, the device
+    re-registering, and the caches wiped, around the clock.
+    """
+    coordinator: JlrCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and coordinator.options_snapshot == dict(entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
