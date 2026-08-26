@@ -21,6 +21,31 @@ to JLR's own backend, so it runs anywhere Home Assistant does.
 > This release is **read-only**. Remote control (lock, climate, charging, honk) is no longer
 > available.
 
+## Where this is heading
+
+Read this before you build anything important on top of it.
+
+Over August 2026 Jaguar Land Rover closed off the routes this integration used, one after another.
+First the login endpoint, then app attestation over the endpoints that serve vehicle data, then
+the same over everything that sends a command to the car. Each time, a way round has been found —
+sign-in moved to the flow the app itself uses, status moved to the real-time telemetry connection,
+and location and vehicle names now come from the owner web portal.
+
+But that is three workarounds in a fortnight, and the pattern is not ambiguous: JLR are steadily
+shutting the door on anything that is not their own app. The two routes still open are open
+because nobody has closed them yet, not because they are meant to be used. **Assume this is the
+last working version.** If the telemetry connection or the portal goes the way of the rest, there
+may be nothing left to move to, and that will be the end of it rather than another update.
+
+Remote control has already reached that point. Every surface has been checked and there is no way
+to actuate the car without the app's attestation, so this integration is read-only now and will
+stay that way.
+
+I'm sorry. I know a fair few people have built automations and dashboards on this, and it is
+genuinely useful right up until the moment it isn't. I'll keep it working for as long as there is
+something to work with, and if it does stop for good I'll say so plainly here rather than leave
+anyone guessing.
+
 ## What you get
 
 - Live vehicle status, pushed as the car reports it: fuel level and range, odometer,
@@ -110,8 +135,8 @@ Template sensors, automations and dashboard snippets that build on these entitie
 ## Disclaimer
 
 This is an unofficial community project with no affiliation to, or endorsement from, Jaguar Land
-Rover. It relies on an undocumented API that JLR could change or block tomorrow, which would break
-things without warning. It was developed with AI assistance, it comes with no warranty, and you
+Rover. It relies on undocumented APIs that JLR are actively closing off — see
+[Where this is heading](#where-this-is-heading) — and it can stop working without warning. It was developed with AI assistance, it comes with no warranty, and you
 should use it with your own account and vehicles at your own risk. There are technical notes and a
 data model write-up in `docs/` if you're curious.
 
