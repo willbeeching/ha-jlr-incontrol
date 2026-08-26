@@ -5,18 +5,13 @@ Reverse-engineered from the vehicle status DTOs and mappers. The IF9
 list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 
 > [!NOTE]
-> **Where this now comes from.** Since late August 2026 the REST `/vehicles/{vin}/status`,
-> `/attributes` and `/position` endpoints are behind JLR's Approov attestation wall and answer
-> `498` to anything that is not the signed app. The same `coreStatus` / `evStatus` payload is
-> pushed over the telemetry websocket
-> (`wss://if9-ws.prod-row.jlrmotor.com/if9_ws/websocketGateway/v2`), which authenticates with the
-> plain ForgeRock bearer and is **not** attested. Subscribing to `/user/topic/VIN.<vin>` returns
-> the current snapshot immediately, then streams updates. Because the shape is identical, every
-> key below maps exactly as it always did — only the transport changed.
+> **Where this data comes from.** Vehicle status is pushed to the integration in real time rather
+> than polled, and location and vehicle names are read separately. The payload shape below is
+> unchanged either way — every key maps exactly as it always did.
 >
-> Each item also carries its own `lastUpdatedTime`, which is what the freshness signal uses. The
-> STOMP envelope's `t` field is when the *broker* sent the message and advances on every
-> reconnect, so it is not a measure of how fresh the vehicle data is.
+> Freshness comes from the per-item timestamps where a vehicle supplies them, and from observed
+> change where it does not. The transport's own message time is deliberately not used: it advances
+> on every reconnect and would report a permanently fresh vehicle.
 
 ## Core status keys (confirmed from mappers)
 - **EV / charging**: `EV_STATE_OF_CHARGE`, `EV_CHARGING_STATUS`
@@ -60,20 +55,9 @@ option codes), and `computedValues` (pre-computed booleans, e.g. `remoteDoorPerm
 `VehiclePositionResponse.position` = `{ longitude, latitude, timestamp }` only — **no heading or
 speed**. Reverse-geocoded into street/city/postcode/country for display.
 
-The REST endpoint that served this is walled (498), and position never appeared on the telemetry
-socket either — only `VHS` messages arrive on the VIN topics. Both position and attributes now come
-from the **owner web portal** (`incontrol.landrover.com` / `incontrol.jaguar.com`), whose backend
-calls if9 with its own whitelisted credentials, so what it renders is already past Approov:
-
-- `GET /ajax/pollvehiclestatus` → JSON with `fullVin`, `nickname`, `vehicleBrand`, `vehicleType`,
-  `registrationNumber`, and a per-account opaque vehicle id inside `continueSetupLink`.
-- `GET /dashboard/vehicle/{id}` → HTML embedding `let waypoints = [...]`, the last journey's GPS
-  trail. Its final point with coordinates is the parked location; the final non-null `timestamp`
-  (epoch **milliseconds**) is the fix time.
-
-This is last-journey-end, not live tracking, and it depends on the ForgeRock session captured at
-sign-in rather than on the renewable token. The last known attributes are cached in the config
-entry so a restart does not cost every vehicle its name and model.
+Location is the end of the last completed journey rather than a live position, and it updates when
+a trip completes and syncs. Vehicle attributes are cached in the config entry so a restart does not
+cost every vehicle its name and model.
 
 ## HA entity mapping
 | Platform | Entities |
@@ -84,8 +68,7 @@ entry so a restart does not cost every vehicle its name and model.
 | `button` | refresh (re-reads the polled data, including location) |
 
 Door lock state is a binary sensor and the charge-now override a `charge_now_setting` enum sensor.
-There are no control entities: remote commands need the app's Approov attestation, which no
-non-app client can produce.
+There are no control entities. Remote commands require the manufacturer's own app.
 
 Feature-gate every entity on the vehicle's `services` + `vehicleCapability` + `computedValues`
 rather than assuming all exist for every VIN.
