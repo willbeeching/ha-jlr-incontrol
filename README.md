@@ -51,6 +51,27 @@ something to work with, and if it does stop for good I'll say so plainly here ra
 anyone guessing. And if JLR ask me to stop, I will — see the
 [note to them](#a-note-to-jaguar-land-rover) at the end.
 
+### Owners' right to their own data
+
+Worth knowing, if you'd rather none of this were necessary.
+
+Under the **EU Data Act** (Regulation (EU) 2023/2854), which covers connected products and names
+vehicles explicitly, owners in the EU have a right to the data their vehicle generates, and a right
+to have the manufacturer share it with a third party of their choosing — machine-readable and,
+where technically feasible, continuously. It also limits using technical measures to frustrate
+those rights.
+
+That is the route this integration ought to be unnecessary alongside. If you're in the EU, you can
+ask Jaguar Land Rover directly how an owner is meant to get continuous access to their own vehicle
+data, and what the compliant route is. In the UK the equivalent is weaker: UK GDPR gives you access
+and portability, which means a copy of your data on request rather than a live feed.
+
+None of that makes this integration official or sanctioned, and none of it is legal advice — the
+Data Act's applicability dates are staggered and the detail matters. But manufacturers respond to
+being asked, and the more owners who ask for proper access, the less anyone needs a project like
+this one. **If you do ask and get a useful answer, please post it in an issue** — a documented,
+supported route would be a better outcome than another workaround.
+
 ## What you get
 
 - Live vehicle status, pushed as the car reports it: fuel level and range, odometer,
