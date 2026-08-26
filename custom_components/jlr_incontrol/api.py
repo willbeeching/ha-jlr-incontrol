@@ -45,6 +45,7 @@ from .const import (
     IAM_CLIENT_ID,
     ICE_RCC_MAX,
     ICE_RCC_MIN,
+    IDENTITY_ALIASES,
     IF9_BASE,
     IFOP_BASE,
     MEDIA_AUTHENTICATE,
@@ -67,6 +68,7 @@ from .const import (
     TOKEN_RENEW_MARGIN_MIN,
     TOKEN_RENEW_RATIO,
     USER_AGENT,
+    VIN_BRANDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -96,6 +98,34 @@ class JlrConnectionError(JlrApiError):
     different places (seen live: a DNS timeout on jlrmotor.com reported as the
     API rejecting a token, #10).
     """
+
+
+def identity_fields(source: dict[str, Any]) -> dict[str, Any]:
+    """Pull naming fields out of any payload, under whichever spelling.
+
+    Several endpoints could name a vehicle and they do not agree on key names,
+    so normalise onto the ones the entity layer reads rather than teaching the
+    entity layer every variant.
+    """
+    found: dict[str, Any] = {}
+    for canonical, aliases in IDENTITY_ALIASES.items():
+        for alias in aliases:
+            value = source.get(alias)
+            if value not in (None, ""):
+                found[canonical] = value
+                break
+    return found
+
+
+def brand_from_vin(vin: str) -> dict[str, str]:
+    """The one thing a VIN tells us for certain: which marque built it.
+
+    Enough to stop a Jaguar being labelled "Land Rover" when the endpoint that
+    knows better is blocked. The model is deliberately not guessed from the
+    remaining characters — a confidently wrong model is worse than none.
+    """
+    brand = VIN_BRANDS.get(vin[:3].upper())
+    return {"vehicleBrand": brand} if brand else {}
 
 
 def flatten_status(payload: dict[str, Any]) -> dict[str, str]:
@@ -311,17 +341,63 @@ class JlrClient:
             raise self._error("vehicle list", status)
         return (payload or {}).get("vehicles", [])
 
-    async def async_get_attributes(self, vin: str) -> dict[str, Any]:
-        """Return the raw vehicle attributes (make / model / capabilities)."""
-        status, payload = await self._request(
-            "GET",
-            f"{IF9_BASE}/vehicles/{vin}/attributes",
-            headers=self._webview_headers(MEDIA_JSON),
-            what="attributes",
+    def _identity_urls(self, vin: str) -> tuple[tuple[str, str], ...]:
+        """Endpoints that might name the vehicle, best first.
+
+        The Approov rule looks like it sits on ``/vehicles/{vin}/*`` — the
+        vehicle list and the identity lookups, which are rooted at ``/users/``,
+        still answer 200 while everything under a VIN answers 498. The real
+        attributes endpoint is tried first because it is the richest source and
+        costs nothing the day JLR lift the wall; the ``/users/``-rooted paths
+        after it are candidates on that theory rather than endpoints anyone has
+        seen work, which is why every attempt is logged with what it returned.
+        """
+        return (
+            ("attributes", f"{IF9_BASE}/vehicles/{vin}/attributes"),
+            (
+                "attributes (via user)",
+                f"{IF9_BASE}/users/{self._user_id}/vehicles/{vin}/attributes",
+            ),
+            (
+                "vehicle record (via user)",
+                f"{IF9_BASE}/users/{self._user_id}/vehicles/{vin}",
+            ),
         )
-        if status != 200:
-            raise self._error("attributes", status)
-        return payload or {}
+
+    async def async_get_attributes(self, vin: str) -> dict[str, Any]:
+        """Return whatever identity/capability attributes can still be had.
+
+        Raises the last failure only if nothing anywhere answered, so a walled
+        primary endpoint does not hide a working alternative.
+        """
+        await self.async_connect()
+        last_error: JlrApiError | None = None
+        for what, url in self._identity_urls(vin):
+            try:
+                status, payload = await self._request(
+                    "GET", url, headers=self._webview_headers(MEDIA_JSON), what=what
+                )
+            except JlrApiError as err:
+                last_error = err
+                continue
+            if status != 200 or not isinstance(payload, dict):
+                last_error = self._error(what, status)
+                continue
+            identity = identity_fields(payload)
+            if identity:
+                _LOGGER.debug("identity for %s came from %s", vin, what)
+                # Keep the whole payload when it is the real attributes
+                # document: capability flags live alongside the names.
+                return {**payload, **identity}
+            _LOGGER.debug(
+                "%s answered 200 for %s but named nothing; keys=%s",
+                what,
+                vin,
+                sorted(payload)[:20],
+            )
+        if last_error:
+            raise last_error
+        return {}
 
     async def async_get_status(self, vin: str) -> dict[str, Any]:
         """Return the flattened vehicle status ({key: value} from coreStatus/evStatus)."""

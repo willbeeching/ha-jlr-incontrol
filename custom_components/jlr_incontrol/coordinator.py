@@ -20,7 +20,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .api import JlrApiError, JlrAuthError, JlrClient
+from .api import (
+    JlrApiError,
+    JlrAuthError,
+    JlrClient,
+    brand_from_vin,
+    identity_fields,
+)
 from .const import (
     ATTRIBUTES_RETRY,
     ATTRIBUTES_TTL,
@@ -76,7 +82,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._attributes_attempted: dict[str, Any] = {}
         # Pushed state, keyed by VIN.
         self._status: dict[str, dict[str, Any]] = {}
-        # When the broker last pushed for this VIN (message time, not car time).
+        # When the broker last pushed for this VIN. Message time, not car time —
+        # surfaced in diagnostics only, never used as a freshness signal.
         self._pushed_at: dict[str, str] = {}
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
@@ -149,11 +156,25 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._vehicles = found
             self.telemetry.async_set_vehicles(found)
 
-        for vin in self._vehicles:
+        for vin, vehicle in self._vehicles.items():
+            # Free sources first: the vehicle-list entry is already in hand, and
+            # the VIN's manufacturer prefix costs nothing. Both are floors — a
+            # real attributes document overwrites them.
+            self._seed_identity(vin, vehicle)
             await self._async_refresh_attributes(vin)
 
         self._persist()
         return self._build()
+
+    def _seed_identity(self, vin: str, vehicle: dict[str, Any]) -> None:
+        """Name the vehicle from what we already have, without asking JLR."""
+        seed = {**brand_from_vin(vin), **identity_fields(vehicle)}
+        if not seed:
+            return
+        current = self._attributes.get(vin, {})
+        missing = {key: value for key, value in seed.items() if not current.get(key)}
+        if missing:
+            self._attributes[vin] = {**current, **missing}
 
     async def _async_refresh_attributes(self, vin: str) -> None:
         """Retry the attributes endpoint, keeping whatever we already had.
@@ -176,7 +197,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("attributes for %s unavailable: %s", vin, err)
             return
         if attributes:
-            self._attributes[vin] = attributes
+            self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
 
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
@@ -257,16 +278,17 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for vin, vehicle in self._vehicles.items():
             status = self._status.get(vin, {})
             position = self._position.get(vin, {})
-            # The envelope time is when the broker pushed the message, not when
-            # the car measured anything — it advances on every reconnect even if
-            # the payload is byte-identical. Taking the newest of it and the real
-            # signals would report a permanently fresh vehicle, so it is only a
-            # last resort for cars that supply no timestamp of their own.
+            # Deliberately not the STOMP envelope's time. That is when the
+            # broker pushed the message and it advances on every reconnect even
+            # when the payload is byte-identical, so using it — even as a
+            # fallback — reports a permanently fresh vehicle. These cars send no
+            # per-item timestamp at all, which leaves change detection as the
+            # only honest signal, and unknown until something moves.
             status_ts = self._newest(
                 position.get("timestamp"),
                 status.get("LAST_UPDATED_TIME"),
                 self._last_changed.get(vin),
-            ) or self._pushed_at.get(vin)
+            )
             data["vehicles"][vin] = {
                 "role": vehicle.get("role"),
                 "attributes": self._attributes.get(vin, {}),

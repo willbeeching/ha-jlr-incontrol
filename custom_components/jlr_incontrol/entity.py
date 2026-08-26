@@ -78,11 +78,16 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         attrs = self._attributes
-        name = attrs.get("nickname") or attrs.get("vehicleBrand") or "Land Rover"
+        # The brand comes from the VIN when the endpoint that knows better is
+        # blocked, so it is safe to lean on; the model often is not there.
+        brand = attrs.get("vehicleBrand") or "Vehicle"
         model = attrs.get("vehicleType") or attrs.get("model")
+        # Two cars on one account would otherwise both be called "Land Rover".
+        # The VIN's last four is how the V5C and JLR's own app shorten it.
+        name = attrs.get("nickname") or model or f"{brand} {self._vin[-4:]}"
         return DeviceInfo(
             identifiers={(DOMAIN, self._vin)},
-            manufacturer=attrs.get("vehicleBrand", "Land Rover"),
+            manufacturer=brand,
             model=model,
             name=name,
             serial_number=self._vin,

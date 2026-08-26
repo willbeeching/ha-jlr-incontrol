@@ -42,6 +42,7 @@ from .const import (
     WS_BACKOFF_START,
     WS_DEVICE_TOPIC,
     WS_HEARTBEAT_MS,
+    WS_HEARTBEAT_SEND,
     WS_HOST,
     WS_READ_TIMEOUT,
     WS_TYPE_STATUS,
@@ -293,8 +294,8 @@ class JlrTelemetry:
         deadline: float,
     ) -> None:
         """Pump frames until the token deadline or the socket drops."""
-        beat = WS_HEARTBEAT_MS / 1000
-        last_rx = time.monotonic()
+        beat = WS_HEARTBEAT_SEND.total_seconds()
+        last_rx = last_tx = time.monotonic()
         while True:
             now = time.monotonic()
             if now >= deadline:
@@ -304,11 +305,17 @@ class JlrTelemetry:
                 raise JlrTelemetryError(
                     f"no telemetry traffic for {WS_READ_TIMEOUT.total_seconds():.0f}s"
                 )
-            try:
-                msg = await ws.receive(timeout=min(beat, max(deadline - now, 1.0)))
-            except TimeoutError:
-                # Our half of the heart-beat contract: a bare EOL.
+            # Our half of the heart-beat contract, on a clock rather than on an
+            # idle read: the broker sends every 10s, so waiting for a quiet
+            # socket to prompt us means never sending one, and it closes the
+            # session for inactivity after a couple of minutes.
+            if now - last_tx >= beat:
                 await ws.send_str("\n")
+                last_tx = now
+            window = min(beat - (now - last_tx), max(deadline - now, 0.1))
+            try:
+                msg = await ws.receive(timeout=max(window, 0.1))
+            except TimeoutError:
                 continue
 
             if msg.type is aiohttp.WSMsgType.TEXT:
@@ -382,6 +389,11 @@ class JlrTelemetry:
             status = flatten_status(payload)
             if not status:
                 return
+            if "LAST_UPDATED_TIME" not in status:
+                _LOGGER.debug(
+                    "VHS items carry no recognised timestamp; first item is %s",
+                    _first_item(payload),
+                )
             self._on_status(vin, status, str(envelope.get("t") or "") or None)
             return
 
@@ -415,6 +427,12 @@ class JlrTelemetry:
         if connected != self._connected:
             self._connected = connected
             self._on_connected(connected)
+
+
+def _first_item(payload: dict[str, Any]) -> Any:
+    """One raw coreStatus item, for identifying an unrecognised field name."""
+    group = (payload.get("vehicleStatus", payload) or {}).get("coreStatus") or []
+    return group[0] if group else None
 
 
 def _inner_payload(envelope: dict[str, Any]) -> dict[str, Any] | None:

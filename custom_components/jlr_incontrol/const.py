@@ -37,6 +37,12 @@ WS_VIN_TOPIC = "/user/topic/VIN.{vin}"
 WS_ACK_DESTINATION = "/app/messageReceived"
 # Heart-beat we advertise, in milliseconds (the broker asks for 10s each way).
 WS_HEARTBEAT_MS = 20000
+# How often we actually send one. This has to be driven by a clock, not by an
+# idle read: the broker chats every 10s, so a heart-beat sent only when the read
+# times out is a heart-beat never sent — and the broker closes the session for
+# inactivity after a couple of minutes. Comfortably inside both its 10s ask and
+# our own 20s advertisement.
+WS_HEARTBEAT_SEND = timedelta(seconds=8)
 # Give up on a session that has gone completely silent. Three missed beats, not
 # one: a single late frame is not a fault worth tearing the socket down for.
 WS_READ_TIMEOUT = timedelta(seconds=70)
@@ -227,6 +233,24 @@ SERVICES_EMPTY_PIN: frozenset[str] = frozenset({SERVICE_PRECONDITIONING, SERVICE
 # vehicle being added or removed, and retry the attributes that are currently
 # walled. All of it is one or two cheap requests.
 SCAN_INTERVAL_HOUSEKEEPING = timedelta(minutes=15)
+# Identity fields worth having, and the spellings they have been seen under.
+# The canonical names on the left are what the entity layer reads.
+IDENTITY_ALIASES: dict[str, tuple[str, ...]] = {
+    "nickname": ("nickname", "vehicleNickname"),
+    "vehicleBrand": ("vehicleBrand", "brand", "make"),
+    "vehicleType": ("vehicleType", "vehicleModel", "modelName", "model"),
+    "model": ("model", "vehicleType"),
+    "fuelType": ("fuelType", "FuelType", "fuel"),
+    "numberOfDoors": ("numberOfDoors",),
+    "registrationNumber": ("registrationNumber", "registration"),
+    "modelYear": ("modelYear", "vehicleModelYear"),
+}
+
+# World Manufacturer Identifier -> brand. Only the two that are unambiguous:
+# guessing a model from the rest of the VIN would put the wrong car on
+# someone's dashboard, which is worse than a generic name.
+VIN_BRANDS = {"SAL": "Land Rover", "SAJ": "Jaguar"}
+
 # Vehicle attributes (make/model/capabilities) effectively never change.
 ATTRIBUTES_TTL = timedelta(hours=24)
 # How long to leave the walled attributes endpoint alone after it refuses us.

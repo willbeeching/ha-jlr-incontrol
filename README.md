@@ -26,8 +26,10 @@
 > be moved to the websocket too is [being looked
 > at](https://github.com/willbeeching/ha-jlr-incontrol/issues/12).
 >
-> If your vehicles show generic names ("Land Rover") after updating, that is the same wall: the
-> endpoint serving make, model and nickname is blocked. Names already known are kept.
+> If your vehicles show a brand and four digits ("Land Rover 8558") after updating, that is the
+> same wall: the endpoint serving make, model and nickname is blocked, so the name falls back to
+> the marque from the VIN plus its last four characters — which at least tells two cars apart.
+> Names already known are kept, and the real ones return by themselves if JLR lift the wall.
 
 Get your Jaguar or Land Rover into Home Assistant. Fuel level, doors, windows, tyre pressures,
 where you parked it, and (if you want) remote lock and climate control. All you need is the email

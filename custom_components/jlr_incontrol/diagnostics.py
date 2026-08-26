@@ -41,6 +41,9 @@ async def async_get_config_entry_diagnostics(
             "connected": coordinator.telemetry.connected,
             "trusted": coordinator.telemetry_ok,
             "vehicles_subscribed": len(data.get("vehicles", {})),
+            # Message time, not vehicle time. Here to show the socket is alive;
+            # it is deliberately kept out of the freshness signal.
+            "last_push": dict(getattr(coordinator, "_pushed_at", {})),
         },
         "vehicles": {},
     }
