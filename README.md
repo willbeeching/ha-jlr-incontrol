@@ -14,9 +14,13 @@ There's no third-party cloud in the middle and nothing to plug into the car. The
 to JLR's own backend, so it runs anywhere Home Assistant does.
 
 > [!IMPORTANT]
-> **Upgrading from v1.3.x or earlier: remove and re-add the integration.** v1.4.0 changed how it
-> reads your car, and the new route needs a sign-in that older versions never captured. Without it
-> you'll see vehicles named from their VIN and no location.
+> **Upgrading from v1.3.x or earlier: sign in again once.** v1.4.0 changed how it reads your car,
+> and reading location and vehicle names needs a sign-in that older versions never captured.
+> Without it you'll see vehicles named from their VIN and no location.
+>
+> **Settings → Devices & Services → Jaguar Land Rover InControl → ⋮ on the entry → Reconfigure**,
+> then your password and the emailed code. Your entities, history and automations are kept —
+> there's no need to remove and re-add anything.
 >
 > This release is **read-only**. Remote control (lock, climate, charging, honk) is no longer
 > available.

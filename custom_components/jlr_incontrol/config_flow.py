@@ -9,6 +9,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -123,9 +124,11 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         loop asking for a code that can never be accepted — it survives a
         reload and only clears on a Home Assistant restart (#10).
         """
-        if self.source == SOURCE_REAUTH:
+        if self.source in (SOURCE_REAUTH, SOURCE_RECONFIGURE):
             return self.async_show_form(
-                step_id="reauth_confirm",
+                step_id=(
+                    "reauth_confirm" if self.source == SOURCE_REAUTH else "reconfigure"
+                ),
                 data_schema=STEP_REAUTH_SCHEMA,
                 errors={"base": error},
                 description_placeholders={"email": self._username or ""},
@@ -209,14 +212,18 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         # names — authenticates against that session, and nothing headless can
         # mint another one.
         sso_cookies = self._login.session_cookies() if self._login else {}
-        reauth_entry = (
+        # Reauth and reconfigure both sign an existing entry in again; only a
+        # brand-new setup creates one. Updating in place matters — deleting and
+        # re-adding would take every entity id, and with them every automation
+        # and dashboard card pointing at this car.
+        existing = (
             self.hass.config_entries.async_get_entry(self.context["entry_id"])
-            if self.source == SOURCE_REAUTH
+            if self.source in (SOURCE_REAUTH, SOURCE_RECONFIGURE)
             else None
         )
-        device_id = (
-            reauth_entry.data.get(CONF_DEVICE_ID) if reauth_entry else None
-        ) or str(uuid.uuid4())
+        device_id = (existing.data.get(CONF_DEVICE_ID) if existing else None) or str(
+            uuid.uuid4()
+        )
 
         client = JlrClient(
             async_get_clientsession(self.hass),
@@ -249,14 +256,46 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_REFRESH_TOKEN: client.refresh_token,
             CONF_SSO_COOKIES: sso_cookies,
         }
-        if reauth_entry is not None:
+        if existing is not None:
             # Keep the device id and anything else already configured.
             return self.async_update_reload_and_abort(
-                reauth_entry, data={**reauth_entry.data, **data}
+                existing, data={**existing.data, **data}
             )
         await self.async_set_unique_id(client.user_id or self._username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title=self._username, data=data)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Sign in again on demand, keeping the entry and its entities.
+
+        Not everything the integration needs comes from a renewable token: the
+        owner portal, which serves location and the real vehicle names, rides a
+        ForgeRock session that only an interactive sign-in can establish. This
+        is how you refresh it — or adopt it, on an entry created before the
+        portal was used — without deleting the integration and losing every
+        entity id along with it.
+        """
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if entry is None:
+            return self.async_abort(reason="unknown_entry")
+        self._username = entry.data.get(CONF_USERNAME)
+
+        errors: dict[str, str] = {}
+        if user_input is not None and self._username:
+            errors = await self._async_start_login(
+                self._username, user_input[CONF_PASSWORD]
+            )
+            if not errors:
+                return await self.async_step_code()
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=STEP_REAUTH_SCHEMA,
+            errors=errors,
+            description_placeholders={"email": self._username or ""},
+        )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Sign in again after the refresh token stopped working."""

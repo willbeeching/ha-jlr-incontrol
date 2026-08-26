@@ -29,6 +29,13 @@
         "data": {
           "password": "Password"
         }
+      },
+      "reconfigure": {
+        "title": "Sign in again",
+        "description": "Signing in again for {email}. This keeps your existing entities, history and automations — nothing is removed.\n\nIt also refreshes the session used to read your vehicle's location and name, which cannot be renewed automatically. Jaguar Land Rover will email you a verification code, so have your inbox open.",
+        "data": {
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -42,7 +49,8 @@
     },
     "abort": {
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
-      "reauth_successful": "Signed in again successfully."
+      "reauth_successful": "Signed in again successfully.",
+      "unknown_entry": "That integration entry no longer exists."
     }
   },
   "entity": {

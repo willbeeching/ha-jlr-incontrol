@@ -249,8 +249,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._portal_signed_out = True
             _LOGGER.warning(
                 "no stored sign-in session for the owner portal, so vehicle "
-                "location and names are unavailable; signing in again (remove "
-                "and re-add the integration) restores them"
+                "location and names are unavailable. Settings > Devices & "
+                "Services > Jaguar Land Rover InControl > the three dots on "
+                "the entry > Reconfigure will sign in again and restore them, "
+                "keeping your existing entities"
             )
             return
         now = dt_util.utcnow()
