@@ -178,6 +178,13 @@ GitHub profile and I'll do it. No argument and no lawyers required. This is a pe
 project, not a product and not a commercial venture, built so owners can see their own car in their
 own home automation. If that isn't something you want, say so and it stops.
 
+Better still, I would rather work with you than around you. If there is any appetite for a
+sanctioned route — a supported API, a developer programme, or even a narrow read-only one covering
+an owner's own vehicle — I would be glad to talk, to help build or test it, and to retire this
+project in favour of it. The demand is plainly there: people want to see their own car in their own
+home automation, and nothing more than that. Serving it properly would suit everyone better than
+blocking it, and I would much rather be on the right side of that.
+
 ## Support
 
 This was reverse-engineered and vibe-coded over many late nights, and the AI tokens don't pay for
