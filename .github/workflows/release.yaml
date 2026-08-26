@@ -9,6 +9,9 @@ on:
       version:
         description: "Release tag to create (e.g. v1.0.0-beta.5)"
         required: true
+      notes:
+        description: "Optional notes shown above the changelog (upgrade steps, warnings)"
+        required: false
 
 jobs:
   release:
@@ -48,15 +51,47 @@ jobs:
 
       - name: Generate changelog
         id: changelog
+        env:
+          PREV_TAG: ${{ steps.prev_tag.outputs.PREV_TAG }}
         run: |
-          if [ -n "${{ steps.prev_tag.outputs.PREV_TAG }}" ]; then
-            CHANGELOG=$(git log ${{ steps.prev_tag.outputs.PREV_TAG }}..HEAD --pretty=format:"- %s" --no-merges)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..HEAD"
           else
-            CHANGELOG=$(git log --pretty=format:"- %s" --no-merges)
+            RANGE="HEAD"
           fi
-          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          CHANGELOG=$(git log $RANGE --pretty=format:"- %s" --no-merges)
+          echo "CHANGELOG<<GHEOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "GHEOF" >> $GITHUB_OUTPUT
+          # Anything a commit body marked BREAKING: is something a user has to
+          # act on. Buried in a commit nobody reads it; it belongs at the top of
+          # the release notes.
+          BREAKING=$(git log $RANGE --pretty=format:"%b" --no-merges \
+            | sed -n 's/^BREAKING: *//p')
+          echo "BREAKING<<GHEOF" >> $GITHUB_OUTPUT
+          echo "$BREAKING" >> $GITHUB_OUTPUT
+          echo "GHEOF" >> $GITHUB_OUTPUT
+
+      - name: Compose release body
+        id: body
+        env:
+          NOTES: ${{ inputs.notes }}
+          BREAKING: ${{ steps.changelog.outputs.BREAKING }}
+          CHANGELOG: ${{ steps.changelog.outputs.CHANGELOG }}
+        run: |
+          : > release-body.md
+          if [ -n "$NOTES" ]; then
+            printf '%s\n\n' "$NOTES" >> release-body.md
+          fi
+          if [ -n "$BREAKING" ]; then
+            printf '## ⚠️ Breaking changes\n\n%s\n\n' "$BREAKING" >> release-body.md
+          fi
+          printf "## What's Changed\n%s\n\n" "$CHANGELOG" >> release-body.md
+          printf '## Installation\n\n' >> release-body.md
+          printf '### HACS (recommended)\n' >> release-body.md
+          printf 'Add `https://github.com/willbeeching/ha-jlr-incontrol` as a custom repository (category **Integration**), install, and restart Home Assistant.\n\n' >> release-body.md
+          printf '### Manual\n' >> release-body.md
+          printf 'Download `jlr_incontrol.zip`, extract into `config/custom_components/`, and restart Home Assistant.\n' >> release-body.md
 
       - name: Create ZIP archive
         run: |
@@ -69,17 +104,7 @@ jobs:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           target_commitish: ${{ github.sha }}
           name: "JLR InControl ${{ steps.get_version.outputs.VERSION }}"
-          body: |
-            ## What's Changed
-            ${{ steps.changelog.outputs.CHANGELOG }}
-
-            ## Installation
-
-            ### HACS (recommended)
-            Add `https://github.com/willbeeching/ha-jlr-incontrol` as a custom repository (category **Integration**), install, and restart Home Assistant.
-
-            ### Manual
-            Download `jlr_incontrol.zip`, extract into `config/custom_components/`, and restart Home Assistant.
+          body_path: release-body.md
           files: jlr_incontrol.zip
           prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'alpha') }}
         env:
