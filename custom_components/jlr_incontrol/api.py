@@ -31,6 +31,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -173,8 +174,17 @@ class JlrClient:
         device_id: str | None = None,
         user_id: str | None = None,
         refresh_token: str | None = None,
+        on_tokens: Callable[[], None] | None = None,
     ) -> None:
         self._session = session
+        # Called the instant a token set is adopted. JLR rotate the refresh
+        # token on every use and the old one dies immediately, so whoever owns
+        # persistence has to hear about it now, not on the next poll.
+        self._on_tokens = on_tokens
+        # Two things renew tokens now — the telemetry socket before each
+        # reconnect and the housekeeping poll — and a rotating single-use
+        # refresh token cannot survive two callers spending it at once.
+        self._token_lock = asyncio.Lock()
         self._username = username
         self._password = password
         # A stable per-install device UUID, generated once and persisted in the entry.
@@ -238,6 +248,8 @@ class JlrClient:
         self._expires_at = time.monotonic() + expires_in - margin
         # A new token means the device may need re-registering.
         self._device_registered = False
+        if self._on_tokens is not None:
+            self._on_tokens()
 
     async def _refresh(self) -> None:
         """Renew the access token using the (rotating) refresh token."""
@@ -269,10 +281,20 @@ class JlrClient:
         self.apply_tokens(tokens)
 
     async def async_ensure_token(self) -> None:
-        """Refresh the access token if it is missing or near expiry."""
+        """Refresh the access token if it is missing or near expiry.
+
+        Serialised. The refresh token is single-use and rotates, so two callers
+        renewing at once means the second spends a token JLR has already
+        retired: it answers 400, which surfaces as "sign in again" and costs the
+        user a fresh emailed code for no reason.
+        """
         if self._access_token and time.monotonic() < self._expires_at:
             return
-        await self._refresh()
+        async with self._token_lock:
+            # Re-check inside the lock: whoever held it may have just renewed.
+            if self._access_token and time.monotonic() < self._expires_at:
+                return
+            await self._refresh()
 
     # -------------------------------------------------------- device / identity
     async def async_register_device(self) -> None:

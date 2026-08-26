@@ -88,7 +88,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
         self._disconnected_since: Any = dt_util.utcnow()
-        self._first_snapshot = asyncio.Event()
+        # Vehicles subscribed but not yet heard from. Platform setup reads the
+        # status to decide which entities a car gets, so it must not run while
+        # one of them is still silent.
+        self._awaiting: set[str] = set()
+        self._snapshots_ready = asyncio.Event()
+        self._setup_done = False
+        self._reloaded_for_straggler = False
         # Optimistic charge-override readback after a Force charge button, held
         # until JLR's (minutes-stale) EV_CHARGE_NOW_SETTING catches up so the
         # charge-now-setting sensor reflects the press immediately.
@@ -100,6 +106,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             device_id=entry.data.get(CONF_DEVICE_ID),
             user_id=entry.data.get(CONF_USER_ID),
             refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
+            on_tokens=self._persist,
         )
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
@@ -111,23 +118,41 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------- lifecycle
     async def async_start_telemetry(self) -> None:
-        """Open the telemetry socket and wait for the first vehicle snapshot.
+        """Open the socket and wait for a snapshot from *every* vehicle.
 
-        Setup fails rather than succeeding into a house of unavailable entities:
-        that is precisely how the REST block presented itself, and it cost a day
-        to notice because nothing was wrong at the config-entry level.
+        Every vehicle, not just the first: the sensor platform only creates an
+        entity when the status key backing it is present, so a car whose
+        snapshot lands after setup gets no fuel, odometer or tyre entities at
+        all — permanently unavailable while its stablemate works perfectly.
+
+        Setup fails outright if nothing arrives, rather than succeeding into a
+        house of unavailable entities: that is precisely how the REST block
+        presented itself, and it cost a day to notice because nothing looked
+        wrong at the config-entry level.
         """
+        self._awaiting = set(self._vehicles)
+        self._snapshots_ready.clear()
         self.telemetry.async_set_vehicles(self._vehicles)
         await self.telemetry.async_start()
         try:
             async with asyncio.timeout(FIRST_SNAPSHOT_TIMEOUT):
-                await self._first_snapshot.wait()
+                await self._snapshots_ready.wait()
         except TimeoutError as err:
-            await self.telemetry.async_stop()
-            raise ConfigEntryNotReady(
-                "connected to Jaguar Land Rover, but no vehicle data arrived over "
-                f"the telemetry socket within {FIRST_SNAPSHOT_TIMEOUT}s"
-            ) from err
+            if not self._status:
+                await self.telemetry.async_stop()
+                raise ConfigEntryNotReady(
+                    "connected to Jaguar Land Rover, but no vehicle data arrived "
+                    f"over the telemetry socket within {FIRST_SNAPSHOT_TIMEOUT}s"
+                ) from err
+            # Some vehicles answered. Carry on with those rather than leaving
+            # the whole account down, and reload when the stragglers appear.
+            _LOGGER.warning(
+                "no telemetry snapshot from %s within %ss; reloading once their "
+                "data arrives so their entities can be created",
+                ", ".join(sorted(self._awaiting)),
+                FIRST_SNAPSHOT_TIMEOUT,
+            )
+        self._setup_done = True
 
     async def async_shutdown(self) -> None:
         """Stop the telemetry socket, then the coordinator."""
@@ -202,9 +227,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
 
-        Only when something actually changed: an entry update fires the update
-        listener, and a listener that reloads unconditionally turns the rotating
-        refresh token into a reload every five minutes.
+        Called on every token rotation, not just on the housekeeping poll. JLR
+        rotate the refresh token each time it is spent and retire the old one
+        at once, so a token held in memory but not yet written to the entry is
+        a restart away from a needless "sign in again" — with an emailed code.
+
+        Only writes when something actually changed: an entry update fires the
+        update listener, and a listener that reloads unconditionally turns the
+        rotating token into a reload every five minutes.
         """
         updates: dict[str, Any] = {}
         for key, value in (
@@ -232,7 +262,23 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if sent:
             self._pushed_at[vin] = sent
         self._note_change(vin)
-        self._first_snapshot.set()
+        if vin in self._awaiting:
+            self._awaiting.discard(vin)
+            if self._setup_done:
+                # A straggler that missed platform setup: its entities were
+                # never created, so a reload is the only way to give it any.
+                # Once per load — a car that is reliably slower than the setup
+                # window would otherwise reload the integration forever.
+                if not self._reloaded_for_straggler:
+                    self._reloaded_for_straggler = True
+                    _LOGGER.info(
+                        "late telemetry for %s; reloading so its entities exist",
+                        vin,
+                    )
+                    self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
+                    return
+            elif not self._awaiting:
+                self._snapshots_ready.set()
         self._push()
 
     def _handle_position(self, vin: str, position: dict[str, Any]) -> None:
