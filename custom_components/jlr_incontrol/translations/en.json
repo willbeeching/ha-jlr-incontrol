@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Jaguar Land Rover InControl",
-        "description": "Sign in with your Land Rover Remote / InControl account. JLR will email you a verification code to finish. The PIN is only needed for remote commands (lock, climate, honk & flash).",
+        "description": "Sign in with your Land Rover Remote / InControl account. JLR will email you a verification code to finish, so have your inbox open — the code expires quickly.",
         "data": {
           "username": "Email",
-          "password": "Password",
-          "pin": "Vehicle security PIN (optional)"
+          "password": "Password"
         }
       },
       "init": {
@@ -30,13 +29,6 @@
         "data": {
           "password": "Password"
         }
-      },
-      "reconfigure": {
-        "title": "Vehicle security PIN",
-        "description": "The PIN unlocks the remote commands (lock, climate, honk & flash, charging). Leave it blank for monitoring only. This does not sign you in again.",
-        "data": {
-          "pin": "Vehicle security PIN"
-        }
       }
     },
     "error": {
@@ -50,9 +42,7 @@
     },
     "abort": {
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
-      "reauth_successful": "Signed in again successfully.",
-      "reconfigure_successful": "Vehicle PIN updated.",
-      "unknown_entry": "That configuration entry no longer exists."
+      "reauth_successful": "Signed in again successfully."
     }
   },
   "entity": {
@@ -200,31 +190,9 @@
         "name": "Location"
       }
     },
-    "lock": {
-      "doors": {
-        "name": "Doors"
-      }
-    },
-    "climate": {
-      "climate": {
-        "name": "Climate"
-      }
-    },
     "button": {
-      "honk_flash": {
-        "name": "Honk & flash"
-      },
       "refresh": {
         "name": "Refresh"
-      },
-      "update_from_vehicle": {
-        "name": "Update from vehicle"
-      },
-      "force_charge_on": {
-        "name": "Force charge on"
-      },
-      "force_charge_off": {
-        "name": "Force charge off"
       }
     }
   }

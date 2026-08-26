@@ -35,6 +35,7 @@ from .const import (
     IAM_CLIENT_ID,
     IAM_REDIRECT_URI,
     IAM_SCOPES,
+    IDENTITY_HOST,
     USER_AGENT,
 )
 
@@ -92,6 +93,26 @@ class JlrLogin:
         self._nonce = secrets.token_urlsafe(16)
         self._callbacks: dict[str, Any] | None = None
         self._stage = "start"
+
+    def session_cookies(self) -> dict[str, str]:
+        """The ForgeRock session cookies this journey established.
+
+        The owner web portal — the only surviving source of location and the
+        real vehicle names — authenticates against the AM session rather than a
+        bearer token, and there is no way to mint one of these from a refresh
+        token. So the jar is harvested here, before it is thrown away, and the
+        cookies are persisted with the entry.
+
+        Every cookie on the identity host is taken rather than one picked by
+        name: which of them AM treats as the session has changed before, and a
+        wrong guess would fail silently much later.
+        """
+        host = urlparse(IDENTITY_HOST).hostname or ""
+        return {
+            cookie.key: cookie.value
+            for cookie in self._session.cookie_jar
+            if host.endswith(cookie["domain"].lstrip(".") or host)
+        }
 
     async def async_close(self) -> None:
         """Drop the cookie jar and its session."""

@@ -30,18 +30,21 @@ from .api import (
 from .const import (
     ATTRIBUTES_RETRY,
     ATTRIBUTES_TTL,
-    CHARGE_NOW_ASSUMED_WINDOW,
     CONF_ATTRIBUTES,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
     CONF_REFRESH_TOKEN,
+    CONF_SSO_COOKIES,
     CONF_USER_ID,
     CONF_USERNAME,
     DOMAIN,
+    PORTAL_INTERVAL,
+    PORTAL_VEHICLES_TTL,
     SCAN_INTERVAL_HOUSEKEEPING,
     STALE_AFTER,
     TELEMETRY_GRACE,
 )
+from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .telemetry import JlrTelemetry
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,10 +98,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._snapshots_ready = asyncio.Event()
         self._setup_done = False
         self._reloaded_for_straggler = False
-        # Optimistic charge-override readback after a Force charge button, held
-        # until JLR's (minutes-stale) EV_CHARGE_NOW_SETTING catches up so the
-        # charge-now-setting sensor reflects the press immediately.
-        self._charge_now_assumed: dict[str, tuple[str, Any]] = {}
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -108,6 +107,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
             on_tokens=self._persist,
         )
+        # The owner portal: the only surviving source of location and of the
+        # real vehicle names. Optional — an entry created before this existed
+        # has no session stored, and everything else still works without it.
+        self.portal = JlrPortal(entry.data.get(CONF_SSO_COOKIES) or {})
+        self._portal_ids: dict[str, str] = {}
+        self._portal_due: Any = None
+        self._portal_vehicles_due: Any = None
+        self._portal_signed_out = False
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
             self.client,
@@ -155,8 +162,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._setup_done = True
 
     async def async_shutdown(self) -> None:
-        """Stop the telemetry socket, then the coordinator."""
+        """Stop the telemetry socket and portal session, then the coordinator."""
         await self.telemetry.async_stop()
+        await self.portal.async_close()
         await super().async_shutdown()
 
     # ----------------------------------------------------------- housekeeping
@@ -188,6 +196,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._seed_identity(vin, vehicle)
             await self._async_refresh_attributes(vin)
 
+        await self._async_read_portal()
         self._persist()
         return self._build()
 
@@ -223,6 +232,64 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if attributes:
             self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
+
+    async def _async_read_portal(self) -> None:
+        """Top up names and location from the owner portal.
+
+        Never fatal. The portal is a legacy servlet app behind a session that
+        will eventually expire, and none of the live vehicle data depends on
+        it — so a failure here degrades those two things and leaves everything
+        else alone.
+        """
+        if self._portal_signed_out:
+            return
+        if not self.portal.configured:
+            # Entries created before the portal was used have no session
+            # stored, and one cannot be conjured from a refresh token.
+            self._portal_signed_out = True
+            _LOGGER.warning(
+                "no stored sign-in session for the owner portal, so vehicle "
+                "location and names are unavailable; signing in again (remove "
+                "and re-add the integration) restores them"
+            )
+            return
+        now = dt_util.utcnow()
+        if self._portal_due is not None and now < self._portal_due:
+            return
+        self._portal_due = now + PORTAL_INTERVAL
+        try:
+            if self._portal_vehicles_due is None or now >= self._portal_vehicles_due:
+                await self._async_read_portal_vehicles(now)
+            for vin, portal_id in self._portal_ids.items():
+                position = await self.portal.async_get_position(portal_id)
+                if position:
+                    self._position[vin] = position
+        except JlrPortalAuthError as err:
+            # Nothing headless can renew this. Say so once and stop knocking;
+            # the next sign-in restores it.
+            self._portal_signed_out = True
+            _LOGGER.warning(
+                "%s — live status is unaffected, but location and vehicle names "
+                "will not update until you sign in again",
+                err,
+            )
+        except JlrPortalError as err:
+            _LOGGER.debug("owner portal unavailable: %s", err)
+        except Exception:  # noqa: BLE001 - the portal must never break setup
+            _LOGGER.exception("unexpected failure reading the owner portal")
+
+    async def _async_read_portal_vehicles(self, now: Any) -> None:
+        """Fetch names and the per-account ids the dashboard pages need."""
+        vehicles = await self.portal.async_get_vehicles()
+        if not vehicles:
+            return
+        self._portal_vehicles_due = now + PORTAL_VEHICLES_TTL
+        for vin, record in vehicles.items():
+            portal_id = record.pop("portal_id", None)
+            if portal_id:
+                self._portal_ids[vin] = portal_id
+            if record:
+                self._attributes[vin] = {**self._attributes.get(vin, {}), **record}
 
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
@@ -359,18 +426,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
         return dt_util.utcnow() - self._disconnected_since < TELEMETRY_GRACE
 
-    def note_charge_now(self, vin: str, value: str) -> None:
-        """Record the CP override just written, so the sensor updates at once."""
-        self._charge_now_assumed[vin] = (
-            value,
-            dt_util.utcnow() + CHARGE_NOW_ASSUMED_WINDOW,
-        )
-
     def charge_now_setting(self, vin: str) -> str | None:
-        """Return EV_CHARGE_NOW_SETTING, preferring a recent optimistic write."""
-        assumed = self._charge_now_assumed.get(vin)
-        if assumed and dt_util.utcnow() < assumed[1]:
-            return assumed[0]
+        """Return the reported EV charge override, upper-cased."""
         raw = (
             self.data.get("vehicles", {})
             .get(vin, {})

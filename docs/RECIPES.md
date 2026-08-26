@@ -68,16 +68,15 @@ The date and time selected in this helper represent when the vehicle should fini
 #### Step 2: Keep the end time synchronized
 
 This automation updates the local preconditioning end time whenever preconditioning starts or stops. When
-preconditioning starts, the automation refreshes the vehicle data and waits for an updated remaining-time value. It
-calculates and stores the expected end time, using 29 minutes as a fallback. When preconditioning stops, the stored end
-time is reset to the current time.
+preconditioning starts, the automation waits for the car to report a remaining-time value, then calculates and stores
+the expected end time, using 29 minutes as a fallback. When preconditioning stops, the stored end time is reset to the
+current time.
 
-The `input_datetime.jaguar_preconditioning_end_time` entity comes from the helper created in Step 1. The other three
+The `input_datetime.jaguar_preconditioning_end_time` entity comes from the helper created in Step 1. The other two
 entities are provided by the [`ha-jlr-incontrol`](https://github.com/willbeeching/ha-jlr-incontrol) integration:
 
 - `binary_sensor.jaguar_preconditioning`
 - `sensor.jaguar_preconditioning_time_remaining`
-- `button.jaguar_update_from_vehicle`
 
 Replace these entity IDs if they differ in your installation.
 
@@ -115,9 +114,6 @@ actions:
                 {% else %}
                   0
                 {% endif %}
-          - action: button.press
-            target:
-              entity_id: button.jaguar_update_from_vehicle
           - wait_template: |
               {% set entity_id =
                 'sensor.jaguar_preconditioning_time_remaining'

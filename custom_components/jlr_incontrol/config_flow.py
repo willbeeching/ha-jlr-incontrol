@@ -21,8 +21,8 @@ from .auth import JlrInvalidCode, JlrLogin, JlrLoginError, JlrSessionExpired
 from .const import (
     CONF_DEVICE_ID,
     CONF_PASSWORD,
-    CONF_PIN,
     CONF_REFRESH_TOKEN,
+    CONF_SSO_COOKIES,
     CONF_USER_ID,
     CONF_USERNAME,
     DISTANCE_UNIT_DEFAULT,
@@ -43,15 +43,12 @@ STEP_USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
-        vol.Optional(CONF_PIN): str,
     }
 )
 
 STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
 
 STEP_CODE_SCHEMA = vol.Schema({vol.Required("code"): str})
-
-STEP_RECONFIGURE_SCHEMA = vol.Schema({vol.Optional(CONF_PIN, default=""): str})
 
 OPTIONS_SCHEMA = vol.Schema(
     {
@@ -95,7 +92,6 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         """Set up the transient state that spans the sign-in steps."""
         self._login: JlrLogin | None = None
         self._username: str | None = None
-        self._pin: str | None = None
 
     async def _async_start_login(self, username: str, password: str) -> dict[str, str]:
         """Run the journey up to the emailed code. Returns form errors, if any."""
@@ -161,7 +157,6 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
                 for entry in self._async_current_entries()
             ):
                 return self.async_abort(reason="already_configured")
-            self._pin = user_input.get(CONF_PIN)
             errors = await self._async_start_login(username, user_input[CONF_PASSWORD])
             if not errors:
                 return await self.async_step_code()
@@ -209,6 +204,11 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
     async def _async_finish(self, tokens: dict[str, Any]) -> ConfigFlowResult:
         """Verify the new tokens against the API, then write the entry."""
         assert self._username is not None
+        # Harvest the ForgeRock session before the journey is closed: the owner
+        # portal — the only remaining source of location and the real vehicle
+        # names — authenticates against that session, and nothing headless can
+        # mint another one.
+        sso_cookies = self._login.session_cookies() if self._login else {}
         reauth_entry = (
             self.hass.config_entries.async_get_entry(self.context["entry_id"])
             if self.source == SOURCE_REAUTH
@@ -247,48 +247,16 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_DEVICE_ID: device_id,
             CONF_USER_ID: client.user_id,
             CONF_REFRESH_TOKEN: client.refresh_token,
+            CONF_SSO_COOKIES: sso_cookies,
         }
         if reauth_entry is not None:
-            # Keep the PIN and anything else already configured.
+            # Keep the device id and anything else already configured.
             return self.async_update_reload_and_abort(
                 reauth_entry, data={**reauth_entry.data, **data}
             )
-        if self._pin:
-            data[CONF_PIN] = self._pin
         await self.async_set_unique_id(client.user_id or self._username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title=self._username, data=data)
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Add, change or remove the vehicle PIN without signing in again.
-
-        The PIN gates the remote commands, and plenty of people set the
-        integration up read-only first and want control later. Signing in again
-        would mean another emailed code for something that never touches
-        authentication.
-        """
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        if entry is None:
-            return self.async_abort(reason="unknown_entry")
-
-        if user_input is not None:
-            pin = (user_input.get(CONF_PIN) or "").strip()
-            data = {**entry.data}
-            if pin:
-                data[CONF_PIN] = pin
-            else:
-                # Blank clears it, dropping back to monitoring only.
-                data.pop(CONF_PIN, None)
-            return self.async_update_reload_and_abort(entry, data=data)
-
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=self.add_suggested_values_to_schema(
-                STEP_RECONFIGURE_SCHEMA, {CONF_PIN: entry.data.get(CONF_PIN, "")}
-            ),
-        )
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Sign in again after the refresh token stopped working."""

@@ -8,14 +8,21 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_PASSWORD, CONF_PIN, CONF_REFRESH_TOKEN, DOMAIN
+from .const import (
+    CONF_PASSWORD,
+    CONF_REFRESH_TOKEN,
+    CONF_SSO_COOKIES,
+    DOMAIN,
+)
 
 REDACT_KEYS = {
     CONF_PASSWORD,
-    CONF_PIN,
     # A live credential now that it's persisted in the entry — must never reach
     # a diagnostics attachment on a public issue.
     CONF_REFRESH_TOKEN,
+    # A live session for the owner portal, same as the token above.
+    CONF_SSO_COOKIES,
+    "portal_id",
     "latitude",
     "longitude",
     "vin",

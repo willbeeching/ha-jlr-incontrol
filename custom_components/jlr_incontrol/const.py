@@ -51,6 +51,26 @@ WS_BACKOFF_MAX = timedelta(minutes=5)
 # Message type carrying the vehicle health status (the telemetry we want).
 WS_TYPE_STATUS = "VHS"
 
+# ---- Owner web portal ----
+# Where location and the real vehicle names come from. The portal's own backend
+# calls if9 with whitelisted credentials, so anything it renders has already
+# been through Approov on JLR's side — which is why a plain ForgeRock session
+# can read it while every direct position/attributes endpoint answers 498.
+PORTAL_BASES = (
+    "https://incontrol.landrover.com/jlr-portal-owner-web",
+    "https://incontrol.jaguar.com/jaguar-portal-owner-web",
+)
+PORTAL_LOCALE = "en_GB"
+# The AM session cookie domain: the portal's login hand-off rides the same
+# ForgeRock session the interactive sign-in established.
+IDENTITY_HOST = "https://identity.jaguarlandrover.com"
+# Location only moves when a journey completes and syncs, so there is nothing
+# to gain from asking often — and a legacy servlet app is not somewhere to be
+# impolite.
+PORTAL_INTERVAL = timedelta(minutes=30)
+# Vehicle names and plates change essentially never.
+PORTAL_VEHICLES_TTL = timedelta(hours=24)
+
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
 # every path, with or without credentials), killing the password grant this
@@ -147,23 +167,9 @@ TELEMATICS_PROGRAM = "landroverprogram"
 MEDIA_JSON = "application/json"
 MEDIA_USER = "application/vnd.wirelesscar.ngtp.if9.User-v4+json"
 MEDIA_HEALTHSTATUS = "application/vnd.ngtp.org.if9.healthstatus-v3+json"
-MEDIA_AUTHENTICATE = "application/vnd.wirelesscar.ngtp.if9.AuthenticateRequest-v2+json"
-MEDIA_START_SERVICE = (
-    "application/vnd.wirelesscar.ngtp.if9.StartServiceConfiguration-v3+json"
-)
-# The Accept a command POST must send for its response. Validated live on the
-# classic endpoints (lock, honkBlink): v4 works; v5 and plain application/json
-# both return HTTP 406. The PhevService endpoints (preconditioning,
-# chargeProfile) are the opposite: they require v5 (v4 returns 406, seen live
-# on an I-Pace ECC start) — matching jlrpy's native-app behaviour.
-MEDIA_SERVICE_STATUS = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v4+json"
-MEDIA_SERVICE_STATUS_V5 = "application/vnd.wirelesscar.ngtp.if9.ServiceStatus-v5+json"
-MEDIA_PHEV_SERVICE = "application/vnd.wirelesscar.ngtp.if9.PhevService-v1+json"
-
 # ---- Config entry keys ----
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
-CONF_PIN = "pin"
 CONF_DEVICE_ID = "device_id"
 CONF_USER_ID = "user_id"
 # Persisted so a restart resumes with a cheap refresh grant instead of spending
@@ -173,6 +179,11 @@ CONF_REFRESH_TOKEN = "refresh_token"
 # endpoint that serves them is behind the Approov wall: without this a restart
 # would lose every vehicle's name, model and fuel type for good.
 CONF_ATTRIBUTES = "attributes"
+# The ForgeRock session cookies captured at sign-in. The owner web portal has
+# no token-based entry point — it authenticates by handing its own OAuth dance
+# to the AM session in the browser — so reading location means keeping that
+# session. Treated as a credential: redacted from diagnostics, never logged.
+CONF_SSO_COOKIES = "sso_cookies"
 
 # ---- Options keys ----
 OPT_DISTANCE_UNIT = "distance_unit"
@@ -184,47 +195,6 @@ PRESSURE_UNIT_DEFAULT = "default"
 PRESSURE_UNIT_KPA = "kpa"
 PRESSURE_UNIT_BAR = "bar"
 PRESSURE_UNIT_PSI = "psi"
-
-# ---- Remote service codes (serviceName) ----
-SERVICE_LOCK = "RDL"
-SERVICE_UNLOCK = "RDU"
-SERVICE_ENGINE_ON = "REON"  # remote-start climate (heat/precondition)
-SERVICE_ENGINE_OFF = "REOFF"
-SERVICE_HONK_FLASH = "HBLF"
-SERVICE_ALARM_OFF = "ALOFF"
-SERVICE_PRECONDITIONING = "ECC"  # electric climate control (BEV/PHEV)
-SERVICE_VHS = "VHS"  # vehicle health status refresh
-SERVICE_CHARGE = "CP"  # charge-now control
-SERVICE_PROV = "PROV"  # provisioning (required before ICE RCC settings)
-
-# serviceName -> path segment used to start the service.
-SERVICE_ENDPOINTS: dict[str, str] = {
-    SERVICE_LOCK: "lock",
-    SERVICE_UNLOCK: "unlock",
-    SERVICE_ENGINE_ON: "engineOn",
-    SERVICE_ENGINE_OFF: "engineOff",
-    SERVICE_HONK_FLASH: "honkBlink",
-    SERVICE_ALARM_OFF: "alarmOff",
-    SERVICE_PRECONDITIONING: "preconditioning",
-    SERVICE_VHS: "healthstatus",
-    SERVICE_CHARGE: "chargeProfile",
-    SERVICE_PROV: "prov",
-}
-
-# Per-service start-request configuration. The PhevService endpoints take the
-# charset suffix and ServiceStatus-v5 Accept exactly as the native app sends
-# them (jlrpy); ECC returns 406 without the v5 Accept.
-SERVICE_START_CONTENT_TYPES: dict[str, str] = {
-    SERVICE_PRECONDITIONING: f"{MEDIA_PHEV_SERVICE}; charset=utf-8",
-    SERVICE_CHARGE: f"{MEDIA_PHEV_SERVICE}; charset=utf-8",
-}
-SERVICE_START_ACCEPTS: dict[str, str] = {
-    SERVICE_PRECONDITIONING: MEDIA_SERVICE_STATUS_V5,
-    SERVICE_CHARGE: MEDIA_SERVICE_STATUS_V5,
-}
-
-# Services that authenticate with an empty PIN (per jlrpy / native-app behaviour).
-SERVICES_EMPTY_PIN: frozenset[str] = frozenset({SERVICE_PRECONDITIONING, SERVICE_VHS})
 
 # ---- Refresh cadence ----
 # Vehicle data arrives over the telemetry socket as it happens, so there is no
@@ -271,38 +241,16 @@ CLIMATE_ACTIVE_STATES = frozenset(
     {"COOLING", "HEATING", "PRECLIM", "ENGINE_ON", "RUNNING", "STARTUP", "ON"}
 )
 
-# ECC target temperature bounds (degrees Celsius).
-ECC_MIN_TEMP = 16.0
-ECC_MAX_TEMP = 28.0
-ECC_DEFAULT_TEMP = 21.0
-
-# ICE remote climate uses an RCC scale of 31 (LO/cool) – 57 (HI/heat).
-# 15.5C maps to RCC 31 = LO and 28.5C to RCC 57 = HI, matching the car's dial.
-ICE_RCC_MIN = 31
-ICE_RCC_MAX = 57
-ICE_MIN_TEMP = 15.5
-ICE_MAX_TEMP = 28.5
-ICE_DEFAULT_TEMP = 21.0
-
-# How long to assume remote climate keeps running after a confirmed start.
-# The cached CLIMATE_STATUS_OPERATING_STATUS lags by minutes, so without this
-# the thermostat shows Off while the engine is running and can't be stopped.
-CLIMATE_ASSUMED_ON_SECONDS = 30 * 60  # JLR remote start auto-stops around here
-CLIMATE_ASSUMED_OFF_SECONDS = 15 * 60
-
-# How long the charge-now-setting sensor trusts a just-pressed Force charge
-# button over the (minutes-stale) EV_CHARGE_NOW_SETTING readback.
-CHARGE_NOW_ASSUMED_WINDOW = timedelta(minutes=5)
-
 # NOTE: diagnostics is intentionally not here — it is not an entity platform
 # (HA discovers diagnostics.py itself). Forwarding to it logged a setup warning
 # and, worse, broke async_unload_platforms so any options change wedged the
 # entry until a restart (#1).
+# No lock or climate platform: both existed only to send remote commands, which
+# JLR gate behind app attestation that Home Assistant cannot produce. Door lock
+# state is still reported, as a binary sensor.
 PLATFORMS = [
     "sensor",
     "binary_sensor",
     "device_tracker",
-    "lock",
-    "climate",
     "button",
 ]

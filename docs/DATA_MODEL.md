@@ -60,12 +60,20 @@ option codes), and `computedValues` (pre-computed booleans, e.g. `remoteDoorPerm
 `VehiclePositionResponse.position` = `{ longitude, latitude, timestamp }` only — **no heading or
 speed**. Reverse-geocoded into street/city/postcode/country for display.
 
-The REST endpoint that served this is now walled (498). The app models a
-`VehiclePosition{lat, lon, timestamp, vin}` arriving over the same telemetry socket as a non-`VHS`
-message type, but that has **not** been observed live yet, so the parser accepts the plausible
-spellings and the device tracker simply has no coordinates where nothing arrives. Attributes are
-in the same position: walled, with the last known set cached in the config entry so a restart does
-not cost every vehicle its name and model.
+The REST endpoint that served this is walled (498), and position never appeared on the telemetry
+socket either — only `VHS` messages arrive on the VIN topics. Both position and attributes now come
+from the **owner web portal** (`incontrol.landrover.com` / `incontrol.jaguar.com`), whose backend
+calls if9 with its own whitelisted credentials, so what it renders is already past Approov:
+
+- `GET /ajax/pollvehiclestatus` → JSON with `fullVin`, `nickname`, `vehicleBrand`, `vehicleType`,
+  `registrationNumber`, and a per-account opaque vehicle id inside `continueSetupLink`.
+- `GET /dashboard/vehicle/{id}` → HTML embedding `let waypoints = [...]`, the last journey's GPS
+  trail. Its final point with coordinates is the parked location; the final non-null `timestamp`
+  (epoch **milliseconds**) is the fix time.
+
+This is last-journey-end, not live tracking, and it depends on the ForgeRock session captured at
+sign-in rather than on the renewable token. The last known attributes are cached in the config
+entry so a restart does not cost every vehicle its name and model.
 
 ## HA entity mapping
 | Platform | Entities |
@@ -73,10 +81,11 @@ not cost every vehicle its name and model.
 | `sensor` | battery charge %, fuel level %, fuel range, electric range, odometer, charging status, time-to-full, charge rate, distance-to-service, AdBlue range, tyre pressures, climate remaining runtime, last-updated; diagnostic: VIN, reg, model year, fuel type |
 | `binary_sensor` | all-doors-locked, per-door/bonnet/boot open, per-window open, roof/sunroof, alarm triggered, charge cable connected, is-being-driven, low tyre/oil/brake/washer/coolant, service due, DEF low |
 | `device_tracker` | lat/lon + reverse-geocoded address attributes |
-| `lock` | doors (RDL/RDU) — model a transitional state (commands are async) |
-| `climate` | preconditioning: ECC (BEV/PHEV) or REON/REOFF (ICE), target temperature |
-| `button` | force charge on/off (CP — two write actions; the API can't write DEFAULT), honk & flash (HBLF), update from vehicle (VHS), refresh; charge-now override is read via a `charge_now_setting` enum sensor |
-| `number` | charge target SoC, climate target temperature |
+| `button` | refresh (re-reads the polled data, including location) |
+
+Door lock state is a binary sensor and the charge-now override a `charge_now_setting` enum sensor.
+There are no control entities: remote commands need the app's Approov attestation, which no
+non-app client can produce.
 
 Feature-gate every entity on the vehicle's `services` + `vehicleCapability` + `computedValues`
 rather than assuming all exist for every VIN.
