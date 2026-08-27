@@ -140,10 +140,14 @@ is light — renewing the token and, every half hour, re-reading the parked loca
 
 Worth knowing:
 
-- **Location is where the last journey ended**, not a live position. It updates when a trip
-  completes, so it answers "is the car home" well and "where is it mid-drive" not at all. The
-  tracker carries the time of the fix, and reports nothing rather than a wrong coordinate for a
-  car with no journeys logged.
+- **Location is where the last journey ended**, not a live position. It appears once a completed
+  journey has been processed, which can be hours after you park, so it answers "is the car home"
+  well and "where is it mid-drive" not at all. The tracker carries the time of the fix as a
+  `timestamp` attribute, and a `stale` attribute once that fix is over a day old.
+- **If the location can't be refreshed, the tracker says nothing rather than guessing.** An old fix
+  still resolves to a zone, so serving one anyway doesn't produce a cautious answer — it produces a
+  confident wrong one. When it can't be refreshed the state goes unknown and `trusted` is false;
+  worth checking in automations that act on the car being home.
 - The status you see is whatever the car last reported. Vehicles report on their own schedule,
   and this integration relays those reports as they arrive.
 - Locked and alarm-armed are independent states: a car can be locked with the alarm off.

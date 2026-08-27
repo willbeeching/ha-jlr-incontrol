@@ -36,7 +36,12 @@ from .const import IDENTITY_HOST, PORTAL_BASES, PORTAL_LOCALE, USER_AGENT
 
 _LOGGER = logging.getLogger(__name__)
 
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+# The portal is a slow legacy app and the dashboard page is large, and this
+# total has to cover the whole redirect chain plus reading the body. A tight
+# ceiling here is what froze the tracker: the read timed out every cycle, so the
+# last position was served forever. sock_read still catches a genuinely dead
+# socket without waiting out the total.
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=90, connect=15, sock_read=30)
 
 # The dashboard page carries the trail as a JavaScript literal. Non-greedy to
 # the first closing bracket that ends the array, DOTALL because it is formatted
@@ -112,6 +117,8 @@ class JlrPortal:
             ) as resp:
                 landed = str(resp.url)
                 body = await resp.text()
+        except TimeoutError as err:
+            raise JlrPortalError("the owner portal timed out during sign-in") from err
         except aiohttp.ClientError as err:
             raise JlrPortalError(f"could not reach the owner portal: {err}") from err
 
@@ -141,7 +148,14 @@ class JlrPortal:
         )
 
     async def _async_get(self, path: str) -> tuple[str, str]:
-        """GET a portal path, re-logging in once if the session has lapsed."""
+        """GET a portal path, retrying once on a timeout or a lapsed session.
+
+        Both failures look the same from here — a slow portal and an expired
+        session can each end in a timeout part-way through the login redirect
+        chain — so both get one fresh attempt against a rebuilt session before
+        being reported.
+        """
+        timed_out: Exception | None = None
         for attempt in (1, 2):
             base = await self._async_ensure_session()
             assert self._session is not None
@@ -152,16 +166,28 @@ class JlrPortal:
                     allow_redirects=True,
                 ) as resp:
                     landed, body = str(resp.url), await resp.text()
+                    status = resp.status
+            except TimeoutError as err:
+                timed_out = err
+                self._base = None
+                if attempt == 1:
+                    continue
+                raise JlrPortalError(
+                    f"the owner portal timed out reading {path}"
+                ) from err
             except aiohttp.ClientError as err:
                 raise JlrPortalError(f"portal request failed: {err}") from err
-            # Being bounced to the locale gate or back to ForgeRock means the
-            # portal session lapsed, not that the page is missing.
-            if "select-locale" in landed or "identity.jaguarlandrover.com" in landed:
+
+            if status == 401 or _is_login_page(landed, body):
+                # Bounced to the locale gate, the login page, or back to
+                # ForgeRock: the session lapsed rather than the page being gone.
                 self._base = None
                 if attempt == 1:
                     continue
                 raise JlrPortalAuthError("the owner portal session has expired")
             return landed, body
+        if timed_out is not None:
+            raise JlrPortalError(f"the owner portal timed out reading {path}")
         raise JlrPortalAuthError("the owner portal session has expired")
 
     # --------------------------------------------------------------- readings
@@ -205,6 +231,22 @@ class JlrPortal:
         except ValueError as err:
             raise JlrPortalError("could not read the portal's journey trail") from err
         return _parked(waypoints)
+
+
+# Where the portal sends someone whose session has gone.
+_LOGIN_MARKERS = ("select-locale", "identity.jaguarlandrover.com", "/login")
+
+
+def _is_login_page(landed: str, body: str) -> bool:
+    """Whether this response is a sign-in bounce rather than the page asked for."""
+    if any(marker in landed for marker in _LOGIN_MARKERS):
+        return True
+    # A body that is neither JSON nor a dashboard, but does mention signing in.
+    stripped = body.lstrip()
+    if stripped.startswith(("{", "[")):
+        return False
+    lowered = body.lower()
+    return "j_username" in lowered or "sign in to your account" in lowered
 
 
 def _parked(waypoints: list[Any]) -> dict[str, Any]:

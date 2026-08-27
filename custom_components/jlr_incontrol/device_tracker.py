@@ -47,11 +47,26 @@ class JlrDeviceTracker(JlrVehicleEntity, TrackerEntity):
             return None
 
     @property
+    def _trusted(self) -> bool:
+        """Whether the last known fix can still be reported as the car's place.
+
+        When it cannot, no coordinates are given at all. Home Assistant derives
+        the zone from the coordinates, so returning an old fix anyway does not
+        produce a cautious answer — it produces a confident wrong one, which is
+        exactly how a car seven kilometres away reads as "home".
+        """
+        return bool(self._vehicle.get("position_trusted"))
+
+    @property
     def latitude(self) -> float | None:
+        if not self._trusted:
+            return None
         return self._coord(self._position.get("latitude"))
 
     @property
     def longitude(self) -> float | None:
+        if not self._trusted:
+            return None
         return self._coord(self._position.get("longitude"))
 
     @property
@@ -60,6 +75,11 @@ class JlrDeviceTracker(JlrVehicleEntity, TrackerEntity):
         return {
             "heading": position.get("heading"),
             "speed": position.get("speed"),
+            # When the vehicle recorded this fix, so the age of it is visible
+            # rather than implied by the state.
             "timestamp": position.get("timestamp"),
             "stale": self._vehicle.get("position_stale", False),
+            # False means we could not refresh it, not that the car has not
+            # moved; the state is withheld rather than guessed while it is.
+            "trusted": self._trusted,
         }

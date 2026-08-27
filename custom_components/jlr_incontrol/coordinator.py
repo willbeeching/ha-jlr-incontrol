@@ -40,6 +40,7 @@ from .const import (
     DOMAIN,
     PORTAL_INTERVAL,
     PORTAL_VEHICLES_TTL,
+    POSITION_TRUST_WINDOW,
     SCAN_INTERVAL_HOUSEKEEPING,
     STALE_AFTER,
     TELEMETRY_GRACE,
@@ -115,6 +116,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._portal_due: Any = None
         self._portal_vehicles_due: Any = None
         self._portal_signed_out = False
+        # When a portal read last succeeded. Position is only as trustworthy as
+        # this is recent — see position_trusted.
+        self._portal_read_at: Any = None
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
             self.client,
@@ -266,6 +270,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 position = await self.portal.async_get_position(portal_id)
                 if position:
                     self._position[vin] = position
+            self._portal_read_at = dt_util.utcnow()
         except JlrPortalAuthError as err:
             # Nothing headless can renew this. Say so once and stop knocking;
             # the next sign-in restores it.
@@ -404,15 +409,37 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 status.get("LAST_UPDATED_TIME"),
                 self._last_changed.get(vin),
             )
+            # Whether the GPS fix is old is a question about the fix, and only
+            # about the fix. Deriving it from the status freshness above let a
+            # car that phones in hourly report a days-old position as current —
+            # and two cars with equally old fixes disagree about it.
+            position_ts = position.get("timestamp")
             data["vehicles"][vin] = {
                 "role": vehicle.get("role"),
                 "attributes": self._attributes.get(vin, {}),
                 "status": status,
                 "position": position,
                 "status_ts": status_ts,
-                "position_stale": self._is_stale(status_ts),
+                "position_ts": position_ts,
+                "position_stale": self._is_stale(position_ts),
+                "position_trusted": self.position_trusted,
             }
         return data
+
+    @property
+    def position_trusted(self) -> bool:
+        """Whether the last known position can still be asserted as current.
+
+        A stale fix and an untrustworthy one are different problems. A car
+        parked for three days has an old fix and that is fine. But when portal
+        reads have been failing, the car may have moved and we would not know —
+        and a location we cannot vouch for still resolves to a zone, which is
+        how a tracker ends up confidently reporting "home" for a car that is
+        seven kilometres away. Better to admit we do not know.
+        """
+        if self._portal_read_at is None:
+            return False
+        return dt_util.utcnow() - self._portal_read_at < POSITION_TRUST_WINDOW
 
     @property
     def telemetry_ok(self) -> bool:

@@ -232,8 +232,14 @@ ATTRIBUTES_RETRY = timedelta(hours=6)
 # ~5 minute access token — so a brief gap must not flap every entity, while a
 # long one is a real outage and should look like one.
 TELEMETRY_GRACE = timedelta(minutes=30)
-# A position older than this is flagged stale (informational attribute only).
+# A GPS fix older than this is flagged stale. Informational: a car parked for
+# two days has a two-day-old fix and nothing is wrong.
 STALE_AFTER = timedelta(hours=24)
+# How long a position stays trustworthy once portal reads start failing. This is
+# a different thing from the fix being old: here we cannot tell whether the car
+# has moved since, so continuing to assert a location — and with it a zone —
+# would be a confident guess. Six poll cycles, so a blip does not blank it.
+POSITION_TRUST_WINDOW = timedelta(hours=3)
 
 # Climate operating states that count as "running" (shared by the climate
 # entity and the polling heuristic).
