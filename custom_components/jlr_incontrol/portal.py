@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -71,8 +72,15 @@ class JlrPortal:
     Assistant.
     """
 
-    def __init__(self, cookies: dict[str, str]) -> None:
+    def __init__(
+        self,
+        cookies: dict[str, str],
+        on_cookies: Callable[[dict[str, str]], None] | None = None,
+    ) -> None:
         self._cookies = dict(cookies or {})
+        # Called whenever the sign-in cookies change, so the newest set is the
+        # one persisted. See _async_capture_cookies for why that matters.
+        self._on_cookies = on_cookies
         self._session: aiohttp.ClientSession | None = None
         self._base: str | None = None
 
@@ -129,7 +137,32 @@ class JlrPortal:
             "succeeded" if signed_in else "failed",
             landed.split("?")[0],
         )
+        if signed_in:
+            self._capture_cookies()
         return signed_in
+
+    def _capture_cookies(self) -> None:
+        """Keep the newest sign-in cookies, not the ones we started with.
+
+        Every rebuilt session was seeded from the cookies captured at the
+        original interactive sign-in. If the identity server rolls its session
+        cookie on use — which is how an idle timeout is normally implemented —
+        then replaying the original one forever means the session ages out on
+        the first one's clock no matter how often we visit, and location dies a
+        day or so after every sign-in. Writing the refreshed cookie back is
+        what lets regular polling keep the session alive.
+        """
+        assert self._session is not None
+        host = URL(IDENTITY_HOST).host or ""
+        current = {
+            cookie.key: cookie.value
+            for cookie in self._session.cookie_jar
+            if host.endswith((cookie["domain"] or host).lstrip("."))
+        }
+        if current and current != self._cookies:
+            self._cookies = current
+            if self._on_cookies is not None:
+                self._on_cookies(dict(current))
 
     async def _async_ensure_session(self) -> str:
         """Log in if needed and return the portal base that answered."""

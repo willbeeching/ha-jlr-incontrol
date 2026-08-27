@@ -16,6 +16,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -38,7 +39,9 @@ from .const import (
     CONF_USER_ID,
     CONF_USERNAME,
     DOMAIN,
+    ISSUE_PORTAL_SIGNED_OUT,
     PORTAL_INTERVAL,
+    PORTAL_RETRY_AFTER,
     PORTAL_VEHICLES_TTL,
     POSITION_TRUST_WINDOW,
     SCAN_INTERVAL_HOUSEKEEPING,
@@ -111,11 +114,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # The owner portal: the only surviving source of location and of the
         # real vehicle names. Optional — an entry created before this existed
         # has no session stored, and everything else still works without it.
-        self.portal = JlrPortal(entry.data.get(CONF_SSO_COOKIES) or {})
+        self.portal = JlrPortal(
+            entry.data.get(CONF_SSO_COOKIES) or {}, on_cookies=self._store_cookies
+        )
         self._portal_ids: dict[str, str] = {}
         self._portal_due: Any = None
         self._portal_vehicles_due: Any = None
-        self._portal_signed_out = False
+        # When to try the portal again after it refused us; None means now.
+        self._portal_signed_out: Any = None
+        self._portal_unconfigured_logged = False
         # When a portal read last succeeded. Position is only as trustworthy as
         # this is recent — see position_trusted.
         self._portal_read_at: Any = None
@@ -245,21 +252,30 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         it — so a failure here degrades those two things and leaves everything
         else alone.
         """
-        if self._portal_signed_out:
-            return
+        now = dt_util.utcnow()
+        if self._portal_signed_out is not None:
+            # Refused before. Try again eventually rather than never: the fix
+            # needs the user, but a one-off failure should not cost location
+            # until the next restart.
+            if now < self._portal_signed_out:
+                return
+            self._portal_signed_out = None
         if not self.portal.configured:
             # Entries created before the portal was used have no session
-            # stored, and one cannot be conjured from a refresh token.
-            self._portal_signed_out = True
-            _LOGGER.warning(
-                "no stored sign-in session for the owner portal, so vehicle "
-                "location and names are unavailable. Settings > Devices & "
-                "Services > Jaguar Land Rover InControl > the three dots on "
-                "the entry > Reconfigure will sign in again and restore them, "
-                "keeping your existing entities"
-            )
+            # stored, and one cannot be conjured from a refresh token. Nothing
+            # to retry here, so this is a repair and a single log line rather
+            # than a back-off.
+            if not self._portal_unconfigured_logged:
+                self._portal_unconfigured_logged = True
+                self._async_raise_signed_out_issue()
+                _LOGGER.warning(
+                    "no stored sign-in session for the owner portal, so vehicle "
+                    "location and names are unavailable. Settings > Devices & "
+                    "Services > Jaguar Land Rover InControl > the three dots on "
+                    "the entry > Reconfigure will sign in again and restore "
+                    "them, keeping your existing entities"
+                )
             return
-        now = dt_util.utcnow()
         if self._portal_due is not None and now < self._portal_due:
             return
         self._portal_due = now + PORTAL_INTERVAL
@@ -272,9 +288,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._position[vin] = position
             self._portal_read_at = dt_util.utcnow()
         except JlrPortalAuthError as err:
-            # Nothing headless can renew this. Say so once and stop knocking;
-            # the next sign-in restores it.
-            self._portal_signed_out = True
+            # Nothing headless can renew this — only the user can, so raise a
+            # repair rather than bury it in a log line nobody reads.
+            self._portal_signed_out = now + PORTAL_RETRY_AFTER
+            self._async_raise_signed_out_issue()
             _LOGGER.warning(
                 "%s — live status is unaffected, but location and vehicle names "
                 "will not update until you sign in again",
@@ -284,6 +301,25 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("owner portal unavailable: %s", err)
         except Exception:  # noqa: BLE001 - the portal must never break setup
             _LOGGER.exception("unexpected failure reading the owner portal")
+
+    def _async_raise_signed_out_issue(self) -> None:
+        """Tell the user, in the place Home Assistant puts things needing them."""
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            ISSUE_PORTAL_SIGNED_OUT,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_PORTAL_SIGNED_OUT,
+        )
+
+    def _store_cookies(self, cookies: dict[str, str]) -> None:
+        """Persist refreshed sign-in cookies, and clear any standing warning."""
+        if self.entry.data.get(CONF_SSO_COOKIES) != cookies:
+            self.hass.config_entries.async_update_entry(
+                self.entry, data={**self.entry.data, CONF_SSO_COOKIES: cookies}
+            )
+        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
     async def _async_read_portal_vehicles(self, now: Any) -> None:
         """Fetch names and the per-account ids the dashboard pages need."""

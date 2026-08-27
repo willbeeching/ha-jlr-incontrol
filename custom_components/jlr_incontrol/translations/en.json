@@ -203,5 +203,11 @@
         "name": "Refresh"
       }
     }
+  },
+  "issues": {
+    "portal_signed_out": {
+      "title": "Sign in again to restore vehicle location",
+      "description": "Jaguar Land Rover's sign-in session has expired. Live vehicle status is unaffected and keeps working, but location and vehicle names cannot be refreshed until you sign in again — and the location is reported as unknown rather than showing a position that may be out of date.\n\nGo to the Jaguar Land Rover InControl entry, open the menu on it and choose **Reconfigure**, then enter your password and the code JLR emails you. Your entities, history and automations are kept."
+    }
   }
 }

@@ -70,6 +70,12 @@ IDENTITY_HOST = "https://identity.jaguarlandrover.com"
 PORTAL_INTERVAL = timedelta(minutes=30)
 # Vehicle names and plates change essentially never.
 PORTAL_VEHICLES_TTL = timedelta(hours=24)
+# How long to leave the portal alone after it refuses the stored session. Long
+# enough not to knock repeatedly at a door only the user can open, short enough
+# that a transient failure heals itself instead of needing a restart.
+PORTAL_RETRY_AFTER = timedelta(hours=6)
+# Repair issue raised when only an interactive sign-in can restore location.
+ISSUE_PORTAL_SIGNED_OUT = "portal_signed_out"
 
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
