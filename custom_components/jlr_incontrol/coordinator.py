@@ -287,6 +287,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if position:
                     self._position[vin] = position
             self._portal_read_at = dt_util.utcnow()
+            # Whatever was wrong is no longer wrong. Clearing this only when
+            # the session cookies happened to change left the repair standing
+            # over a portal that had been working for an hour.
+            self._async_clear_signed_out_issue()
         except JlrPortalAuthError as err:
             # Nothing headless can renew this — only the user can, so raise a
             # repair rather than bury it in a log line nobody reads.
@@ -313,13 +317,16 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             translation_key=ISSUE_PORTAL_SIGNED_OUT,
         )
 
+    def _async_clear_signed_out_issue(self) -> None:
+        """Withdraw the sign-in repair once the portal answers again."""
+        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
+
     def _store_cookies(self, cookies: dict[str, str]) -> None:
-        """Persist refreshed sign-in cookies, and clear any standing warning."""
+        """Persist refreshed sign-in cookies."""
         if self.entry.data.get(CONF_SSO_COOKIES) != cookies:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, CONF_SSO_COOKIES: cookies}
             )
-        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
     async def _async_read_portal_vehicles(self, now: Any) -> None:
         """Fetch names and the per-account ids the dashboard pages need."""
