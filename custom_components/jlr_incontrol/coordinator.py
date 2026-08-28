@@ -18,6 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -43,6 +44,7 @@ from .const import (
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
     PORTAL_INTERVAL,
+    PORTAL_KEEPALIVE_INTERVAL,
     PORTAL_RETRY_AFTER,
     PORTAL_VEHICLES_TTL,
     POSITION_TRUST_WINDOW,
@@ -178,6 +180,44 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         self._setup_done = True
 
+    def async_start_keepalive(self) -> None:
+        """Put the portal keep-alive on its own short clock."""
+        self.entry.async_on_unload(
+            async_track_time_interval(
+                self.hass, self._async_keepalive, PORTAL_KEEPALIVE_INTERVAL
+            )
+        )
+
+    async def _async_keepalive(self, _now: Any = None) -> None:
+        """Touch the owner portal so its session does not idle out.
+
+        Deliberately not part of housekeeping. Measured on a live account: a
+        portal session was already gone fifteen minutes and four seconds after
+        an interactive sign-in, and the identity session behind it refused to
+        mint a replacement — so the touch was doing nothing but discovering the
+        loss. Only the user can recover from that, at the cost of an emailed
+        code, which makes never reaching it worth a small request every few
+        minutes. See PORTAL_KEEPALIVE_PATH for what that request is.
+        """
+        if not self.portal.configured or self._portal_signed_out is not None:
+            return
+        if self._portal_due is None:
+            # No portal read yet, so there is no session to keep warm and a
+            # touch here would only spend the identity session minting one.
+            return
+        try:
+            await self.portal.async_touch()
+        except JlrPortalAuthError as err:
+            # Gone, and unrecoverable without the user. Say so now rather than
+            # waiting for the next half-hourly read to notice, and stop
+            # touching — retrying the login chain every four minutes would be
+            # both useless and rude.
+            self._async_portal_signed_out(dt_util.utcnow(), err)
+        except JlrPortalError as err:
+            _LOGGER.debug("portal keep-alive failed: %s", err)
+        except Exception:  # noqa: BLE001 - a timer callback must never raise
+            _LOGGER.exception("unexpected failure keeping the portal awake")
+
     async def async_shutdown(self) -> None:
         """Stop the telemetry socket and portal session, then the coordinator."""
         await self.telemetry.async_stop()
@@ -283,16 +323,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             return
         if self._portal_due is not None and now < self._portal_due:
-            # Not time for a location read, but the portal session must not be
-            # allowed to idle out between them — see PORTAL_KEEPALIVE_PATH.
-            # Housekeeping runs well inside the timeout, so one cheap request
-            # here is the whole of it.
-            try:
-                await self.portal.async_touch()
-            except JlrPortalError as err:
-                _LOGGER.debug("portal keep-alive failed: %s", err)
-            except Exception:  # noqa: BLE001 - never break housekeeping
-                _LOGGER.exception("unexpected failure keeping the portal awake")
+            # Not time for a location read. Keeping the session alive between
+            # them is _async_keepalive's job, on a clock short enough to
+            # actually manage it.
             return
         self._portal_due = now + PORTAL_INTERVAL
         try:
@@ -308,19 +341,21 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # over a portal that had been working for an hour.
             self._async_clear_signed_out_issue()
         except JlrPortalAuthError as err:
-            # Nothing headless can renew this — only the user can, so raise a
-            # repair rather than bury it in a log line nobody reads.
-            self._portal_signed_out = now + PORTAL_RETRY_AFTER
-            self._async_raise_signed_out_issue()
-            _LOGGER.warning(
-                "%s — live status is unaffected, but location and vehicle names "
-                "will not update until you sign in again",
-                err,
-            )
+            self._async_portal_signed_out(now, err)
         except JlrPortalError as err:
             _LOGGER.debug("owner portal unavailable: %s", err)
         except Exception:  # noqa: BLE001 - the portal must never break setup
             _LOGGER.exception("unexpected failure reading the owner portal")
+
+    def _async_portal_signed_out(self, now: Any, err: Exception) -> None:
+        """Back off and tell the user: nothing headless can renew this."""
+        self._portal_signed_out = now + PORTAL_RETRY_AFTER
+        self._async_raise_signed_out_issue()
+        _LOGGER.warning(
+            "%s — live status is unaffected, but location and vehicle names "
+            "will not update until you sign in again",
+            err,
+        )
 
     def _async_raise_signed_out_issue(self) -> None:
         """Tell the user once, in the place Home Assistant puts such things.

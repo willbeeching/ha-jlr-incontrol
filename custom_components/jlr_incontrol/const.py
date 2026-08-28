@@ -77,6 +77,12 @@ ONE_SHOT_COOKIES = frozenset({"OAUTH_REQUEST_ATTRIBUTES"})
 # to gain from asking often — and a legacy servlet app is not somewhere to be
 # impolite.
 PORTAL_INTERVAL = timedelta(minutes=30)
+# How often to touch the portal so its session does not idle out. Its own
+# clock, not the housekeeping one: the session has been watched die inside
+# fifteen minutes of a fresh sign-in, and once it has, the identity session
+# behind it will not mint another — so a touch on the fifteen-minute cycle was
+# arriving to find the very thing it was meant to preserve already gone.
+PORTAL_KEEPALIVE_INTERVAL = timedelta(minutes=4)
 # The portal's own session is a Java servlet session and thirty minutes is the
 # classic default for those — the same as the interval above, so every location
 # read was arriving exactly as the session lapsed. Being bounced to the login
