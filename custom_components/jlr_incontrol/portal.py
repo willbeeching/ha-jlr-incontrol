@@ -55,7 +55,10 @@ REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=90, connect=15, sock_read=30)
 # across many lines.
 _WAYPOINTS = re.compile(r"let\s+waypoints\s*=\s*(\[.*?\])\s*;", re.DOTALL)
 # The per-account vehicle id, as it appears in the setup link the JSON returns.
+# That link is named for cars still awaiting setup and is missing on some fully
+# registered ones, so the dashboard's own links are a second place to find it.
 _ENC_ID = re.compile(r"vehicle/add/\d+/([^/]+)/continue")
+_DASHBOARD_ID = re.compile(r'href="[^"]*/dashboard/vehicle/([^"/?]+)"')
 
 # Fields worth lifting off the portal's vehicle record, in its spelling.
 _VEHICLE_FIELDS = ("nickname", "vehicleBrand", "vehicleType", "registrationNumber")
@@ -312,8 +315,53 @@ class JlrPortal:
             match = _ENC_ID.search(str(record.get("continueSetupLink") or ""))
             if match:
                 found["portal_id"] = match.group(1)
+            else:
+                # Log which fields this record does have. Guessing the name of
+                # the one carrying the id is how the last several days went;
+                # the payload can say it instead. Keys only — the values hold
+                # the VIN and the registration.
+                _LOGGER.debug(
+                    "no setup link on this vehicle; fields present: %s",
+                    sorted(record),
+                )
             vehicles[vin] = found
+
+        await self._async_fill_missing_ids(vehicles)
         return vehicles
+
+    async def _async_fill_missing_ids(
+        self, vehicles: dict[str, dict[str, Any]]
+    ) -> None:
+        """Recover a vehicle id from the dashboard's own links.
+
+        Only where it is unambiguous. With one vehicle short of an id and one
+        link spare, the pairing is certain; with more of either it is a guess,
+        and quietly attaching the wrong car's location to a vehicle would be
+        worse than having none.
+        """
+        missing = [vin for vin, found in vehicles.items() if "portal_id" not in found]
+        if not missing:
+            return
+        try:
+            _, body = await self._async_get("/dashboard")
+        except JlrPortalError as err:
+            _LOGGER.debug("could not read the dashboard for vehicle ids: %s", err)
+            return
+        taken = {found.get("portal_id") for found in vehicles.values()}
+        spare = [
+            i for i in dict.fromkeys(_DASHBOARD_ID.findall(body)) if i not in taken
+        ]
+        if len(missing) == 1 and len(spare) == 1:
+            vehicles[missing[0]]["portal_id"] = spare[0]
+            _LOGGER.debug("recovered the vehicle id from the dashboard links")
+            return
+        _LOGGER.warning(
+            "could not work out the owner portal's id for %s vehicle(s), so their "
+            "location cannot be read (%s unclaimed link(s) on the dashboard). "
+            "Please report this with debug logging enabled",
+            len(missing),
+            len(spare),
+        )
 
     async def async_get_position(self, portal_id: str) -> dict[str, Any]:
         """Return the parked position from the last journey's trail."""
