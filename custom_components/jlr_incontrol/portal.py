@@ -175,6 +175,9 @@ class JlrPortal:
 
     async def _async_ensure_session(self) -> str:
         """Log in if needed and return the portal base that answered."""
+        _LOGGER.debug(
+            "portal sign-in cookies held: %s", sorted(self._cookies) or "none"
+        )
         if self._session is None or self._session.closed:
             self._session = self._new_session()
             self._base = None

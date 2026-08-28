@@ -123,6 +123,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When to try the portal again after it refused us; None means now.
         self._portal_signed_out: Any = None
         self._portal_unconfigured_logged = False
+        self._signed_out_issue_raised = False
         # When a portal read last succeeded. Position is only as trustworthy as
         # this is recent — see position_trusted.
         self._portal_read_at: Any = None
@@ -307,7 +308,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.exception("unexpected failure reading the owner portal")
 
     def _async_raise_signed_out_issue(self) -> None:
-        """Tell the user, in the place Home Assistant puts things needing them."""
+        """Tell the user once, in the place Home Assistant puts such things.
+
+        Once per load, not once per retry. Dismissing a repair is the user
+        saying they have read it; re-raising it every six hours over a problem
+        they cannot currently fix is nagging, not informing.
+        """
+        if self._signed_out_issue_raised:
+            return
+        self._signed_out_issue_raised = True
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -319,6 +328,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _async_clear_signed_out_issue(self) -> None:
         """Withdraw the sign-in repair once the portal answers again."""
+        self._signed_out_issue_raised = False
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
     def _store_cookies(self, cookies: dict[str, str]) -> None:
