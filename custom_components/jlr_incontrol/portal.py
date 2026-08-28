@@ -153,12 +153,16 @@ class JlrPortal:
         what lets regular polling keep the session alive.
         """
         assert self._session is not None
-        # Ask the jar which cookies it would actually send to the identity
-        # host, rather than matching domains by hand. Hand-matching is what
-        # broke this: it collected the wrong set, and the merge below is what
-        # stops a bad read costing us the good cookies.
-        applicable = self._session.cookie_jar.filter_cookies(URL(IDENTITY_HOST))
-        current = {key: morsel.value for key, morsel in applicable.items()}
+        # Every identity-host cookie, whatever its path. Filtering by the host
+        # root silently drops the two scoped to /gateway, so a rotation of
+        # those would never be picked up — and they are part of what routes the
+        # request to the node holding the session.
+        host = URL(IDENTITY_HOST).host or ""
+        current = {
+            cookie.key: cookie.value
+            for cookie in self._session.cookie_jar
+            if host.endswith((cookie["domain"] or host).lstrip("."))
+        }
         if not current:
             return
         # Merge, never replace. A login can legitimately surface only some of

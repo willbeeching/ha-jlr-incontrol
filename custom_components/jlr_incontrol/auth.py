@@ -36,6 +36,7 @@ from .const import (
     IAM_REDIRECT_URI,
     IAM_SCOPES,
     IDENTITY_HOST,
+    SESSION_COOKIE,
     USER_AGENT,
 )
 
@@ -93,6 +94,9 @@ class JlrLogin:
         self._nonce = secrets.token_urlsafe(16)
         self._callbacks: dict[str, Any] | None = None
         self._stage = "start"
+        # The AM session id the journey ends with. Captured because it is also
+        # the value of the SSOSession cookie — see session_cookies.
+        self._token_id: str | None = None
 
     def session_cookies(self) -> dict[str, str]:
         """The ForgeRock session cookies this journey established.
@@ -103,16 +107,27 @@ class JlrLogin:
         token. So the jar is harvested here, before it is thrown away, and the
         cookies are persisted with the entry.
 
-        Every cookie on the identity host is taken rather than one picked by
-        name: which of them AM treats as the session has changed before, and a
-        wrong guess would fail silently much later.
+        Every cookie on the identity host is taken, whatever its path, and not
+        one picked by name. The session itself is ``SSOSession``, but sending it
+        alone lands on a node that has never heard of the session: AM is behind
+        a load balancer and ``lbcookie`` is what routes the request to the node
+        holding it, while ``INGRESSCOOKIE`` and ``IG_SESSIONID`` route within
+        the gateway and are scoped to ``/gateway``. Missing any of them produces
+        a redirect to the login page — identical to an expired session, and
+        exactly as misleading.
         """
         host = urlparse(IDENTITY_HOST).hostname or ""
-        return {
+        cookies = {
             cookie.key: cookie.value
             for cookie in self._session.cookie_jar
             if host.endswith(cookie["domain"].lstrip(".") or host)
         }
+        # SSOSession's value is the tokenId the journey just returned — the same
+        # session, delivered twice. Deriving it means a jar that missed the
+        # Set-Cookie cannot silently cost us the one cookie that matters.
+        if self._token_id:
+            cookies.setdefault(SESSION_COOKIE, self._token_id)
+        return cookies
 
     async def async_close(self) -> None:
         """Drop the cookie jar and its session."""
@@ -180,6 +195,7 @@ class JlrLogin:
                 f"'{self._stage}')"
             )
 
+        self._token_id = token_id
         auth_code = await self._async_authorize(token_id)
         return await self._async_exchange(auth_code)
 

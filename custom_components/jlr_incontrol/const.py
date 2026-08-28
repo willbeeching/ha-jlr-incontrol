@@ -64,6 +64,11 @@ PORTAL_LOCALE = "en_GB"
 # The AM session cookie domain: the portal's login hand-off rides the same
 # ForgeRock session the interactive sign-in established.
 IDENTITY_HOST = "https://identity.jaguarlandrover.com"
+# The AM session cookie. A custom name, not ForgeRock's default
+# iPlanetDirectoryPro, and its value is the journey's tokenId. It is necessary
+# but not sufficient: the sibling routing cookies from the same response have
+# to travel with it (see JlrLogin.session_cookies).
+SESSION_COOKIE = "SSOSession"
 # Location only moves when a journey completes and syncs, so there is nothing
 # to gain from asking often — and a legacy servlet app is not somewhere to be
 # impolite.
