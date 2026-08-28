@@ -207,6 +207,39 @@ class JlrPortal:
             _LOGGER.debug("portal cookies presented: %s", sorted(self._cookies))
         return signed_in
 
+    async def _async_has_vehicles(self, base: str) -> bool:
+        """Whether this brand's portal has any of the account's cars on it.
+
+        A successful login says nothing about which portal to use: the two
+        brands share one ForgeRock identity, so signing in to Land Rover works
+        perfectly well for someone who only owns a Jaguar — and then shows them
+        an empty garage. Land Rover is tried first, so that is exactly what
+        every Jaguar-only owner has been getting, silently (#14).
+
+        Requested directly rather than through ``_async_get``, which would call
+        back into session setup and recurse. An account with cars on both
+        brands would need a session per portal; the first brand holding a car
+        is taken, and the vehicle count logged in ``async_get_vehicles`` is
+        what would show that up.
+        """
+        assert self._session is not None
+        try:
+            async with self._session.get(
+                f"{base}{PORTAL_KEEPALIVE_PATH}",
+                headers={"User-Agent": USER_AGENT},
+                allow_redirects=True,
+            ) as resp:
+                landed, body, status = str(resp.url), await resp.text(), resp.status
+            if status != 200 or _is_login_page(landed, body):
+                return False
+            payload = json.loads(body)
+        except (TimeoutError, aiohttp.ClientError, ValueError) as err:
+            _LOGGER.debug("could not read the garage at %s: %s", base, err)
+            return False
+        count = len((payload or {}).get("vehicles") or [])
+        _LOGGER.debug("owner portal at %s lists %s vehicle(s)", base, count)
+        return count > 0
+
     async def _async_ensure_session(self) -> str:
         """Return a portal base we are signed in to, signing in only if needed.
 
@@ -229,11 +262,28 @@ class JlrPortal:
             "minting a portal session; identity cookies held: %s",
             sorted(self._cookies) or "none",
         )
+        signed_in: str | None = None
         for base in PORTAL_BASES:
-            if await self._async_login(base):
+            if not await self._async_login(base):
+                continue
+            signed_in = signed_in or base
+            if await self._async_has_vehicles(base):
                 self._base = base
                 self._remember_portal_session(base)
                 return base
+        if signed_in is not None:
+            # Signed in everywhere and found a car nowhere. That is not a
+            # sign-in failure, and reporting it as one would send the user off
+            # for an emailed code that cannot help. Take the portal that let us
+            # in and let the reads report what they actually find.
+            _LOGGER.warning(
+                "signed in to the owner portal but it lists no vehicles, so "
+                "location and vehicle names are unavailable. Please report "
+                "this with debug logging enabled"
+            )
+            self._base = signed_in
+            self._remember_portal_session(signed_in)
+            return signed_in
         raise JlrPortalAuthError(
             "the stored Jaguar Land Rover sign-in session no longer opens the "
             "owner portal; location and vehicle names need a fresh sign-in"
@@ -327,6 +377,13 @@ class JlrPortal:
             vehicles[vin] = found
 
         await self._async_fill_missing_ids(vehicles)
+        # Zero vehicles and a payload we read wrongly look identical from the
+        # outside, and telling them apart cost a day of someone else's time.
+        _LOGGER.debug(
+            "owner portal listed %s vehicle(s), %s of them with an id",
+            len(vehicles),
+            sum(1 for found in vehicles.values() if "portal_id" in found),
+        )
         return vehicles
 
     async def _async_fill_missing_ids(
