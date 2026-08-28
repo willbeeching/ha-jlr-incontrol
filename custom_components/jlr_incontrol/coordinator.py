@@ -276,6 +276,16 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
             return
         if self._portal_due is not None and now < self._portal_due:
+            # Not time for a location read, but the portal session must not be
+            # allowed to idle out between them — see PORTAL_KEEPALIVE_PATH.
+            # Housekeeping runs well inside the timeout, so one cheap request
+            # here is the whole of it.
+            try:
+                await self.portal.async_touch()
+            except JlrPortalError as err:
+                _LOGGER.debug("portal keep-alive failed: %s", err)
+            except Exception:  # noqa: BLE001 - never break housekeeping
+                _LOGGER.exception("unexpected failure keeping the portal awake")
             return
         self._portal_due = now + PORTAL_INTERVAL
         try:

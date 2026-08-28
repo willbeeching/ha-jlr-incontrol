@@ -32,7 +32,13 @@ from typing import Any
 import aiohttp
 from yarl import URL
 
-from .const import IDENTITY_HOST, PORTAL_BASES, PORTAL_LOCALE, USER_AGENT
+from .const import (
+    IDENTITY_HOST,
+    PORTAL_BASES,
+    PORTAL_KEEPALIVE_PATH,
+    PORTAL_LOCALE,
+    USER_AGENT,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -208,9 +214,18 @@ class JlrPortal:
         raise JlrPortalAuthError("the owner portal session has expired")
 
     # --------------------------------------------------------------- readings
+    async def async_touch(self) -> None:
+        """Keep the portal session alive without fetching anything heavy.
+
+        The cheapest authenticated page there is, requested purely so the
+        servlet session does not idle out. Letting it lapse costs a re-login,
+        and a re-login is the one thing that cannot be done without the user.
+        """
+        await self._async_get(PORTAL_KEEPALIVE_PATH)
+
     async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
         """Return {vin: {names…, "portal_id": …}} for the account's vehicles."""
-        _, body = await self._async_get("/ajax/pollvehiclestatus")
+        _, body = await self._async_get(PORTAL_KEEPALIVE_PATH)
         try:
             payload = json.loads(body)
         except ValueError as err:

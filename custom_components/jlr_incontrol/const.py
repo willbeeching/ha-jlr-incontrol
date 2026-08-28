@@ -73,6 +73,14 @@ SESSION_COOKIE = "SSOSession"
 # to gain from asking often — and a legacy servlet app is not somewhere to be
 # impolite.
 PORTAL_INTERVAL = timedelta(minutes=30)
+# The portal's own session is a Java servlet session and thirty minutes is the
+# classic default for those — the same as the interval above, so every location
+# read was arriving exactly as the session lapsed. Being bounced to the login
+# page then forces a fresh sign-in, and the identity session it needs has aged
+# out by then too, which is what made location die half an hour after every
+# sign-in. Touching the portal on each housekeeping run keeps its session
+# comfortably inside the timeout so the re-login never has to happen.
+PORTAL_KEEPALIVE_PATH = "/ajax/pollvehiclestatus"
 # Vehicle names and plates change essentially never.
 PORTAL_VEHICLES_TTL = timedelta(hours=24)
 # How long to leave the portal alone after it refuses the stored session. Long
