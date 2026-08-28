@@ -34,6 +34,8 @@ from .const import (
     CONF_ATTRIBUTES,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
+    CONF_PORTAL_BASE,
+    CONF_PORTAL_COOKIES,
     CONF_REFRESH_TOKEN,
     CONF_SSO_COOKIES,
     CONF_USER_ID,
@@ -114,7 +116,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # The owner portal: the only surviving source of location and of the
         # real vehicle names. Optional — an entry created before this existed
         # has no session stored, and everything else still works without it.
-        self.portal = JlrPortal(entry.data.get(CONF_SSO_COOKIES) or {})
+        self.portal = JlrPortal(
+            entry.data.get(CONF_SSO_COOKIES) or {},
+            portal_cookies=entry.data.get(CONF_PORTAL_COOKIES) or {},
+            portal_base=entry.data.get(CONF_PORTAL_BASE),
+            on_portal_session=self._store_portal_session,
+        )
         self._portal_ids: dict[str, str] = {}
         self._portal_due: Any = None
         self._portal_vehicles_due: Any = None
@@ -338,6 +345,27 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Withdraw the sign-in repair once the portal answers again."""
         self._signed_out_issue_raised = False
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
+
+    def _store_portal_session(self, base: str, cookies: dict[str, str]) -> None:
+        """Keep the portal session across restarts.
+
+        Worth persisting where the identity session is not: that one dies
+        within two hours of the user signing in and only the user can replace
+        it, while a portal session in active use outlives it by a long way.
+        """
+        if (
+            self.entry.data.get(CONF_PORTAL_BASE) == base
+            and self.entry.data.get(CONF_PORTAL_COOKIES) == cookies
+        ):
+            return
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={
+                **self.entry.data,
+                CONF_PORTAL_BASE: base,
+                CONF_PORTAL_COOKIES: cookies,
+            },
+        )
 
     async def _async_read_portal_vehicles(self, now: Any) -> None:
         """Fetch names and the per-account ids the dashboard pages need."""

@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_PASSWORD,
+    CONF_PORTAL_COOKIES,
     CONF_REFRESH_TOKEN,
     CONF_SSO_COOKIES,
     DOMAIN,
@@ -22,6 +23,8 @@ REDACT_KEYS = {
     CONF_REFRESH_TOKEN,
     # A live session for the owner portal, same as the token above.
     CONF_SSO_COOKIES,
+    # A live portal session, same as the identity one above.
+    CONF_PORTAL_COOKIES,
     "portal_id",
     "latitude",
     "longitude",

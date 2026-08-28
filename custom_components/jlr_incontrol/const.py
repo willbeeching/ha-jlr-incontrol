@@ -69,6 +69,10 @@ IDENTITY_HOST = "https://identity.jaguarlandrover.com"
 # but not sufficient: the sibling routing cookies from the same response have
 # to travel with it (see JlrLogin.session_cookies).
 SESSION_COOKIE = "SSOSession"
+# Cookies that describe one pending request rather than the session. Replaying
+# a stale one into a fresh authorize is asking the server to resume something
+# that finished long ago, so they are captured but never persisted.
+ONE_SHOT_COOKIES = frozenset({"OAUTH_REQUEST_ATTRIBUTES"})
 # Location only moves when a journey completes and syncs, so there is nothing
 # to gain from asking often — and a legacy servlet app is not somewhere to be
 # impolite.
@@ -203,6 +207,13 @@ CONF_ATTRIBUTES = "attributes"
 # to the AM session in the browser — so reading location means keeping that
 # session. Treated as a credential: redacted from diagnostics, never logged.
 CONF_SSO_COOKIES = "sso_cookies"
+# The portal's own session, and which brand's portal minted it. This is the one
+# worth keeping: the identity session behind it is capped at two hours and
+# cannot be renewed without the user, whereas a portal session in active use
+# has been observed alive for well over a day. Persisting it means a restart
+# resumes rather than needing a fresh code.
+CONF_PORTAL_COOKIES = "portal_cookies"
+CONF_PORTAL_BASE = "portal_base"
 
 # ---- Options keys ----
 OPT_DISTANCE_UNIT = "distance_unit"

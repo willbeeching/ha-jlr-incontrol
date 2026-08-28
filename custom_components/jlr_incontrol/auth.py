@@ -36,6 +36,7 @@ from .const import (
     IAM_REDIRECT_URI,
     IAM_SCOPES,
     IDENTITY_HOST,
+    ONE_SHOT_COOKIES,
     SESSION_COOKIE,
     USER_AGENT,
 )
@@ -127,7 +128,11 @@ class JlrLogin:
         # Set-Cookie cannot silently cost us the one cookie that matters.
         if self._token_id:
             cookies.setdefault(SESSION_COOKIE, self._token_id)
-        return cookies
+        # Drop the per-request ones. They belong to the authorize round-trip
+        # that has just completed, and handing a stale one back on the next
+        # sign-in is a plausible reason a second attempt is refused while the
+        # session behind it is demonstrably still alive.
+        return {k: v for k, v in cookies.items() if k not in ONE_SHOT_COOKIES}
 
     async def async_close(self) -> None:
         """Drop the cookie jar and its session."""

@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -77,11 +78,24 @@ class JlrPortal:
     Assistant.
     """
 
-    def __init__(self, cookies: dict[str, str]) -> None:
-        # The set captured at sign-in, replayed unchanged for the life of the
-        # session. Refreshing it from later responses was tried and is what
-        # broke this repeatedly — see _async_login.
+    def __init__(
+        self,
+        cookies: dict[str, str],
+        portal_cookies: dict[str, str] | None = None,
+        portal_base: str | None = None,
+        on_portal_session: Callable[[str, dict[str, str]], None] | None = None,
+    ) -> None:
+        # The identity cookies captured at sign-in, replayed unchanged.
+        # Measured lifetime: 60 minutes idle, 2 hours absolute, and nothing
+        # this integration does extends either. They are the way in, once.
         self._cookies = dict(cookies or {})
+        # The portal session those bought. This is the durable half — one in
+        # active use has been observed working for over thirty hours — so it is
+        # what gets reused, and the identity chain is only a fallback for
+        # minting a new one while the two-hour window is still open.
+        self._portal_cookies = dict(portal_cookies or {})
+        self._portal_base = portal_base
+        self._on_portal_session = on_portal_session
         self._session: aiohttp.ClientSession | None = None
         self._base: str | None = None
 
@@ -99,11 +113,50 @@ class JlrPortal:
     # ------------------------------------------------------------------ login
     def _new_session(self) -> aiohttp.ClientSession:
         jar = aiohttp.CookieJar()
-        # Seed the AM session the interactive sign-in established. Without it
-        # the portal's OAuth hand-off lands on the login page instead of the
-        # dashboard, and there is nothing headless that can answer that.
+        # The identity session, for minting a portal session if one is needed.
         jar.update_cookies(self._cookies, response_url=URL(IDENTITY_HOST))
+        # And the portal session itself, so a restart resumes where it left off
+        # instead of spending the identity session — which by then is usually
+        # dead, and only the user can replace it.
+        if self._portal_cookies and self._portal_base:
+            jar.update_cookies(
+                self._portal_cookies, response_url=URL(self._portal_base)
+            )
         return aiohttp.ClientSession(cookie_jar=jar, timeout=REQUEST_TIMEOUT)
+
+    async def _async_still_signed_in(self, base: str) -> bool:
+        """Whether the remembered portal session still opens the portal."""
+        assert self._session is not None
+        try:
+            async with self._session.get(
+                f"{base}{PORTAL_KEEPALIVE_PATH}",
+                headers={"User-Agent": USER_AGENT},
+                allow_redirects=True,
+            ) as resp:
+                landed, body, status = str(resp.url), await resp.text(), resp.status
+        except (TimeoutError, aiohttp.ClientError) as err:
+            _LOGGER.debug("portal session probe failed: %s", err)
+            return False
+        alive = status == 200 and not _is_login_page(landed, body)
+        _LOGGER.debug(
+            "remembered portal session %s", "still valid" if alive else "has lapsed"
+        )
+        return alive
+
+    def _remember_portal_session(self, base: str) -> None:
+        """Persist the portal session so the next start need not mint one."""
+        assert self._session is not None
+        host = URL(base).host or ""
+        cookies = {
+            cookie.key: cookie.value
+            for cookie in self._session.cookie_jar
+            if host.endswith((cookie["domain"] or host).lstrip("."))
+        }
+        if not cookies:
+            return
+        self._portal_cookies, self._portal_base = cookies, base
+        if self._on_portal_session is not None:
+            self._on_portal_session(base, dict(cookies))
 
     async def _async_login(self, base: str) -> bool:
         """Run the browser's login sequence against one brand's portal."""
@@ -152,18 +205,31 @@ class JlrPortal:
         return signed_in
 
     async def _async_ensure_session(self) -> str:
-        """Log in if needed and return the portal base that answered."""
-        _LOGGER.debug(
-            "portal sign-in cookies held: %s", sorted(self._cookies) or "none"
-        )
-        if self._session is None or self._session.closed:
+        """Return a portal base we are signed in to, signing in only if needed.
+
+        Reusing the remembered portal session is the whole point: minting a new
+        one needs the identity session, which expires within two hours of the
+        user's last sign-in and cannot be renewed headlessly. Every avoided
+        sign-in is an emailed code the user does not have to go and find.
+        """
+        fresh = self._session is None or self._session.closed
+        if fresh:
             self._session = self._new_session()
             self._base = None
         if self._base is not None:
             return self._base
+        if fresh and self._portal_base and self._portal_cookies:
+            if await self._async_still_signed_in(self._portal_base):
+                self._base = self._portal_base
+                return self._base
+        _LOGGER.debug(
+            "minting a portal session; identity cookies held: %s",
+            sorted(self._cookies) or "none",
+        )
         for base in PORTAL_BASES:
             if await self._async_login(base):
                 self._base = base
+                self._remember_portal_session(base)
                 return base
         raise JlrPortalAuthError(
             "the stored Jaguar Land Rover sign-in session no longer opens the "
