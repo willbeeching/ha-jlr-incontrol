@@ -153,16 +153,25 @@ class JlrPortal:
         what lets regular polling keep the session alive.
         """
         assert self._session is not None
-        host = URL(IDENTITY_HOST).host or ""
-        current = {
-            cookie.key: cookie.value
-            for cookie in self._session.cookie_jar
-            if host.endswith((cookie["domain"] or host).lstrip("."))
-        }
-        if current and current != self._cookies:
-            self._cookies = current
+        # Ask the jar which cookies it would actually send to the identity
+        # host, rather than matching domains by hand. Hand-matching is what
+        # broke this: it collected the wrong set, and the merge below is what
+        # stops a bad read costing us the good cookies.
+        applicable = self._session.cookie_jar.filter_cookies(URL(IDENTITY_HOST))
+        current = {key: morsel.value for key, morsel in applicable.items()}
+        if not current:
+            return
+        # Merge, never replace. A login can legitimately surface only some of
+        # the cookies the session needs, and overwriting the stored set with a
+        # partial one leaves an entry that cannot sign in again — recoverable
+        # only by the user, which is precisely the cost this was meant to
+        # avoid. Adding and updating keys can rotate a value; it can never
+        # lose one.
+        merged = {**self._cookies, **current}
+        if merged != self._cookies:
+            self._cookies = merged
             if self._on_cookies is not None:
-                self._on_cookies(dict(current))
+                self._on_cookies(dict(merged))
 
     async def _async_ensure_session(self) -> str:
         """Log in if needed and return the portal base that answered."""
