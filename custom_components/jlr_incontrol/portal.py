@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -72,15 +71,11 @@ class JlrPortal:
     Assistant.
     """
 
-    def __init__(
-        self,
-        cookies: dict[str, str],
-        on_cookies: Callable[[dict[str, str]], None] | None = None,
-    ) -> None:
+    def __init__(self, cookies: dict[str, str]) -> None:
+        # The set captured at sign-in, replayed unchanged for the life of the
+        # session. Refreshing it from later responses was tried and is what
+        # broke this repeatedly — see _async_login.
         self._cookies = dict(cookies or {})
-        # Called whenever the sign-in cookies change, so the newest set is the
-        # one persisted. See _async_capture_cookies for why that matters.
-        self._on_cookies = on_cookies
         self._session: aiohttp.ClientSession | None = None
         self._base: str | None = None
 
@@ -137,45 +132,18 @@ class JlrPortal:
             "succeeded" if signed_in else "failed",
             landed.split("?")[0],
         )
-        if signed_in:
-            self._capture_cookies()
+        if not signed_in:
+            # Ambiguous by nature: an expired session and a request routed to
+            # an identity node that never held the session both land here.
+            #
+            # Refreshing the stored cookies from this exchange was tried twice
+            # and made it worse both times. The authorize round-trip can hand
+            # back routing cookies pointing at a different node from the one
+            # holding the session, and persisting that mismatch poisons every
+            # later sign-in — a fault only the user can clear. The set captured
+            # at sign-in is internally consistent; it is replayed unchanged.
+            _LOGGER.debug("portal cookies presented: %s", sorted(self._cookies))
         return signed_in
-
-    def _capture_cookies(self) -> None:
-        """Keep the newest sign-in cookies, not the ones we started with.
-
-        Every rebuilt session was seeded from the cookies captured at the
-        original interactive sign-in. If the identity server rolls its session
-        cookie on use — which is how an idle timeout is normally implemented —
-        then replaying the original one forever means the session ages out on
-        the first one's clock no matter how often we visit, and location dies a
-        day or so after every sign-in. Writing the refreshed cookie back is
-        what lets regular polling keep the session alive.
-        """
-        assert self._session is not None
-        # Every identity-host cookie, whatever its path. Filtering by the host
-        # root silently drops the two scoped to /gateway, so a rotation of
-        # those would never be picked up — and they are part of what routes the
-        # request to the node holding the session.
-        host = URL(IDENTITY_HOST).host or ""
-        current = {
-            cookie.key: cookie.value
-            for cookie in self._session.cookie_jar
-            if host.endswith((cookie["domain"] or host).lstrip("."))
-        }
-        if not current:
-            return
-        # Merge, never replace. A login can legitimately surface only some of
-        # the cookies the session needs, and overwriting the stored set with a
-        # partial one leaves an entry that cannot sign in again — recoverable
-        # only by the user, which is precisely the cost this was meant to
-        # avoid. Adding and updating keys can rotate a value; it can never
-        # lose one.
-        merged = {**self._cookies, **current}
-        if merged != self._cookies:
-            self._cookies = merged
-            if self._on_cookies is not None:
-                self._on_cookies(dict(merged))
 
     async def _async_ensure_session(self) -> str:
         """Log in if needed and return the portal base that answered."""

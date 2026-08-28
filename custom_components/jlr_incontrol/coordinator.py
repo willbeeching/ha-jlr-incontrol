@@ -114,9 +114,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # The owner portal: the only surviving source of location and of the
         # real vehicle names. Optional — an entry created before this existed
         # has no session stored, and everything else still works without it.
-        self.portal = JlrPortal(
-            entry.data.get(CONF_SSO_COOKIES) or {}, on_cookies=self._store_cookies
-        )
+        self.portal = JlrPortal(entry.data.get(CONF_SSO_COOKIES) or {})
         self._portal_ids: dict[str, str] = {}
         self._portal_due: Any = None
         self._portal_vehicles_due: Any = None
@@ -330,13 +328,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Withdraw the sign-in repair once the portal answers again."""
         self._signed_out_issue_raised = False
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
-
-    def _store_cookies(self, cookies: dict[str, str]) -> None:
-        """Persist refreshed sign-in cookies."""
-        if self.entry.data.get(CONF_SSO_COOKIES) != cookies:
-            self.hass.config_entries.async_update_entry(
-                self.entry, data={**self.entry.data, CONF_SSO_COOKIES: cookies}
-            )
 
     async def _async_read_portal_vehicles(self, now: Any) -> None:
         """Fetch names and the per-account ids the dashboard pages need."""
