@@ -86,21 +86,43 @@ class JlrPortal:
         cookies: dict[str, str],
         portal_cookies: dict[str, str] | None = None,
         portal_base: str | None = None,
-        on_portal_session: Callable[[str, dict[str, str]], None] | None = None,
+        on_portal_session: (
+            Callable[[str, dict[str, str], str], None] | None
+        ) = None,
+        portal_minted: str | None = None,
     ) -> None:
         # The identity cookies captured at sign-in, replayed unchanged.
         # Measured lifetime: 60 minutes idle, 2 hours absolute, and nothing
         # this integration does extends either. They are the way in, once.
         self._cookies = dict(cookies or {})
-        # The portal session those bought. This is the durable half — one in
-        # active use has been observed working for over thirty hours — so it is
-        # what gets reused, and the identity chain is only a fallback for
-        # minting a new one while the two-hour window is still open.
+        # The portal session those bought. This is the durable half — kept
+        # alive, one has been measured at twenty-one hours against the identity
+        # session's two — so it is what gets reused, and the identity chain is
+        # only a fallback for minting a new one while that window is open.
         self._portal_cookies = dict(portal_cookies or {})
         self._portal_base = portal_base
         self._on_portal_session = on_portal_session
+        self._minted = _parse_iso(portal_minted)
         self._session: aiohttp.ClientSession | None = None
         self._base: str | None = None
+
+    @property
+    def session_age(self) -> str:
+        """How old the portal session is, for the log.
+
+        Age is the measurement that distinguishes the two ways a session dies:
+        idled out because we touched it too slowly, or expired because the far
+        end was only ever going to keep it so long. Both look identical at the
+        moment of failure, and telling them apart afterwards from scattered log
+        timestamps is what made two failures this weekend take a day each.
+        """
+        if self._minted is None:
+            return "age unknown"
+        seconds = int((datetime.now(timezone.utc) - self._minted).total_seconds())
+        if seconds < 0:
+            return "age unknown"
+        hours, minutes = divmod(seconds // 60, 60)
+        return f"{hours}h{minutes:02d}m old"
 
     @property
     def configured(self) -> bool:
@@ -182,9 +204,10 @@ class JlrPortal:
         }
         if not cookies:
             return
+        self._minted = datetime.now(timezone.utc)
         self._portal_cookies, self._portal_base = cookies, base
         if self._on_portal_session is not None:
-            self._on_portal_session(base, dict(cookies))
+            self._on_portal_session(base, dict(cookies), self._minted.isoformat())
 
     async def _async_login(self, base: str) -> bool:
         """Run the browser's login sequence against one brand's portal."""
@@ -510,3 +533,14 @@ def _iso(value: Any) -> str | None:
     except (TypeError, ValueError, OSError, OverflowError):
         return None
     return moment.isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    """A stored timestamp, or nothing if it is missing or unreadable."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

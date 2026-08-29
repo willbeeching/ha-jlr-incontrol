@@ -37,6 +37,7 @@ from .const import (
     CONF_PASSWORD,
     CONF_PORTAL_BASE,
     CONF_PORTAL_COOKIES,
+    CONF_PORTAL_MINTED,
     CONF_REFRESH_TOKEN,
     CONF_SSO_COOKIES,
     CONF_USER_ID,
@@ -122,6 +123,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entry.data.get(CONF_SSO_COOKIES) or {},
             portal_cookies=entry.data.get(CONF_PORTAL_COOKIES) or {},
             portal_base=entry.data.get(CONF_PORTAL_BASE),
+            portal_minted=entry.data.get(CONF_PORTAL_MINTED),
             on_portal_session=self._store_portal_session,
         )
         self._portal_ids: dict[str, str] = {}
@@ -207,6 +209,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         try:
             await self.portal.async_touch()
+            # Say so. A touch that succeeds silently is indistinguishable in
+            # the log from a timer that never fired at all, and not being able
+            # to tell those apart is what left both of this weekend's failures
+            # undiagnosed.
+            _LOGGER.debug("portal keep-alive ok, session %s", self.portal.session_age)
         except JlrPortalAuthError as err:
             # Gone, and unrecoverable without the user. Say so now rather than
             # waiting for the next half-hourly read to notice, and stop
@@ -336,6 +343,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if position:
                     self._position[vin] = position
             self._portal_read_at = dt_util.utcnow()
+            _LOGGER.debug("owner portal read ok, session %s", self.portal.session_age)
             # Whatever was wrong is no longer wrong. Clearing this only when
             # the session cookies happened to change left the repair standing
             # over a portal that had been working for an hour.
@@ -381,7 +389,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._signed_out_issue_raised = False
         ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
-    def _store_portal_session(self, base: str, cookies: dict[str, str]) -> None:
+    def _store_portal_session(
+        self, base: str, cookies: dict[str, str], minted: str
+    ) -> None:
         """Keep the portal session across restarts.
 
         Worth persisting where the identity session is not: that one dies
@@ -399,6 +409,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 **self.entry.data,
                 CONF_PORTAL_BASE: base,
                 CONF_PORTAL_COOKIES: cookies,
+                CONF_PORTAL_MINTED: minted,
             },
         )
 
