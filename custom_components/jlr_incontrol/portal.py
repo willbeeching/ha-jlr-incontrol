@@ -127,8 +127,20 @@ class JlrPortal:
             )
         return aiohttp.ClientSession(cookie_jar=jar, timeout=REQUEST_TIMEOUT)
 
-    async def _async_still_signed_in(self, base: str) -> bool:
-        """Whether the remembered portal session still opens the portal."""
+    async def _async_can_resume(self, base: str) -> bool:
+        """Whether the remembered portal session is still usable for this account.
+
+        Two questions answered by one request. Alive, obviously — but also the
+        right brand. The base is remembered from whenever the session was
+        minted, so a session saved before the brand check existed can perfectly
+        well be a live Land Rover session belonging to someone who owns only a
+        Jaguar (#14). Resuming that lands straight back in the empty garage the
+        brand check was added to avoid, and skips the check that would catch it.
+
+        Only an unambiguous empty garage rejects the session. Minting a new one
+        spends the identity session, which nothing but the user can replace, so
+        a body we cannot read gets the benefit of the doubt.
+        """
         assert self._session is not None
         try:
             async with self._session.get(
@@ -140,11 +152,24 @@ class JlrPortal:
         except (TimeoutError, aiohttp.ClientError) as err:
             _LOGGER.debug("portal session probe failed: %s", err)
             return False
-        alive = status == 200 and not _is_login_page(landed, body)
-        _LOGGER.debug(
-            "remembered portal session %s", "still valid" if alive else "has lapsed"
-        )
-        return alive
+        if status != 200 or _is_login_page(landed, body):
+            _LOGGER.debug("remembered portal session has lapsed")
+            return False
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            _LOGGER.debug("remembered portal session still valid")
+            return True
+        count = len((payload or {}).get("vehicles") or [])
+        if not count:
+            _LOGGER.debug(
+                "remembered portal session is live but %s lists no vehicles; "
+                "signing in again to find the brand that has them",
+                base,
+            )
+            return False
+        _LOGGER.debug("remembered portal session still valid, %s vehicle(s)", count)
+        return True
 
     def _remember_portal_session(self, base: str) -> None:
         """Persist the portal session so the next start need not mint one."""
@@ -255,7 +280,7 @@ class JlrPortal:
         if self._base is not None:
             return self._base
         if fresh and self._portal_base and self._portal_cookies:
-            if await self._async_still_signed_in(self._portal_base):
+            if await self._async_can_resume(self._portal_base):
                 self._base = self._portal_base
                 return self._base
         _LOGGER.debug(
