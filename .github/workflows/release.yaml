@@ -40,10 +40,17 @@ jobs:
 
       - name: Get previous tag
         id: prev_tag
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            # The new tag does not exist yet on dispatch runs; the latest tag is the previous release.
-            PREV_TAG=$(git describe --abbrev=0 --tags 2>/dev/null || echo "")
+            # Usually the new tag does not exist yet on a dispatch run, so the
+            # latest tag is the previous release. Not on a re-run, though —
+            # re-dispatching the same version to correct its notes is a normal
+            # thing to do, and comparing that tag against itself yields an empty
+            # changelog that quietly replaces the real one. Skip our own tag.
+            PREV_TAG=$(git describe --abbrev=0 --tags --exclude "$VERSION" \
+              2>/dev/null || echo "")
           else
             PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
           fi
@@ -53,11 +60,21 @@ jobs:
         id: changelog
         env:
           PREV_TAG: ${{ steps.prev_tag.outputs.PREV_TAG }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
-          if [ -n "$PREV_TAG" ]; then
-            RANGE="$PREV_TAG..HEAD"
+          # End the range at the tag when it already exists. On a first
+          # dispatch it does not, and HEAD is what is about to be tagged; on a
+          # re-run to correct the notes it does, and HEAD has usually moved on
+          # since — listing commits that are not in the release.
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            TIP="$VERSION"
           else
-            RANGE="HEAD"
+            TIP="HEAD"
+          fi
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="$PREV_TAG..$TIP"
+          else
+            RANGE="$TIP"
           fi
           CHANGELOG=$(git log $RANGE --pretty=format:"- %s" --no-merges)
           echo "CHANGELOG<<GHEOF" >> $GITHUB_OUTPUT
