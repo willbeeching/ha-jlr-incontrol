@@ -82,7 +82,13 @@ PORTAL_INTERVAL = timedelta(minutes=30)
 # fifteen minutes of a fresh sign-in, and once it has, the identity session
 # behind it will not mint another — so a touch on the fifteen-minute cycle was
 # arriving to find the very thing it was meant to preserve already gone.
-PORTAL_KEEPALIVE_INTERVAL = timedelta(minutes=4)
+#
+# Four minutes held a session for eleven hours across the two-hour cap that
+# kills the identity session, which settled the mechanism. Four was only the
+# first interval tried, though, chosen for safety rather than measured, so it
+# is being walked back up towards the real boundary: every touch we do not
+# need is one JLR should not have to serve. Eight is the current step.
+PORTAL_KEEPALIVE_INTERVAL = timedelta(minutes=8)
 # The portal's own session is a Java servlet session and thirty minutes is the
 # classic default for those — the same as the interval above, so every location
 # read was arriving exactly as the session lapsed. Being bounced to the login

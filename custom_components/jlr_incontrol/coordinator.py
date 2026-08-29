@@ -210,7 +210,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except JlrPortalAuthError as err:
             # Gone, and unrecoverable without the user. Say so now rather than
             # waiting for the next half-hourly read to notice, and stop
-            # touching — retrying the login chain every four minutes would be
+            # touching — repeating a login chain that cannot succeed would be
             # both useless and rude.
             self._async_portal_signed_out(dt_util.utcnow(), err)
         except JlrPortalError as err:

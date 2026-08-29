@@ -11,5 +11,5 @@
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/willbeeching/ha-jlr-incontrol/issues",
   "requirements": [],
-  "version": "1.5.0-beta.4"
+  "version": "1.5.0-beta.5"
 }
