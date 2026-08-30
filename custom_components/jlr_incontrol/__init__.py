@@ -20,7 +20,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.async_start_keepalive()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     _async_drop_removed_platforms(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -48,18 +47,3 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.telemetry.async_stop()
         await coordinator.portal.async_close()
     return unloaded
-
-
-async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the integration when the *options* change.
-
-    Not on every entry change. JLR rotate the refresh token on each renewal and
-    the coordinator persists the new one, so a listener that reloads whenever
-    the entry is written turned a five-minute token into a five-minute teardown
-    and re-setup of the whole integration — entities dropping out, the device
-    re-registering, and the caches wiped, around the clock.
-    """
-    coordinator: JlrCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinator is not None and coordinator.options_snapshot == dict(entry.options):
-        return
-    await hass.config_entries.async_reload(entry.entry_id)

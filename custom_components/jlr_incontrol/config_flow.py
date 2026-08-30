@@ -12,7 +12,7 @@ from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -332,8 +332,20 @@ def _login_error_code(err: JlrLoginError) -> str:
     return "cannot_connect"
 
 
-class JlrOptionsFlowHandler(OptionsFlow):
-    """Handle JLR InControl options."""
+class JlrOptionsFlowHandler(OptionsFlowWithReload):
+    """Handle JLR InControl options.
+
+    ``WithReload`` rather than a listener of our own. Home Assistant reloads
+    the entry itself when an options flow finishes, and an integration that
+    also registers an update listener gets both — a double reload now, and a
+    deprecation that becomes an error in Home Assistant 2026.12.
+
+    If a listener is ever added back, it must not reload on every entry write.
+    JLR rotate the refresh token on each renewal and the coordinator persists
+    the new one, so a listener that fires on any change turns a five-minute
+    token into a five-minute teardown and re-setup of the whole integration,
+    around the clock. That happened once already.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None

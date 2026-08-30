@@ -77,7 +77,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
         # What the options looked like at setup, so the update listener can tell
         # an options change (reload) from a token rotation (do not reload).
-        self.options_snapshot = dict(entry.options)
         # Change detection for the last-updated signal: some cars (I-Pace)
         # report no LAST_UPDATED_TIME at all and the position timestamp goes
         # static while parked, so observing when the data actually changes is
