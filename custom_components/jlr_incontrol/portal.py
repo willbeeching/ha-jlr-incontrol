@@ -86,9 +86,7 @@ class JlrPortal:
         cookies: dict[str, str],
         portal_cookies: dict[str, str] | None = None,
         portal_base: str | None = None,
-        on_portal_session: (
-            Callable[[str, dict[str, str], str], None] | None
-        ) = None,
+        on_portal_session: Callable[[str, dict[str, str], str], None] | None = None,
         portal_minted: str | None = None,
     ) -> None:
         # The identity cookies captured at sign-in, replayed unchanged.
