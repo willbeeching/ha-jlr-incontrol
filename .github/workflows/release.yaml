@@ -110,6 +110,20 @@ jobs:
           printf '### Manual\n' >> release-body.md
           printf 'Download `jlr_incontrol.zip`, extract into `config/custom_components/`, and restart Home Assistant.\n' >> release-body.md
 
+      - name: Build from the tag, not the branch tip
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          # Re-running a release to correct its notes rebuilds the zip. Without
+          # this it is built from wherever the branch has moved on to, so the
+          # download would carry code the tag does not point at — silently, and
+          # under a version number that says otherwise. On a first release the
+          # tag does not exist yet and the branch tip is exactly right.
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "tag exists; building $VERSION rather than $(git rev-parse --short HEAD)"
+            git checkout --quiet --detach "$VERSION"
+          fi
+
       - name: Create ZIP archive
         run: |
           cd custom_components
