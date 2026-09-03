@@ -129,4 +129,10 @@ rules:
       The API and telemetry clients take Home Assistant's shared session. The
       portal client deliberately does not: it needs an isolated cookie jar, so
       the sign-in session cannot leak into or be clobbered by other traffic.
-  strict-typing: todo
+  strict-typing:
+    status: done
+    comment: >-
+      Every setting mypy's --strict turns on is spelled out in pyproject.toml
+      rather than inherited from the flag, so switching one off later has to be
+      a deliberate and visible decision. CI runs it against a real core with no
+      --ignore-missing-imports, which is what makes it mean anything.

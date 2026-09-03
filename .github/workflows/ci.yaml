@@ -110,7 +110,9 @@ jobs:
       # Against a real Home Assistant: without it every helper is Any and the
       # check passes by knowing nothing.
       - run: pip install mypy homeassistant
-      - run: mypy custom_components/jlr_incontrol/ --ignore-missing-imports
+      # No --ignore-missing-imports: the settings live in pyproject.toml
+      # and a missing stub is a real finding when core is installed here.
+      - run: mypy custom_components/jlr_incontrol/
 
   imports:
     name: Imports on Home Assistant ${{ matrix.ha }}
@@ -183,9 +185,6 @@ jobs:
       - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
-          # The integration is not (yet) in the home-assistant/brands repo,
-          # which is expected for a custom integration; skip that check.
-          ignore: brands
 
   hassfest:
     name: Hassfest validation

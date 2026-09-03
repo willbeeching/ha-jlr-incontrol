@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -161,7 +162,7 @@ REAR_DOOR_KEYS = {
 }
 
 
-def _has_rear_doors(attributes: dict) -> bool:
+def _has_rear_doors(attributes: dict[str, Any]) -> bool:
     """False only when the attributes clearly report a 2/3-door body."""
     try:
         return int(str(attributes.get("numberOfDoors"))) >= 4

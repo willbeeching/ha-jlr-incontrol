@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -99,7 +100,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._pushed_at: dict[str, str] = {}
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
-        self._disconnected_since: Any = dt_util.utcnow()
+        self._disconnected_since: datetime | None = dt_util.utcnow()
         # Vehicles subscribed but not yet heard from. Platform setup reads the
         # status to decide which entities a car gets, so it must not run while
         # one of them is still silent.
@@ -133,7 +134,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._signed_out_issue_raised = False
         # When a portal read last succeeded. Position is only as trustworthy as
         # this is recent — see position_trusted.
-        self._portal_read_at: Any = None
+        self._portal_read_at: datetime | None = None
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
             self.client,

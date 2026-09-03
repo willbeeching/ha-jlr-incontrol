@@ -201,7 +201,7 @@ class JlrClient:
         self._password = password
         # A stable per-install device UUID, generated once and persisted in the entry.
         self._device_id = device_id or str(uuid.uuid4())
-        self._user_id = user_id
+        self._user_id: str | None = user_id
         self._access_token: str | None = None
         # Seeded from the entry so a restart refreshes rather than re-logging in.
         self._refresh_token: str | None = refresh_token
@@ -367,7 +367,8 @@ class JlrClient:
         )
         if status != 200:
             raise self._error("user lookup", status)
-        self._user_id = (payload or {}).get("userId")
+        user_id: str | None = (payload or {}).get("userId")
+        self._user_id = user_id
         if not self._user_id:
             raise JlrApiError("user lookup did not return a userId")
         return self._user_id
@@ -398,7 +399,8 @@ class JlrClient:
             # forgetting cars — so a reply we cannot read must not be allowed
             # to look like one.
             raise JlrApiError("the vehicle list was not in the expected shape")
-        return payload["vehicles"]
+        vehicles: list[dict[str, Any]] = payload["vehicles"]
+        return vehicles
 
     def _identity_urls(self, vin: str) -> tuple[tuple[str, str], ...]:
         """Endpoints that might name the vehicle, best first.
@@ -480,7 +482,8 @@ class JlrClient:
         )
         if status != 200:
             raise self._error("position", status)
-        return (payload or {}).get("position", {})
+        position: dict[str, Any] = (payload or {}).get("position", {})
+        return position
 
     # NOTE: there is no charge-profile READ endpoint — verified against a live
     # charging BEV (GET /chargeProfile: 406 for every media type, 204 empty for

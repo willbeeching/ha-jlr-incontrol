@@ -22,3 +22,28 @@ ignore = [
     # a finding.
     "UP040",
 ]
+
+[tool.mypy]
+python_version = "3.13"
+# Home Assistant's Platinum standard. Every setting below is what `strict`
+# turns on, spelled out rather than inherited from the flag so that turning
+# one off later has to be a deliberate, visible decision with a reason.
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+disallow_untyped_calls = true
+disallow_subclassing_any = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true
+# The tests are not held to this: they build half-real objects on purpose to
+# exercise one method, and typing that faithfully would mean describing the
+# fakes more carefully than the things they stand in for.
+exclude = "^tests/"

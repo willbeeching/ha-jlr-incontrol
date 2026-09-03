@@ -93,11 +93,15 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     @property
     def _vehicle(self) -> dict[str, Any]:
-        return self.coordinator.data.get("vehicles", {}).get(self._vin, {})
+        vehicle: dict[str, Any] = self.coordinator.data.get("vehicles", {}).get(
+            self._vin, {}
+        )
+        return vehicle
 
     @property
     def _attributes(self) -> dict[str, Any]:
-        return self._vehicle.get("attributes", {})
+        attributes: dict[str, Any] = self._vehicle.get("attributes", {})
+        return attributes
 
     @property
     def is_electric(self) -> bool:
@@ -106,7 +110,8 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     @property
     def _position(self) -> dict[str, Any]:
-        return self._vehicle.get("position", {})
+        position: dict[str, Any] = self._vehicle.get("position", {})
+        return position
 
     def _status_value(self, key: str) -> Any:
         """Read a value from the flattened vehicle status dict."""

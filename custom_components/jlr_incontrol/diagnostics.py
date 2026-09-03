@@ -47,4 +47,8 @@ async def async_get_config_entry_diagnostics(
             "status_ts": vehicle.get("status_ts"),
             "position_stale": vehicle.get("position_stale"),
         }
-    return scrub(diagnostics)
+    # scrub() takes and returns Any by design — it walks whatever JLR sent,
+    # whose shape is not ours to predict. The annotation is where that Any
+    # stops travelling.
+    scrubbed: dict[str, Any] = scrub(diagnostics)
+    return scrubbed
