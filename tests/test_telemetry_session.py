@@ -615,3 +615,259 @@ class TestIdentifyingAnUnknownField:
     @pytest.mark.parametrize("payload", [{}, {"vehicleStatus": {}}, {"coreStatus": []}])
     def test_nothing_to_show_is_not_a_crash(self, payload: dict) -> None:
         assert tel._first_item(payload) is None
+
+
+class _Clock:
+    """time, with monotonic under the test's control.
+
+    A proxy for the same reason as _NoSleep: the module object is shared, so
+    replacing time.monotonic replaces it for pytest as well.
+    """
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __getattr__(self, name: str) -> Any:
+        import time as real
+
+        return getattr(real, name)
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    made = _Clock()
+    monkeypatch.setattr(tel, "time", made)
+    return made
+
+
+class FakeSocket(FakeWebSocket):
+    """A websocket that hands out scripted messages and records replies.
+
+    Every receive advances the clock, scripted or not. The read loop only ever
+    leaves through the passage of time — a deadline or a silence — so a socket
+    that answers instantly and a clock that never moves is an infinite loop.
+    """
+
+    def __init__(
+        self,
+        *messages: Any,
+        error: Exception | None = None,
+        clock: _Clock | None = None,
+        tick: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self._messages = list(messages)
+        self._error = error
+        self._clock = clock
+        self._tick = tick
+        self.pongs: list[Any] = []
+        self.closed = False
+
+    async def __aenter__(self) -> FakeSocket:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        self.closed = True
+        return False
+
+    async def pong(self, data: Any = None) -> None:
+        self.pongs.append(data)
+
+    def exception(self) -> Exception | None:
+        return self._error
+
+    async def receive(self, timeout: float | None = None) -> Any:
+        if self._clock is not None:
+            self._clock.now += self._tick
+        if not self._messages:
+            raise TimeoutError
+        item = self._messages.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class FakeClient:
+    username = "someone@example.com"
+    device_id = DEVICE
+
+    def __init__(self, token: str | None = "a-token", renewal: float = 300.0) -> None:
+        self.access_token = token
+        self._renewal = renewal
+        self.connects = 0
+        self.connect_error: Exception | None = None
+
+    async def async_connect(self) -> None:
+        self.connects += 1
+        if self.connect_error is not None:
+            raise self.connect_error
+
+    def seconds_until_renewal(self) -> float:
+        return self._renewal
+
+
+def session_client(ws: Any, client: FakeClient | None = None) -> JlrTelemetry:
+    made = telemetry()
+    made._client = client or FakeClient()
+
+    class Session:
+        async def ws_connect(self, url: str, **kwargs: Any) -> Any:
+            self.url, self.kwargs = url, kwargs
+            if isinstance(ws, Exception):
+                raise ws
+            return ws
+
+    made._session = Session()
+    return made
+
+
+class TestOpeningASession:
+    async def test_it_renews_the_token_before_connecting(self, clock) -> None:
+        # The session is bound to the bearer presented at CONNECT, so a stale
+        # one means a socket that opens and is immediately refused.
+        client = FakeClient(renewal=2)
+        made = session_client(FakeSocket(text(CONNECTED), clock=clock), client)
+        await made._async_session()
+        assert client.connects == 1
+
+    async def test_with_no_token_it_does_not_even_try(self, clock) -> None:
+        made = session_client(FakeSocket(), FakeClient(token=None))
+        with pytest.raises(JlrTelemetryError, match="no access token"):
+            await made._async_session()
+
+    async def test_a_refused_connection_is_reported_not_raised_raw(self, clock) -> None:
+        import aiohttp
+
+        made = session_client(aiohttp.ClientError("connection refused"))
+        with pytest.raises(JlrTelemetryError, match="could not open"):
+            await made._async_session()
+
+    async def test_it_handshakes_subscribes_and_reports_connected(self, clock) -> None:
+        socket = FakeSocket(text(CONNECTED), clock=clock)
+        made = session_client(socket, FakeClient(renewal=2))
+        await made._async_session()
+        assert "CONNECT\n" in socket.sent[0]
+        assert any("sub-dev" in frame for frame in socket.sent)
+        assert made.connections == [True]
+        assert socket.closed, "the socket has to be closed on the way out"
+
+
+class TestTheReadLoop:
+    def running(self, socket: Any) -> JlrTelemetry:
+        made = telemetry()
+        made._client = FakeClient()
+        return made
+
+    async def test_it_returns_when_the_token_is_due_for_renewal(self, clock) -> None:
+        # A clean return, which the supervisor treats as routine rather than
+        # as a failure worth backing off from.
+        made = self.running(None)
+        await made._async_read(FakeSocket(clock=clock), DEVICE, clock.now - 1)
+
+    async def test_a_silent_socket_is_eventually_declared_dead(self, clock) -> None:
+        # Otherwise a half-open connection sits there delivering nothing and
+        # nobody notices for half an hour.
+        made = self.running(None)
+        socket = FakeSocket(clock=clock, tick=5)
+        with pytest.raises(JlrTelemetryError, match="no telemetry traffic"):
+            await made._async_read(socket, DEVICE, clock.now + 10_000)
+
+    async def test_it_sends_its_half_of_the_heartbeat(self, clock) -> None:
+        # On a clock, not on an idle read: the broker beats every 10s, so
+        # waiting for a quiet socket means never sending one and being closed
+        # for inactivity.
+        made = self.running(None)
+        socket = FakeSocket(clock=clock, tick=9)
+        with pytest.raises(JlrTelemetryError):
+            await made._async_read(socket, DEVICE, clock.now + 10_000)
+        assert "\n" in socket.sent
+
+    async def test_a_status_frame_is_delivered(self, clock) -> None:
+        made = self.running(None)
+        body = vhs().body
+        frame = f"MESSAGE\n\n{body}\x00"
+        socket = FakeSocket(text(frame), clock=clock)
+        await made._async_read(socket, DEVICE, clock.now + 1.5)
+        assert made.status
+
+    async def test_a_ping_is_answered(self, clock) -> None:
+        import aiohttp
+
+        made = self.running(None)
+        socket = FakeSocket(Message(aiohttp.WSMsgType.PING, "ping"), clock=clock)
+        await made._async_read(socket, DEVICE, clock.now + 1.5)
+        assert socket.pongs == ["ping"]
+
+    async def test_a_pong_counts_as_traffic(self, clock) -> None:
+        import aiohttp
+
+        made = self.running(None)
+        socket = FakeSocket(Message(aiohttp.WSMsgType.PONG, ""), clock=clock)
+        await made._async_read(socket, DEVICE, clock.now + 1.5)
+
+    async def test_a_socket_error_drops_the_connection(self, clock) -> None:
+        import aiohttp
+
+        made = self.running(None)
+        socket = FakeSocket(
+            Message(aiohttp.WSMsgType.ERROR),
+            error=OSError("reset by peer"),
+            clock=clock,
+        )
+        with pytest.raises(JlrTelemetryError, match="socket error"):
+            await made._async_read(socket, DEVICE, clock.now + 10_000)
+
+    async def test_a_closed_socket_drops_the_connection(self, clock) -> None:
+        import aiohttp
+
+        made = self.running(None)
+        socket = FakeSocket(Message(aiohttp.WSMsgType.CLOSED), clock=clock)
+        with pytest.raises(JlrTelemetryError, match="closed"):
+            await made._async_read(socket, DEVICE, clock.now + 10_000)
+
+
+class TestStatusWithoutATimestamp:
+    async def test_it_is_still_delivered(self) -> None:
+        # Logged so the unrecognised field name can be identified, but a
+        # snapshot with no timestamp is better than no snapshot.
+        client, ws = telemetry(), FakeWebSocket()
+        body = json.dumps(
+            {"vehicleStatus": {"coreStatus": [{"key": "ODOMETER", "value": "1"}]}}
+        )
+        await client._async_handle(
+            ws, message(eid="e-8", st=WS_TYPE_STATUS, v=VIN, a={"b": body}), DEVICE
+        )
+        assert client.status[0][1]["ODOMETER"] == "1"
+
+
+class TestDoublyEncodedBodies:
+    def test_a_body_already_decoded_is_taken_as_is(self) -> None:
+        # The envelope's "b" is normally a JSON string, but the broker has
+        # been seen to send the object directly.
+        assert tel._inner_payload({"a": {"b": {"vehicleStatus": {}}}}) == {
+            "vehicleStatus": {}
+        }
+
+    @pytest.mark.parametrize(
+        "envelope",
+        [{}, {"a": "not a mapping"}, {"a": {}}, {"a": {"b": 42}}, {"a": {"b": "[]"}}],
+    )
+    def test_anything_else_yields_nothing(self, envelope: dict) -> None:
+        assert tel._inner_payload(envelope) is None
+
+
+class TestRepeatedHeaders:
+    def test_the_first_occurrence_wins(self) -> None:
+        # STOMP 1.2 §3.1. Taking the last would let a second header override
+        # the one the broker meant.
+        raw = "CONNECTED\nversion:1.2\nversion:1.0\n\n\x00"
+        (frame,) = tel._decode(raw)
+        assert frame.headers["version"] == "1.2"
+
+    def test_a_line_without_a_colon_is_skipped(self) -> None:
+        raw = "CONNECTED\nnonsense\nversion:1.2\n\n\x00"
+        (frame,) = tel._decode(raw)
+        assert frame.headers == {"version": "1.2"}
