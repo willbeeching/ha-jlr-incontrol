@@ -12,6 +12,10 @@ from . import JlrConfigEntry
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities
 
+# Coordinator-backed and read-only: there is nothing to serialise, and
+# leaving it unset means Home Assistant assumes otherwise.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback

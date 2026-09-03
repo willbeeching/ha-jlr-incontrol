@@ -246,9 +246,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             vin = vehicle.get("vin") or vehicle.get("vehicleId")
             if vin:
                 found[vin] = vehicle
-        if found:
-            self._vehicles = found
-            self.telemetry.async_set_vehicles(found)
+        # Authoritative, including when it is empty. Keeping the old list on
+        # an empty result meant selling your only car left it on the dashboard
+        # showing cached state, and undeletable — the removal hook still saw it
+        # as current. A reply we cannot parse raises in async_get_vehicles
+        # rather than arriving here as an empty list.
+        self._vehicles = found
+        self.telemetry.async_set_vehicles(found)
 
         for vin, vehicle in self._vehicles.items():
             # Free sources first: the vehicle-list entry is already in hand, and
@@ -547,6 +551,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "position": position,
                 "status_ts": status_ts,
                 "position_ts": position_ts,
+                # Two different questions. The status is stale when the
+                # vehicle stopped reporting; the position is stale when the fix
+                # is old. A car that phones in hourly from a spot it parked in
+                # on Friday is fresh by one measure and not the other.
+                "status_stale": self._is_stale(status_ts),
                 "position_stale": self._is_stale(position_ts),
                 "position_trusted": self.position_trusted,
             }
