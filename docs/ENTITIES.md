@@ -3,7 +3,9 @@
 Every entity below is created only if the vehicle actually reports the status key behind it.
 Two cars on the same account will not necessarily have the same entities, and that is
 deliberate: an entity backed by a key a car never sends would sit unavailable forever, which
-reads like a fault rather than an absence.
+reads like a fault rather than an absence. The same applies in reverse — an entity an older
+version created for a key your car does not report is deleted the first time the new version
+sees a snapshot from that car, rather than left behind greyed out.
 
 ## Where the data comes from
 

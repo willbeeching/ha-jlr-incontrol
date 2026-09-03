@@ -11,6 +11,7 @@ they are removed rather than left to fail.
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -20,15 +21,6 @@ from . import JlrConfigEntry
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities
-
-# Buttons earlier versions created that can no longer do anything.
-REMOVED_BUTTONS = (
-    "honk_flash",
-    "update_from_vehicle",
-    "force_charge_on",
-    "force_charge_off",
-)
-
 
 # Coordinator-backed and read-only: there is nothing to serialise, and
 # leaving it unset means Home Assistant assumes otherwise.
@@ -42,22 +34,21 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     async_add_vehicle_entities(
         entry,
+        Platform.BUTTON,
         coordinator,
         async_add_entities,
         lambda vin: [JlrRefreshButton(coordinator, vin)],
     )
 
+    # The tri-state charge override moved from a binary switch to a sensor
+    # (#6). Every other leftover is swept up generically when the platform
+    # builds its entities, but that only reaches domains this integration
+    # still has a platform for, and there is no switch platform any more.
     ent_reg = er.async_get(hass)
     for vin in coordinator.data.get("vehicles", {}):
-        # The tri-state charge override moved from a binary switch to a sensor
-        # (#6), and the command buttons are gone entirely.
         stale = ent_reg.async_get_entity_id("switch", DOMAIN, f"{vin}_charge_now")
         if stale:
             ent_reg.async_remove(stale)
-        for key in REMOVED_BUTTONS:
-            stale = ent_reg.async_get_entity_id("button", DOMAIN, f"{vin}_{key}")
-            if stale:
-                ent_reg.async_remove(stale)
 
 
 class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):

@@ -21,6 +21,7 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     PERCENTAGE,
     EntityCategory,
+    Platform,
     UnitOfElectricPotential,
     UnitOfLength,
     UnitOfPressure,
@@ -477,21 +478,11 @@ async def async_setup_entry(
             entities.append(JlrChargeNowSettingSensor(coordinator, vin))
         return entities
 
-    async_add_vehicle_entities(entry, coordinator, async_add_entities, build)
+    async_add_vehicle_entities(
+        entry, Platform.SENSOR, coordinator, async_add_entities, build
+    )
 
-    # Drop entities left behind by earlier versions: the last-trip sensor
-    # (trips support was removed — the webview edge 504s on the legacy /trips
-    # backend) and EV sensors created on ICE cars before electrified gating.
     ent_reg = er.async_get(hass)
-    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
-        stale_keys = ["last_trip"]
-        if not is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {})):
-            stale_keys.extend(d.key for d in EV_SENSORS)
-        for key in stale_keys:
-            stale = ent_reg.async_get_entity_id("sensor", DOMAIN, f"{vin}_{key}")
-            if stale:
-                ent_reg.async_remove(stale)
-
     _apply_unit_overrides(ent_reg, coordinator, distance_unit, pressure_unit)
 
 

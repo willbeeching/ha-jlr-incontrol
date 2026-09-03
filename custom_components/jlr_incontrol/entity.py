@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -14,9 +17,12 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
 
+_LOGGER = logging.getLogger(__name__)
+
 
 def async_add_vehicle_entities(
     entry: ConfigEntry,
+    platform: Platform,
     coordinator: JlrCoordinator,
     async_add_entities: Callable[[Sequence[Entity]], None],
     build: Callable[[str], Sequence[Entity]],
@@ -48,12 +54,54 @@ def async_add_vehicle_entities(
             entities = build(vin)
             if entities:
                 built.add(vin)
+                _prune(coordinator, entry, platform, vin, entities)
                 fresh.extend(entities)
         if fresh:
             async_add_entities(fresh)
 
     _add_missing()
     entry.async_on_unload(coordinator.async_add_listener(_add_missing))
+
+
+@callback
+def _prune(
+    coordinator: JlrCoordinator,
+    entry: ConfigEntry,
+    platform: Platform,
+    vin: str,
+    entities: Sequence[Entity],
+) -> None:
+    """Delete registry entries this vehicle no longer has an entity for.
+
+    Most entities are gated on the status keys the car actually reports, and
+    that gating has tightened over several versions. Anything a previous
+    version created and this one does not is left in the registry, where it
+    shows up forever as a greyed-out `restored` entity that will never take a
+    value again — a diesel-only AdBlue pair on a petrol Defender, EV sensors on
+    an ICE car, rear doors on a two-door.
+
+    Only ever called for a vehicle that has just produced entities, so a car
+    whose snapshot has not landed yet is left completely alone rather than
+    stripped back to nothing. That is the important precondition: the set kept
+    here is derived from the same snapshot that built the entities, so a
+    genuinely truncated status document would take the matching registry
+    entries — and their history — with it. VHS pushes are whole-vehicle
+    documents and the coordinator already replaces its cache wholesale on each
+    one, so a partial snapshot is not something these cars send; the removals
+    are logged at INFO so that assumption is visible if it ever breaks.
+    """
+    keep = {entity.unique_id for entity in entities}
+    registry = er.async_get(coordinator.hass)
+    prefix = f"{vin}_"
+    for registered in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if registered.domain != platform or registered.unique_id in keep:
+            continue
+        if not registered.unique_id.startswith(prefix):
+            continue
+        _LOGGER.info(
+            "Removing %s: this vehicle no longer reports it", registered.entity_id
+        )
+        registry.async_remove(registered.entity_id)
 
 
 def is_electric(attributes: dict[str, Any]) -> bool:

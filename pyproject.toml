@@ -47,3 +47,13 @@ extra_checks = true
 # exercise one method, and typing that faithfully would mean describing the
 # fakes more carefully than the things they stand in for.
 exclude = "^tests/"
+
+# Home Assistant publishes device_tracker's public API by re-exporting it from
+# the package __init__ with `# noqa: F401` and no `__all__`, which is exactly
+# what no_implicit_reexport refuses to read through. Importing past it, from
+# .config_entry, is what core deprecated in 2026.9 (removal in 2027.6), so the
+# only import that satisfies both is the one mypy will not take on trust.
+# Scoped to the one package rather than relaxed integration-wide.
+[[tool.mypy.overrides]]
+module = "homeassistant.components.device_tracker"
+no_implicit_reexport = false

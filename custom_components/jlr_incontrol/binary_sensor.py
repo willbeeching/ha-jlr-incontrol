@@ -11,12 +11,12 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import JlrConfigEntry
-from .const import CLIMATE_ACTIVE_STATES, DOMAIN
+from .const import CLIMATE_ACTIVE_STATES
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities, is_electrified
 
@@ -201,21 +201,9 @@ async def async_setup_entry(
             and (not description.requires_ev or is_electrified(attributes, status))
         ]
 
-    async_add_vehicle_entities(entry, coordinator, async_add_entities, build)
-
-    # Drop phantom entities created by earlier versions before the 2/3-door
-    # and electrified gating existed.
-    ent_reg = er.async_get(hass)
-    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
-        stale_keys: list[str] = []
-        if not _has_rear_doors(vehicle.get("attributes", {})):
-            stale_keys.extend(REAR_DOOR_KEYS)
-        if not is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {})):
-            stale_keys.extend(("ev_charging", "ev_plugged_in"))
-        for key in stale_keys:
-            stale = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, f"{vin}_{key}")
-            if stale:
-                ent_reg.async_remove(stale)
+    async_add_vehicle_entities(
+        entry, Platform.BINARY_SENSOR, coordinator, async_add_entities, build
+    )
 
 
 class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):

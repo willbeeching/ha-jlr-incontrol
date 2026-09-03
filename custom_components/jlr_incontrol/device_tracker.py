@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.device_tracker.config_entry import TrackerEntity
-from homeassistant.components.device_tracker.const import SourceType
+from homeassistant.components.device_tracker import SourceType, TrackerEntity
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -25,6 +25,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     async_add_vehicle_entities(
         entry,
+        Platform.DEVICE_TRACKER,
         coordinator,
         async_add_entities,
         lambda vin: [JlrDeviceTracker(coordinator, vin)],

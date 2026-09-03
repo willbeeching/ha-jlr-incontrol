@@ -86,6 +86,18 @@ Intended. Entities are created only for the status keys a given car actually rep
 backed by a key that never arrives would sit unavailable forever. See
 [ENTITIES.md](ENTITIES.md) for what applies to what.
 
+## "An entity disappeared after an update"
+
+Entities are matched to the status keys a car actually reports, and that matching has tightened
+over several versions — a diesel-only AdBlue sensor on a petrol car, EV sensors on an ICE car,
+rear doors on a two-door. Anything an older version created that your car does not report is now
+removed rather than left behind permanently greyed out. Each removal is logged, so
+`grep jlr_incontrol` in the log will name what went.
+
+It only ever happens for a car that has just sent a snapshot. A car that is silent — flat 12V, no
+signal — keeps every entity it has, because "not reporting anything" and "does not have it" are
+not the same thing.
+
 ## "An entity I want is not there at all"
 
 Three are off by default — 12V battery charge, EVCC status and the charge-now override. Switch
