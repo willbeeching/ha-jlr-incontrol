@@ -7,4 +7,4 @@ pytest-homeassistant-custom-component==0.13.269
 pytest-cov
 # aiodns 3.5 reads a pycares 5 API that does not exist, and a core of this
 # vintage floats both. Same hold as the minimum-core import lane.
-pycares<5
+pycares<6
