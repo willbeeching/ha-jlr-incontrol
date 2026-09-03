@@ -19,6 +19,11 @@ SOLD = "SALBB9876543210CD"
 # A snapshot with enough keys that the sensor platform builds something.
 STATUS = {
     "ODOMETER": "123456",
+    # The odometer sensor reads ODOMETER_MILES; ODOMETER is the metric value
+    # it exposes as an attribute. A fake carrying only the latter grew no
+    # distance sensor at all, which quietly hid the unit-override code.
+    "ODOMETER_MILES": "76711",
+    "TYRE_PRESSURE_FRONT_LEFT": "240",
     "FUEL_LEVEL_PERC": "42",
     "DOOR_IS_ALL_DOORS_LOCKED": "TRUE",
     "LAST_UPDATED_TIME": "2026-08-26T08:00:00.000Z",

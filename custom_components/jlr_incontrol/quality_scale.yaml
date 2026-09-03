@@ -17,8 +17,12 @@ rules:
       Rover put device attestation over the endpoints that performed them.
   appropriate-polling: done
   brands:
-    status: exempt
-    comment: A custom integration cannot be in the home-assistant/brands repo.
+    status: done
+    comment: >-
+      Icon and logo, light and dark, at 1x and 2x, in brand/. The exemption
+      here used to say a custom integration cannot provide compliant branding;
+      that stopped being true when local brand assets became supported, and
+      HACS validation now runs the check rather than ignoring it.
   common-modules: done
   config-flow: done
   config-flow-test-coverage:

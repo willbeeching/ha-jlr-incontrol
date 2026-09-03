@@ -198,6 +198,18 @@ class TestWhenItGoesWrong:
         assert result["step_id"] == "user"
         assert result["errors"] == {"base": "invalid_auth"}
 
+    async def test_credentials_refused_outright_are_an_auth_problem(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The journey can reject the password by raising the same exception it
+        # uses for a bad code, before any code has been asked for.
+        monkeypatch.setattr(
+            FakeLogin, "begin_error", JlrInvalidCode("credentials refused")
+        )
+        result = await credentials(hass, (await start(hass))["flow_id"])
+        assert result["step_id"] == "user"
+        assert result["errors"] == {"base": "invalid_auth"}
+
     async def test_a_wrong_code_lets_them_retype_it(
         self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -369,3 +381,108 @@ class TestSigningInAgain:
         assert existing.data["sso_cookies"] == {
             "iPlanetDirectoryPro": "a-forgerock-session"
         }
+
+
+class TestTheJourneyFallingOverInWaysNobodyPlanned:
+    """The catch-alls, and the two states the flow can be resumed into."""
+
+    async def test_an_unexpected_failure_at_sign_in_is_a_connection_error(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Not a crash in someone's config dialog: whatever went wrong, the
+        # honest thing to show is that we could not complete the sign-in.
+        monkeypatch.setattr(
+            FakeLogin, "begin_error", RuntimeError("something nobody predicted")
+        )
+        result = await credentials(hass, (await start(hass))["flow_id"])
+        assert result["errors"] == {"base": "cannot_connect"}
+
+    async def test_an_unexpected_failure_at_the_code_step_too(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await credentials(hass, (await start(hass))["flow_id"])
+        monkeypatch.setattr(
+            FakeLogin, "complete_error", RuntimeError("something nobody predicted")
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": CODE}
+        )
+        assert result["step_id"] == "user"
+        assert result["errors"] == {"base": "cannot_connect"}
+
+    async def test_a_journey_refused_at_the_code_step_restarts(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await credentials(hass, (await start(hass))["flow_id"])
+        monkeypatch.setattr(
+            FakeLogin, "complete_error", JlrLoginError("the password was rejected")
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": CODE}
+        )
+        assert result["step_id"] == "user"
+        assert result["errors"] == {"base": "invalid_auth"}
+
+    async def test_a_code_submitted_with_no_journey_behind_it(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Home Assistant restarted, or the flow sat open for a long time.
+        # Re-showing the code form would ask for one that can never work.
+        result = await credentials(hass, (await start(hass))["flow_id"])
+
+        async def begin(self: FakeLogin, password: str) -> None:
+            return None
+
+        monkeypatch.setattr(FakeLogin, "async_begin", begin)
+        flow = hass.config_entries.flow._progress[result["flow_id"]]
+        flow._login = None
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": CODE}
+        )
+        assert result["step_id"] == "user"
+        assert result["errors"] == {"base": "session_expired"}
+
+    async def test_a_bad_code_during_reauth_stays_on_the_reauth_step(
+        self, hass: HomeAssistant, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The restart form has to send them back to the step they came from,
+        # not to the add-integration form they never saw.
+        existing = MockConfigEntry(
+            domain=DOMAIN, data={"username": EMAIL}, unique_id="u"
+        )
+        existing.add_to_hass(hass)
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_REAUTH,
+                "entry_id": existing.entry_id,
+            },
+            data=dict(existing.data),
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"password": PASSWORD}
+        )
+        monkeypatch.setattr(FakeLogin, "complete_error", JlrSessionExpired("timed out"))
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": CODE}
+        )
+        assert result["step_id"] == "reauth_confirm"
+
+    async def test_reconfiguring_an_entry_that_has_gone_aborts(
+        self, hass: HomeAssistant
+    ) -> None:
+        entry = MockConfigEntry(domain=DOMAIN, data={"username": EMAIL})
+        entry.add_to_hass(hass)
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
+        await hass.config_entries.async_remove(entry.entry_id)
+        flow = hass.config_entries.flow._progress[result["flow_id"]]
+        result = await flow.async_step_reconfigure()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "unknown_entry"
