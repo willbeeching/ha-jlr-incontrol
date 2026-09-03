@@ -51,8 +51,12 @@ rules:
 
   # ------------------------------------------------------------------ silver
   action-exceptions:
-    status: exempt
-    comment: No actions.
+    status: done
+    comment: >-
+      The refresh button is a platform action, and pressing it when Jaguar
+      Land Rover are not answering now raises a translated HomeAssistantError
+      rather than returning quietly. Previously exempt on the grounds that
+      there are no actions, which read the rule too narrowly.
   config-entry-unloading: done
   docs-configuration-parameters: done
   docs-installation-parameters: done
@@ -105,7 +109,12 @@ rules:
       one specific consumer, and none is what someone opens the integration
       to look at.
   entity-translations: done
-  exception-translations: todo
+  exception-translations:
+    status: done
+    comment: >-
+      All three failures a person can act on carry a translation key: the
+      refresh that could not reach JLR, setup finding no telemetry, and a
+      stored sign-in being refused.
   icon-translations: done
   reconfiguration-flow: done
   repair-issues:
@@ -118,11 +127,19 @@ rules:
     status: done
     comment: Fully async; aiohttp throughout, no blocking client.
   inject-websession:
-    status: todo
+    status: done
     comment: >-
       The API and telemetry clients take Home Assistant's shared session. The
-      portal client deliberately does not: it needs an isolated cookie jar, so
-      the sign-in session cannot leak into or be clobbered by other traffic.
+      sign-in journey and the owner portal need their own cookie jars — the
+      journey pins server affinity across several cookies and the portal
+      carries a different session cookie to each of two hosts — so those are
+      created with async_create_clientsession, which is the helper meant for
+      exactly that and hands Home Assistant the lifetime.
+
+      They are released with detach rather than close: the helper builds on
+      Home Assistant's shared connector without giving up ownership of it, so
+      closing one of these sessions would take that connector down for every
+      other integration.
   strict-typing:
     status: done
     comment: >-

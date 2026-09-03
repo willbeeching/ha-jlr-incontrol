@@ -25,6 +25,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import aiohttp
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import (
     ACCESS_TOKEN_URL,
@@ -84,11 +86,18 @@ class JlrLogin:
     abandoned.
     """
 
-    def __init__(self, username: str) -> None:
-        # A private session, not one of Home Assistant's: the journey needs its
-        # own cookie jar, and HA warns if an integration closes a session it
-        # manages. We create it, we close it.
-        self._session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar())
+    def __init__(self, hass: HomeAssistant, username: str) -> None:
+        # A private session with its own cookie jar — the journey pins server
+        # affinity across several cookies and must not pollute, or be
+        # disturbed by, the jar the rest of Home Assistant shares.
+        #
+        # Created through Home Assistant rather than with aiohttp directly.
+        # The helper exists for exactly this ("a new ClientSession with
+        # kwargs, i.e. for cookies") and it hands lifetime to Home Assistant:
+        # a config flow someone opens and walks away from no longer leaves a
+        # session nobody owns. async_close still closes it; the registered
+        # cleanup is the backstop for the abandoned case.
+        self._session = async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar())
         self._username = username
         self._verifier, self._challenge = _pkce()
         self._state = secrets.token_urlsafe(16)
@@ -135,9 +144,17 @@ class JlrLogin:
         return {k: v for k, v in cookies.items() if k not in ONE_SHOT_COOKIES}
 
     async def async_close(self) -> None:
-        """Drop the cookie jar and its session."""
+        """Release the session and its cookie jar.
+
+        detach, not close. Home Assistant builds these on its own shared
+        connector and does not hand over ownership of it, so close() would
+        take that connector down for every other integration as well — which
+        is why it wraps close() in a warning. detach releases the session and
+        leaves the connector alone, and it is what Home Assistant's own
+        cleanup calls.
+        """
         if not self._session.closed:
-            await self._session.close()
+            self._session.detach()
 
     # ------------------------------------------------------------------ phase 1
     async def async_begin(self, password: str) -> None:

@@ -31,6 +31,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from yarl import URL
 
 from .const import (
@@ -83,6 +85,7 @@ class JlrPortal:
 
     def __init__(
         self,
+        hass: HomeAssistant,
         cookies: dict[str, str],
         portal_cookies: dict[str, str] | None = None,
         portal_base: str | None = None,
@@ -92,6 +95,7 @@ class JlrPortal:
         # The identity cookies captured at sign-in, replayed unchanged.
         # Measured lifetime: 60 minutes idle, 2 hours absolute, and nothing
         # this integration does extends either. They are the way in, once.
+        self._hass = hass
         self._cookies = dict(cookies or {})
         # The portal session those bought. This is the durable half — kept
         # alive, one has been measured at twenty-one hours against the identity
@@ -128,8 +132,9 @@ class JlrPortal:
         return bool(self._cookies)
 
     async def async_close(self) -> None:
+        """Release the session. detach rather than close — see JlrLogin."""
         if self._session is not None and not self._session.closed:
-            await self._session.close()
+            self._session.detach()
         self._session = None
         self._base = None
 
@@ -145,7 +150,13 @@ class JlrPortal:
             jar.update_cookies(
                 self._portal_cookies, response_url=URL(self._portal_base)
             )
-        return aiohttp.ClientSession(cookie_jar=jar, timeout=REQUEST_TIMEOUT)
+        # Through Home Assistant rather than aiohttp directly: the helper is
+        # meant for a private jar like this one, and it gives Home Assistant
+        # the session's lifetime so an entry that fails to unload cleanly does
+        # not leave one running.
+        return async_create_clientsession(
+            self._hass, cookie_jar=jar, timeout=REQUEST_TIMEOUT
+        )
 
     async def _async_can_resume(self, base: str) -> bool:
         """Whether the remembered portal session is still usable for this account.

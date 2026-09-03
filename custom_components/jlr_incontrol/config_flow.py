@@ -120,7 +120,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         await self._async_discard_login()
         # A dedicated session: the journey depends on its own cookie jar, which
         # must not leak into (or be disturbed by) Home Assistant's shared one.
-        login = JlrLogin(username)
+        login = JlrLogin(self.hass, username)
         try:
             await login.async_begin(password)
         except JlrInvalidCode:

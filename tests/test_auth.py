@@ -14,8 +14,10 @@ from yarl import URL
 
 
 @pytest.fixture
-async def login():
-    client = JlrLogin("someone@example.com")
+async def login(hass):
+    # A real session now, created through Home Assistant so its lifetime is
+    # Home Assistant's — which is the whole point of the change.
+    client = JlrLogin(hass, "someone@example.com")
     try:
         yield client
     finally:

@@ -119,6 +119,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # real vehicle names. Optional — an entry created before this existed
         # has no session stored, and everything else still works without it.
         self.portal = JlrPortal(
+            hass,
             entry.data.get(CONF_SSO_COOKIES) or {},
             portal_cookies=entry.data.get(CONF_PORTAL_COOKIES) or {},
             portal_base=entry.data.get(CONF_PORTAL_BASE),

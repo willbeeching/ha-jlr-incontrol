@@ -272,12 +272,18 @@ class Routed:
                 return reply
         return Reply(200, "")
 
-    async def close(self) -> None:
+    def detach(self) -> None:
+        # What release looks like now: the connector is Home Assistant's, so
+        # the session lets go of it rather than closing it.
         self.closed = True
+
+    async def close(self) -> None:
+        raise AssertionError("close() would take Home Assistant's connector down")
 
 
 def bare(**state: Any) -> JlrPortal:
     made = JlrPortal.__new__(JlrPortal)
+    made._hass = None
     made._cookies = {"SSOSession": "an-am-session"}
     made._portal_cookies = {}
     made._portal_base = None
@@ -461,7 +467,10 @@ class TestRememberingTheSession:
 
 
 class TestClosing:
-    async def test_it_drops_the_session(self) -> None:
+    async def test_it_releases_the_session_without_closing_it(self) -> None:
+        # close() would tear down the connector every other integration is
+        # sharing, which is why Home Assistant wraps it in a warning. The
+        # fake fails the test outright if it is called.
         session = Routed()
         session.closed = False
         portal = bare(_session=session, _base=JAGUAR)
@@ -477,25 +486,29 @@ class TestClosing:
 
 
 class TestBuildingTheSession:
-    async def test_it_carries_both_cookie_sets(self) -> None:
+    async def test_it_carries_both_cookie_sets(self, hass) -> None:
         # The identity session for minting, and the portal session so a
-        # restart resumes instead of spending the identity one.
-        portal = bare(_portal_cookies={"JSESSIONID": "s"}, _portal_base=JAGUAR)
+        # restart resumes instead of spending the identity one. A real
+        # Home Assistant here because this is the one place a session is
+        # genuinely created, and it is created through Home Assistant.
+        portal = bare(
+            _hass=hass, _portal_cookies={"JSESSIONID": "s"}, _portal_base=JAGUAR
+        )
         session = portal._new_session()
         try:
             keys = {cookie.key for cookie in session.cookie_jar}
             assert "SSOSession" in keys
             assert "JSESSIONID" in keys
         finally:
-            await session.close()
+            session.detach()
 
-    async def test_with_no_portal_session_only_the_identity_one(self) -> None:
-        portal = bare()
+    async def test_with_no_portal_session_only_the_identity_one(self, hass) -> None:
+        portal = bare(_hass=hass)
         session = portal._new_session()
         try:
             assert {cookie.key for cookie in session.cookie_jar} == {"SSOSession"}
         finally:
-            await session.close()
+            session.detach()
 
 
 class TestKeepingItAlive:

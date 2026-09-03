@@ -44,7 +44,10 @@ class FakeLogin:
     begin_error: Exception | None = None
     complete_error: Exception | None = None
 
-    def __init__(self, username: str) -> None:
+    def __init__(self, hass: Any, username: str) -> None:
+        # Home Assistant is passed through now: the real journey creates its
+        # session with it so the lifetime is Home Assistant's.
+        self.hass = hass
         self.username = username
         self.closed = False
 
