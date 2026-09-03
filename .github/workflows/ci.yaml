@@ -55,6 +55,19 @@ jobs:
       - run: pip install pytest pytest-asyncio aiohttp yarl
       - run: python -m pytest -q
 
+  types:
+    name: Types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Against a real Home Assistant: without it every helper is Any and the
+      # check passes by knowing nothing.
+      - run: pip install mypy homeassistant
+      - run: mypy custom_components/jlr_incontrol/ --ignore-missing-imports
+
   imports:
     name: Imports on Home Assistant ${{ matrix.ha }}
     runs-on: ubuntu-latest

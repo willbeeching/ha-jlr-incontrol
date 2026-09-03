@@ -30,6 +30,11 @@ _SENSITIVE_SUFFIXES = (
     "LATITUDE",
     "LONGITUDE",
     "PORTALID",
+    # The account itself, and the identifiers JLR tie to it. An email address
+    # is the person; the device and user ids are the account's handles.
+    "USERNAME",
+    "USERID",
+    "DEVICEID",
 )
 # These are unambiguous wherever they appear in a name.
 _SENSITIVE_FRAGMENTS = (
@@ -38,6 +43,7 @@ _SENSITIVE_FRAGMENTS = (
     "COOKIE",
     "AUTHORIZATION",
     "SECRET",
+    "EMAIL",
 )
 
 # A VIN is exactly 17 characters and never uses I, O or Q — they are excluded

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TypeAlias
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -14,7 +16,7 @@ from .coordinator import JlrCoordinator
 # The coordinator lives on the entry rather than in hass.data: typed, tied
 # to the entry's lifetime, and gone when it unloads without anyone having to
 # remember to pop it.
-JlrConfigEntry = ConfigEntry[JlrCoordinator]
+JlrConfigEntry: TypeAlias = ConfigEntry[JlrCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:

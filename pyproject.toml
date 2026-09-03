@@ -13,3 +13,12 @@ target-version = "py313"
 # and the simplification rules. Previously there was no configuration at all,
 # so "ruff clean" meant only that the file parsed and had no undefined names.
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RET", "PTH"]
+ignore = [
+    # UP040 wants PEP 695 `type X = ...` for the config-entry alias. The
+    # explicit TypeAlias spelling is equivalent and costs nothing, and it keeps
+    # every file parseable by tooling running on an older interpreter than the
+    # one Home Assistant requires — flake8 parses with the interpreter it runs
+    # on, so a PEP 695 statement makes it fail with a syntax error rather than
+    # a finding.
+    "UP040",
+]

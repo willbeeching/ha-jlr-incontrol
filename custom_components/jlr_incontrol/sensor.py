@@ -26,6 +26,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
@@ -212,7 +213,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
 _TYRE_KPA_MAX = 600.0
 
 
-def _tyre_kpa(value: str) -> float | None:
+def _tyre_kpa(value: Any) -> float | None:
     """Normalise the raw tyre value to kPa, rejecting sentinels.
 
     The scale differs by vehicle generation: an L405/L663 reports kPa*10
@@ -372,6 +373,11 @@ def _pressure_unit_override(entry: JlrConfigEntry) -> str | None:
     return None
 
 
+# Coordinator-backed and read-only: there is nothing to serialise, and
+# leaving it unset means Home Assistant assumes otherwise.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -509,6 +515,8 @@ class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
 class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
     """Timestamp of the vehicle's last reported position / status."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
     _attr_translation_key = "last_updated"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:update"
@@ -531,11 +539,16 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"stale": self._vehicle.get("position_stale", False)}
+        # Of the status, matching native_value. This reported position_stale,
+        # so a car sending telemetry every few minutes from a spot it parked in
+        # three days ago showed a timestamp from moments ago marked stale.
+        return {"stale": self._vehicle.get("status_stale", False)}
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):
     """Flattened vehicle status as attributes (disabled by default)."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     _attr_translation_key = "all_info"
     _attr_icon = "mdi:database"

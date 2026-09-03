@@ -300,10 +300,10 @@ class JlrPortal:
             self._base = None
         if self._base is not None:
             return self._base
-        remembered = bool(fresh and self._portal_base and self._portal_cookies)
-        if remembered and await self._async_can_resume(self._portal_base):
-            self._base = self._portal_base
-            return self._base
+        saved = self._portal_base if fresh and self._portal_cookies else None
+        if saved is not None and await self._async_can_resume(saved):
+            self._base = saved
+            return saved
         _LOGGER.debug(
             "minting a portal session; identity cookies held: %s",
             sorted(self._cookies) or "none",

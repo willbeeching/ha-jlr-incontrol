@@ -14,7 +14,7 @@ from jlr import telemetry as tel
 from jlr.api import flatten_status
 
 # VIN-shaped but not a real vehicle. Committed tests must not carry one.
-VIN = "SAJTESTVIN000001A"
+VIN = "SAJAA1234567890AB"
 
 CONNECTED = "CONNECTED\nversion:1.2\nheart-beat:10000,10000\nuser-name:9f3c\n\n\x00"
 
