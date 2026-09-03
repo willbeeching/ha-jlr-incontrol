@@ -77,7 +77,13 @@ jobs:
           if [ "${{ matrix.ha }}" = "latest" ]; then
             pip install homeassistant
           else
-            pip install "homeassistant==${{ matrix.ha }}"
+            # With that release's own constraints. Resolving freely gives a
+            # dependency set Home Assistant never shipped — the first run of
+            # this lane failed on an aiodns/pycares mismatch that has nothing
+            # to do with this integration.
+            base="https://raw.githubusercontent.com/home-assistant/core"
+            pip install "homeassistant==${{ matrix.ha }}" \
+              -c "$base/${{ matrix.ha }}/homeassistant/package_constraints.txt"
           fi
 
       - name: Import every module
