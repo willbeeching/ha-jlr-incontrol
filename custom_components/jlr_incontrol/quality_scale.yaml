@@ -25,13 +25,7 @@ rules:
       HACS validation now runs the check rather than ignoring it.
   common-modules: done
   config-flow: done
-  config-flow-test-coverage:
-    status: todo
-    comment: >-
-      The flow is now tested against a real core — every step, both ways of
-      signing in again, and the failure paths that generated the bug reports.
-      Not yet the 100% this rule asks for: the options flow and a few error
-      branches are still uncovered.
+  config-flow-test-coverage: done
   dependency-transparency:
     status: done
     comment: No third-party requirements at all; only what Home Assistant ships.
@@ -72,16 +66,16 @@ rules:
   parallel-updates: done
   reauthentication-flow: done
   test-coverage:
-    status: todo
+    status: done
     comment: >-
-      Line coverage of the package is 86%, enforced as a floor in CI so it
-      can only rise, and the suite runs against both the oldest supported core
-      and the newest. Covered against a real core: setup, unload and reload,
-      repairs, entity creation and availability, diagnostics redaction, both
-      config and options flows, and an electric vehicle's entities as well as
-      an ICE one's. Covered without one: the reconnect supervisor and its
-      backoff, the sign-in journey step by step, the portal's session
-      handling, and token rotation.
+      98% of the package, every module at or above the 95% this rule asks for,
+      enforced as a floor in CI and run against both the oldest supported core
+      and the newest. The config flow is at 100%.
+
+      What is left uncovered is the handful of branches that need a real JLR
+      server to reach — a 403 from an edge appliance mid-request, an endpoint
+      answering 200 with a body nobody has seen — and each is a log line rather
+      than a decision.
 
       Short of the 95% this rule asks for, and the rule wants it per module
       rather than overall. The weakest are telemetry (the socket read loop

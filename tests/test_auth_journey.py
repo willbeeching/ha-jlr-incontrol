@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from typing import Any
 
 import aiohttp
 import pytest
@@ -318,3 +319,139 @@ class TestWhatJlrSendsBack:
         login._session = Broken()
         with pytest.raises(JlrLoginError, match="could not reach"):
             await login._async_authenticate({})
+
+
+class Recorded:
+    """A response that also remembers what it was asked for."""
+
+    def __init__(
+        self,
+        status: int = 200,
+        payload: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status, self._payload = status, payload
+        self.headers = headers or {}
+
+    async def __aenter__(self) -> Recorded:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+    async def json(self, **kwargs: Any) -> Any:
+        if isinstance(self._payload, Exception):
+            raise self._payload
+        return self._payload
+
+
+class Calls:
+    def __init__(self, *replies: Any) -> None:
+        self._replies = list(replies)
+        self.params: list[dict] = []
+        self.bodies: list[str] = []
+
+    def _next(self) -> Any:
+        reply = self._replies.pop(0) if self._replies else Recorded()
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    def get(self, url: str, **kwargs: Any) -> Any:
+        self.params.append(kwargs.get("params") or {})
+        return self._next()
+
+    def post(self, url: str, **kwargs: Any) -> Any:
+        self.bodies.append(str(kwargs.get("data") or ""))
+        return self._next()
+
+
+def with_calls(calls: Calls) -> JlrLogin:
+    made = JlrLogin.__new__(JlrLogin)
+    made._stage = "start"
+    made._session = calls
+    made._state, made._nonce = "a-state", "a-nonce"
+    made._verifier, made._challenge = "a-verifier", "a-challenge"
+    return made
+
+
+class TestSeedingTheJourney:
+    async def test_it_primes_the_cookie_jar(self) -> None:
+        # /authorize first pins server affinity; without it the later
+        # /authorize bounces back to the login UI intermittently.
+        calls = Calls(Recorded(302))
+        await with_calls(calls)._async_seed_authorize()
+        assert calls.params[0]["code_challenge_method"] == "S256"
+        assert calls.params[0]["code_challenge"] == "a-challenge"
+
+    async def test_an_unreachable_host_is_reported(self) -> None:
+        with pytest.raises(JlrLoginError, match="could not reach"):
+            await with_calls(
+                Calls(aiohttp.ClientError("connection reset"))
+            )._async_seed_authorize()
+
+
+class TestTradingTheSessionForACode:
+    async def test_the_code_is_read_out_of_the_redirect(self) -> None:
+        # The redirect targets the app's custom scheme, which is parsed rather
+        # than followed.
+        calls = Calls(
+            Recorded(302, headers={"Location": "jlr://callback?code=an-auth-code"})
+        )
+        login = with_calls(calls)
+        assert await login._async_authorize("an-am-session") == "an-auth-code"
+        assert calls.params[0]["csrf"] == "an-am-session"
+        assert calls.params[0]["decision"] == "allow"
+
+    @pytest.mark.parametrize(
+        "location", ["", "jlr://callback", "jlr://callback?error=denied"]
+    )
+    async def test_no_code_in_the_redirect_is_an_error(self, location: str) -> None:
+        calls = Calls(Recorded(302, headers={"Location": location}))
+        with pytest.raises(JlrLoginError, match="did not issue an authorization"):
+            await with_calls(calls)._async_authorize("an-am-session")
+
+    async def test_an_unreachable_host_is_reported(self) -> None:
+        with pytest.raises(JlrLoginError, match="could not reach"):
+            await with_calls(
+                Calls(aiohttp.ClientError("connection reset"))
+            )._async_authorize("an-am-session")
+
+
+class TestSwappingTheCodeForTokens:
+    async def test_the_verifier_proves_we_started_the_journey(self) -> None:
+        # PKCE: without it anyone intercepting the code could redeem it.
+        calls = Calls(Recorded(200, {"access_token": "a", "refresh_token": "b"}))
+        login = with_calls(calls)
+        assert await login._async_exchange("an-auth-code") == {
+            "access_token": "a",
+            "refresh_token": "b",
+        }
+        assert "code_verifier=a-verifier" in calls.bodies[0]
+        assert "grant_type=authorization_code" in calls.bodies[0]
+
+    async def test_a_refusal_carries_what_jlr_said(self) -> None:
+        calls = Calls(
+            Recorded(
+                400,
+                {"error": "invalid_grant", "error_description": "code already used"},
+            )
+        )
+        with pytest.raises(JlrLoginError, match="code already used"):
+            await with_calls(calls)._async_exchange("an-auth-code")
+
+    async def test_a_refusal_with_no_detail_still_names_the_status(self) -> None:
+        with pytest.raises(JlrLoginError, match="503"):
+            await with_calls(Calls(Recorded(503, None)))._async_exchange("a-code")
+
+    async def test_a_body_that_is_not_a_token_set_is_refused(self) -> None:
+        with pytest.raises(JlrLoginError):
+            await with_calls(Calls(Recorded(200, "not a mapping")))._async_exchange(
+                "a-code"
+            )
+
+    async def test_an_unreachable_host_is_reported(self) -> None:
+        with pytest.raises(JlrLoginError, match="could not reach"):
+            await with_calls(
+                Calls(aiohttp.ClientError("connection reset"))
+            )._async_exchange("a-code")

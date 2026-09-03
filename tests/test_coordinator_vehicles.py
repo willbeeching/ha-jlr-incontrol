@@ -274,3 +274,169 @@ class TestPersistingAttributes:
         coord.client = FakeClient()
         coord._persist()
         assert coord.hass.config_entries.writes == []
+
+
+class TestFreshness:
+    """Which timestamp wins, and when a reading stops being worth trusting."""
+
+    def test_the_newest_of_several_wins(self) -> None:
+        assert (
+            JlrCoordinator._newest(
+                "2026-08-26T07:00:00Z",
+                "2026-08-26T09:00:00Z",
+                "2026-08-26T08:00:00Z",
+            )
+            == "2026-08-26T09:00:00Z"
+        )
+
+    def test_empty_values_are_skipped(self) -> None:
+        assert JlrCoordinator._newest(None, "", "2026-08-26T07:00:00Z") == (
+            "2026-08-26T07:00:00Z"
+        )
+
+    def test_nothing_at_all_is_nothing(self) -> None:
+        assert JlrCoordinator._newest(None, "") is None
+
+    def test_an_unparseable_stamp_is_better_than_none(self) -> None:
+        # It still tells a reader something; discarding it would show a
+        # vehicle as never having reported.
+        assert JlrCoordinator._newest("not a date") == "not a date"
+
+    def test_a_parseable_stamp_beats_an_unparseable_one(self) -> None:
+        assert JlrCoordinator._newest("not a date", "2026-08-26T07:00:00Z") == (
+            "2026-08-26T07:00:00Z"
+        )
+
+    def test_a_naive_stamp_is_assumed_utc(self) -> None:
+        # JLR are not consistent about the suffix, and comparing naive to
+        # aware raises.
+        assert JlrCoordinator._newest("2026-08-26T07:00:00") is not None
+
+    def test_a_recent_reading_is_not_stale(self) -> None:
+        recent = (dt_util.utcnow() - timedelta(hours=1)).isoformat()
+        assert not JlrCoordinator._is_stale(recent)
+
+    def test_a_day_old_reading_is(self) -> None:
+        old = (dt_util.utcnow() - timedelta(days=2)).isoformat()
+        assert JlrCoordinator._is_stale(old)
+
+    @pytest.mark.parametrize("value", [None, "", "not a date"])
+    def test_an_unreadable_stamp_is_not_called_stale(self, value) -> None:
+        # Reporting "stale" for something we cannot date is a claim we cannot
+        # support; unknown age is not the same as old.
+        assert not JlrCoordinator._is_stale(value)
+
+
+class TestChargeNowSetting:
+    def coordinator_with(self, status: dict[str, Any]) -> JlrCoordinator:
+        made = coordinator()
+        made.data = {"vehicles": {KEPT: {"status": status}}}
+        return made
+
+    def test_it_is_upper_cased_for_the_caller(self) -> None:
+        assert (
+            self.coordinator_with(
+                {"EV_CHARGE_NOW_SETTING": "force_on"}
+            ).charge_now_setting(KEPT)
+            == "FORCE_ON"
+        )
+
+    def test_a_car_that_has_not_said_reports_nothing(self) -> None:
+        assert self.coordinator_with({}).charge_now_setting(KEPT) is None
+
+    def test_a_vehicle_we_do_not_know_reports_nothing(self) -> None:
+        assert self.coordinator_with({}).charge_now_setting("nobody") is None
+
+
+class TestNamingACarWithoutAskingJlr:
+    """The attributes endpoint is behind the attestation wall much of the time."""
+
+    def test_the_vin_prefix_names_the_brand(self) -> None:
+        coord = coordinator()
+        coord._seed_identity(KEPT, {"vin": KEPT})
+        assert coord._attributes[KEPT]["vehicleBrand"]
+
+    def test_a_name_already_known_is_not_overwritten(self) -> None:
+        # A real attributes document beats a guess, and the guess must not
+        # undo it on the next poll.
+        coord = coordinator(_attributes={KEPT: {"vehicleBrand": "Jaguar"}})
+        coord._seed_identity(KEPT, {"vin": KEPT})
+        assert coord._attributes[KEPT]["vehicleBrand"] == "Jaguar"
+
+    def test_a_vehicle_record_with_nothing_in_it_adds_nothing(self) -> None:
+        coord = coordinator()
+        coord._seed_identity("", {})
+        assert coord._attributes == {}
+
+
+class TestPushedData:
+    def quiet(self) -> JlrCoordinator:
+        coord = with_both_cars(_last_snapshot={}, _last_changed={})
+        coord._push = lambda: None
+        return coord
+
+    def test_a_status_push_is_adopted(self) -> None:
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"ODOMETER": "999"}, "2026-08-26T08:00:00Z")
+        assert coord._status[KEPT] == {"ODOMETER": "999"}
+        assert coord._pushed_at[KEPT] == "2026-08-26T08:00:00Z"
+
+    def test_a_push_without_a_send_time_still_lands(self) -> None:
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"ODOMETER": "999"}, None)
+        assert coord._status[KEPT] == {"ODOMETER": "999"}
+
+    def test_a_position_push_is_adopted(self) -> None:
+        coord = self.quiet()
+        coord._handle_position(KEPT, {"latitude": 51.5, "longitude": -0.1})
+        assert coord._position[KEPT]["latitude"] == 51.5
+
+    def test_an_unchanged_snapshot_is_not_called_a_change(self) -> None:
+        # The socket redelivers a full snapshot on every reconnect, which is
+        # every few minutes. Treating each as a change would make "last
+        # changed" mean "last reconnected".
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        first = coord._last_changed.get(KEPT)
+        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        assert coord._last_changed.get(KEPT) == first
+
+    def test_a_real_change_is(self) -> None:
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "2"}, None)
+        assert coord._last_changed.get(KEPT)
+
+
+class TestAttributesBehindTheWall:
+    async def test_a_refusal_leaves_what_we_already_had(self) -> None:
+        # Losing the name because JLR blocked one request would rename every
+        # car on the dashboard until the wall lifted.
+        from jlr.api import JlrApiError
+
+        coord = coordinator(_attributes={KEPT: {"nickname": "Keeper"}})
+
+        async def refuses(vin: str) -> dict[str, Any]:
+            raise JlrApiError("returned 498")
+
+        coord.client = type("C", (), {"async_get_attributes": staticmethod(refuses)})()
+        await coord._async_refresh_attributes(KEPT)
+        assert coord._attributes[KEPT]["nickname"] == "Keeper"
+
+    async def test_a_recent_attempt_is_not_repeated(self) -> None:
+        # The clock here is wall time, not monotonic: the retry window is
+        # hours, and it is compared against dt_util.utcnow().
+        asked = 0
+
+        async def counts(vin: str) -> dict[str, Any]:
+            nonlocal asked
+            asked += 1
+            return {}
+
+        coord = coordinator(
+            _attributes={KEPT: {"nickname": "Keeper"}},
+            _attributes_attempted={KEPT: dt_util.utcnow()},
+        )
+        coord.client = type("C", (), {"async_get_attributes": staticmethod(counts)})()
+        await coord._async_refresh_attributes(KEPT)
+        assert asked == 0

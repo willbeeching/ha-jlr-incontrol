@@ -111,6 +111,7 @@ class FakePortal:
         }
         self.closed = False
         self.asked: list[str] = []
+        self.touches = 0
 
     async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
         if self.error is not None:
@@ -122,6 +123,11 @@ class FakePortal:
             raise self.error
         self.asked.append(portal_id)
         return {"latitude": 51.5074, "longitude": -0.1278}
+
+    async def async_touch(self) -> None:
+        if self.error is not None:
+            raise self.error
+        self.touches += 1
 
     async def async_close(self) -> None:
         self.closed = True

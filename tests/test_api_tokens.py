@@ -230,3 +230,100 @@ class TestAttributesBehindTheWall:
         made = self.falling_back((498, None), (498, None), (403, None))
         with pytest.raises(JlrApiError):
             await made.async_get_attributes("SAJ")
+
+
+class TestRegisteringTheDevice:
+    def registering(self, status: int) -> JlrClient:
+        made = client(_access_token="live", _expires_at=time.monotonic() + 600)
+        made._session = FakeSession(FakeResponse(status, None))
+        return made
+
+    @pytest.mark.parametrize("status", [200, 204])
+    async def test_either_success_code_counts(self, status: int) -> None:
+        made = self.registering(status)
+        await made.async_register_device()
+        assert made._device_registered
+
+    async def test_it_is_not_repeated(self) -> None:
+        # Idempotent at JLR's end, but a request nobody needs is still a
+        # request to somebody else's servers.
+        made = self.registering(204)
+        await made.async_register_device()
+        made._session = FakeSession(FakeResponse(500, None))
+        await made.async_register_device()
+
+    async def test_a_refusal_is_reported(self) -> None:
+        with pytest.raises(JlrApiError, match="device registration"):
+            await self.registering(403).async_register_device()
+
+    async def test_a_new_token_means_registering_again(self) -> None:
+        made = self.registering(204)
+        await made.async_register_device()
+        made.apply_tokens({"access_token": "a-newer-token"})
+        assert not made._device_registered
+
+
+class TestResolvingTheUserId:
+    def looking_up(self, status: int, payload: object) -> JlrClient:
+        made = client(_access_token="live", _expires_at=time.monotonic() + 600)
+        made._session = FakeSession(FakeResponse(status, payload))
+        return made
+
+    async def test_the_id_is_returned_and_kept(self) -> None:
+        made = self.looking_up(200, {"userId": "user-01H8XK4Q2N"})
+        assert await made.async_get_user_id() == "user-01H8XK4Q2N"
+        assert made.user_id == "user-01H8XK4Q2N"
+
+    async def test_a_reply_without_one_is_an_error(self) -> None:
+        # Every vehicle URL is built from it, so carrying on with None would
+        # produce a stream of 404s that look like a JLR outage.
+        with pytest.raises(JlrApiError, match="did not return a userId"):
+            await self.looking_up(200, {}).async_get_user_id()
+
+    async def test_a_failed_lookup_is_an_error(self) -> None:
+        with pytest.raises(JlrApiError):
+            await self.looking_up(500, None).async_get_user_id()
+
+
+class TestConnecting:
+    async def test_it_does_the_three_things_in_order(self) -> None:
+        made = client()
+        done: list[str] = []
+
+        async def token() -> None:
+            done.append("token")
+
+        async def register() -> None:
+            done.append("register")
+
+        async def user() -> str:
+            done.append("user")
+            return "a-user"
+
+        made.async_ensure_token = token
+        made.async_register_device = register
+        made.async_get_user_id = user
+        made._user_id = None
+        await made.async_connect()
+        assert done == ["token", "register", "user"]
+
+    async def test_a_known_user_id_is_not_looked_up_again(self) -> None:
+        made = client(_user_id="already-known")
+        looked_up = False
+
+        async def token() -> None:
+            return None
+
+        async def register() -> None:
+            return None
+
+        async def user() -> str:
+            nonlocal looked_up
+            looked_up = True
+            return "x"
+
+        made.async_ensure_token = token
+        made.async_register_device = register
+        made.async_get_user_id = user
+        await made.async_connect()
+        assert not looked_up

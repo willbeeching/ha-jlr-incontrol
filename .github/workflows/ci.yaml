@@ -89,15 +89,14 @@ jobs:
               )
           print(f"minimum lane is running core {core}")
           CHECK
-      # A floor rather than a target. Home Assistant's quality scale asks
-      # for 95%; this is where the suite actually is, set so that coverage
-      # can only go up from here. Measured by path, not by module name:
+      # The figure Home Assistant's quality scale asks for, enforced as a
+      # floor so it can only go up. Measured by path, not by module name:
       # some tests import these files under a second name, and a module
       # spec then reports the file as untouched.
       - run: >-
           python -m pytest -q
           --cov=custom_components/jlr_incontrol
-          --cov-report=term-missing --cov-fail-under=85
+          --cov-report=term-missing --cov-fail-under=95
 
   types:
     name: Types
