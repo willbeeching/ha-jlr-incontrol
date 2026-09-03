@@ -26,7 +26,14 @@ async def async_setup_entry(
 
 
 class JlrDeviceTracker(JlrVehicleEntity, TrackerEntity):
-    """Reports the vehicle's last known GPS position."""
+    """Reports the vehicle's last known GPS position.
+
+    Read from the owner web portal, not the telemetry socket — the two fail
+    independently, and a socket outage must not hide a position the portal
+    fetched successfully minutes ago.
+    """
+
+    _requires_telemetry = False
 
     _attr_translation_key = "location"
     _attr_icon = "mdi:car"

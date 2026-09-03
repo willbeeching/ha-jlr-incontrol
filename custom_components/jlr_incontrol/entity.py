@@ -36,6 +36,12 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     _attr_has_entity_name = True
 
+    # Whether this entity's value comes from the telemetry socket. Most do, and
+    # for those a dead socket means the reading is meaningless. Location comes
+    # from the owner portal and an action needs no reading at all, so those set
+    # this False rather than inheriting a dependency they do not have.
+    _requires_telemetry = True
+
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator)
         self._vin = vin
@@ -63,17 +69,24 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     @property
     def available(self) -> bool:
-        """Available while the vehicle is known and telemetry is trusted.
+        """Available while the vehicle is known and this entity's source is up.
 
         The coordinator's own success flag only covers the housekeeping poll,
         which keeps succeeding long after the data socket has died — so it is
         not on its own a statement about whether these values mean anything.
+
+        But the socket is not every entity's source. Requiring it for all of
+        them meant a telemetry outage hid a location the owner portal had
+        fetched successfully minutes earlier, and greyed out the refresh button
+        at the moment someone would reach for it. Location survives a dead
+        socket by design; its honesty signal is ``position_trusted``, which is
+        about the age of the fix and reported separately.
         """
-        return (
-            super().available
-            and self._vin in self.coordinator.data.get("vehicles", {})
-            and self.coordinator.telemetry_ok
-        )
+        if not super().available:
+            return False
+        if self._vin not in self.coordinator.data.get("vehicles", {}):
+            return False
+        return self.coordinator.telemetry_ok or not self._requires_telemetry
 
     @property
     def device_info(self) -> DeviceInfo:

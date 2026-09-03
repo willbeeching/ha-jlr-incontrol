@@ -60,6 +60,10 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
     the parked location from the owner portal.
     """
 
+    # An action, not a reading. Greying this out because the socket is
+    # down disables it exactly when someone would reach for it.
+    _requires_telemetry = False
+
     _attr_translation_key = "refresh"
     _attr_icon = "mdi:refresh"
 
