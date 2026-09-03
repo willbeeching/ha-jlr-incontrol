@@ -365,6 +365,17 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             err,
         )
 
+    @property
+    def issue_id(self) -> str:
+        """The repair id for this entry's expired portal session.
+
+        Scoped to the entry, because the id is what makes a repair unique
+        within a domain. Two accounts shared one id, so whichever entry ran
+        last decided whether the repair existed at all — a healthy account
+        silently clearing the warning belonging to a broken one.
+        """
+        return f"{ISSUE_PORTAL_SIGNED_OUT}_{self.entry.entry_id}"
+
     def _async_raise_signed_out_issue(self) -> None:
         """Tell the user once, in the place Home Assistant puts such things.
 
@@ -378,7 +389,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ir.async_create_issue(
             self.hass,
             DOMAIN,
-            ISSUE_PORTAL_SIGNED_OUT,
+            self.issue_id,
             is_fixable=False,
             severity=ir.IssueSeverity.WARNING,
             translation_key=ISSUE_PORTAL_SIGNED_OUT,
@@ -387,7 +398,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _async_clear_signed_out_issue(self) -> None:
         """Withdraw the sign-in repair once the portal answers again."""
         self._signed_out_issue_raised = False
-        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
+        ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
 
     def _store_portal_session(
         self, base: str, cookies: dict[str, str], minted: str

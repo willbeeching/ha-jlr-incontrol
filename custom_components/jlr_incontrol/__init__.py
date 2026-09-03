@@ -5,8 +5,9 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, ISSUE_PORTAL_SIGNED_OUT, PLATFORMS
 from .coordinator import JlrCoordinator
 
 
@@ -18,6 +19,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     await coordinator.async_start_telemetry()
     coordinator.async_start_keepalive()
+
+    # Repairs raised before the id was scoped to the entry. Nothing will ever
+    # clear these, so they would sit in Repairs forever.
+    ir.async_delete_issue(hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     _async_drop_removed_platforms(hass, entry)
@@ -37,6 +42,16 @@ def _async_drop_removed_platforms(hass: HomeAssistant, entry: ConfigEntry) -> No
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
         if entity.domain in REMOVED_PLATFORMS:
             registry.async_remove(entity.entity_id)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Take this entry's repair with it when the entry is deleted.
+
+    A repair outlives the thing it is about otherwise: the coordinator that
+    would have cleared it no longer exists, so the warning stays in Repairs
+    pointing at an account the user has already removed.
+    """
+    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
