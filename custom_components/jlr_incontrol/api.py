@@ -75,6 +75,33 @@ class JlrApiError(Exception):
     """Raised when a backend request fails."""
 
 
+def _retry_after(header: str | None) -> float | None:
+    """Seconds to wait, from a Retry-After header given as a delay."""
+    if not header:
+        return None
+    try:
+        seconds = float(header.strip())
+    except ValueError:
+        # The HTTP-date form is legal but JLR do not use it, and guessing at a
+        # date parse here would be inventing behaviour we cannot test.
+        return None
+    return seconds if seconds >= 0 else None
+
+
+class JlrRateLimitError(JlrApiError):
+    """Raised when JLR asks us to slow down.
+
+    Deliberately not an auth error. Every non-200 from the token endpoint used
+    to mean "sign in again", so a rate limit or an outage at JLR sent the user
+    off to find an emailed code that could not have helped — the one thing this
+    integration works hardest to avoid asking for.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class JlrConnectionError(JlrApiError):
     """Raised when a request never reached JLR at all.
 
@@ -260,9 +287,23 @@ class JlrClient:
             what=what,
         )
         if status != 200 or not isinstance(tokens, dict):
-            # A dead or already-rotated refresh token can only be fixed by
-            # signing in again, which needs a fresh emailed code.
-            raise JlrAuthError(f"{what} returned {status}; sign in again")
+            error = ""
+            if isinstance(tokens, dict):
+                error = str(tokens.get("error") or "")
+            if error == "invalid_grant" or status in (401, 403):
+                # Genuinely spent: the refresh token is dead or already
+                # rotated, and only a fresh sign-in can replace it.
+                raise JlrAuthError(
+                    f"{what} was refused ({error or status}); sign in again"
+                )
+            # Everything else — a 5xx, a gateway hiccup, a malformed reply —
+            # says nothing about whether the credentials are still good, and
+            # an emailed code would not fix it. Fail temporarily so the caller
+            # backs off and tries again.
+            raise JlrApiError(
+                f"{what} returned {status}"
+                f"{f' ({error})' if error else ''}; will retry"
+            )
         self.apply_tokens(tokens)
 
     async def async_ensure_token(self) -> None:
@@ -477,6 +518,11 @@ class JlrClient:
                         payload = None
                 if resp.status >= 400:
                     await self._log_error_response(resp, what, payload)
+                if resp.status == 429:
+                    raise JlrRateLimitError(
+                        f"{what} was rate limited by Jaguar Land Rover",
+                        _retry_after(resp.headers.get("Retry-After")),
+                    )
                 return resp.status, payload
         except TimeoutError as err:
             raise JlrConnectionError(

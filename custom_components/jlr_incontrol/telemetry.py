@@ -34,7 +34,7 @@ from typing import Any, NamedTuple
 
 import aiohttp
 
-from .api import JlrApiError, JlrClient, flatten_status
+from .api import JlrApiError, JlrClient, JlrRateLimitError, flatten_status
 from .const import (
     USER_AGENT,
     WS_ACK_DESTINATION,
@@ -173,10 +173,21 @@ class JlrTelemetry:
     async def _async_supervise(self) -> None:
         backoff = WS_BACKOFF_START.total_seconds()
         while True:
+            wait = backoff
             try:
                 await self._async_session()
             except asyncio.CancelledError:
                 raise
+            except JlrRateLimitError as err:
+                # Being told how long to wait beats guessing, and ignoring the
+                # instruction is how a client stops being throttled and starts
+                # being blocked.
+                wait = backoff if err.retry_after is None else err.retry_after
+                _LOGGER.warning(
+                    "telemetry rate limited: %s; waiting %ss as asked",
+                    err,
+                    int(wait),
+                )
             except (JlrTelemetryError, JlrApiError, aiohttp.ClientError) as err:
                 _LOGGER.warning(
                     "telemetry socket dropped: %s; retrying in %ss", err, int(backoff)
@@ -192,7 +203,7 @@ class JlrTelemetry:
                 continue
             finally:
                 self._set_connected(False)
-            await asyncio.sleep(backoff)
+            await asyncio.sleep(wait)
             backoff = min(backoff * 2, WS_BACKOFF_MAX.total_seconds())
 
     # ---------------------------------------------------------------- session
