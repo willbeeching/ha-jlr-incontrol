@@ -82,7 +82,12 @@ jobs:
             # this lane failed on an aiodns/pycares mismatch that has nothing
             # to do with this integration.
             base="https://raw.githubusercontent.com/home-assistant/core"
-            pip install "homeassistant==${{ matrix.ha }}" \
+            # pycares<5 on top: the constraints pin aiodns==3.5.0 but leave
+            # pycares free, and pycares 5 removed an attribute that aiodns
+            # references at import time. An upstream incompatibility, nothing
+            # to do with this integration, but it stops the lane before it can
+            # test anything.
+            pip install "homeassistant==${{ matrix.ha }}" "pycares<5" \
               -c "$base/${{ matrix.ha }}/homeassistant/package_constraints.txt"
           fi
 
