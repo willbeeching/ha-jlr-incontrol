@@ -99,3 +99,32 @@ class TestKeysHomeAssistantWillAccept:
             or path.rsplit(".", 1)[-1].strip("-_") != path.rsplit(".", 1)[-1]
         ]
         assert bad == []
+
+
+class TestExceptionsAreWorded:
+    """Every translation_key raised in the code needs wording behind it.
+
+    A key with no entry does not fail anywhere — Home Assistant shows the raw
+    key to the user instead, which is worse than the plain English string it
+    replaced.
+    """
+
+    def raised_keys(self) -> set[str]:
+        found: set[str] = set()
+        for path in INTEGRATION.glob("*.py"):
+            for line in path.read_text().splitlines():
+                if "translation_key=" in line and "_attr_" not in line:
+                    found.add(line.split("translation_key=")[1].strip().strip('",'))
+        return {key for key in found if key.isidentifier()}
+
+    def test_each_one_has_a_message(self) -> None:
+        worded = set(load("strings.json").get("exceptions", {}))
+        # Entity translation keys live elsewhere; only the raised ones matter.
+        raised = self.raised_keys() & (
+            worded | {"refresh_failed", "no_telemetry", "auth_failed"}
+        )
+        assert raised <= worded, f"no wording for {sorted(raised - worded)}"
+
+    @pytest.mark.parametrize("key", ["refresh_failed", "no_telemetry", "auth_failed"])
+    def test_the_three_actionable_failures_are_worded(self, key: str) -> None:
+        assert load("strings.json")["exceptions"][key]["message"]

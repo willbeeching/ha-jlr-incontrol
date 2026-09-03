@@ -168,8 +168,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not self._status:
                 await self.telemetry.async_stop()
                 raise ConfigEntryNotReady(
-                    "connected to Jaguar Land Rover, but no vehicle data arrived "
-                    f"over the telemetry socket within {FIRST_SNAPSHOT_TIMEOUT}s"
+                    translation_domain=DOMAIN,
+                    translation_key="no_telemetry",
+                    translation_placeholders={"seconds": str(FIRST_SNAPSHOT_TIMEOUT)},
                 ) from err
             # Some vehicles answered. Carry on with those rather than leaving
             # the whole account down, and reload when the stragglers appear.
@@ -234,7 +235,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             return await self._async_housekeeping()
         except JlrAuthError as err:
-            raise ConfigEntryAuthFailed(f"authentication failed: {err}") from err
+            raise ConfigEntryAuthFailed(
+                translation_domain=DOMAIN,
+                translation_key="auth_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
         except JlrApiError as err:
             raise UpdateFailed(f"could not reach the JLR backend: {err}") from err
 

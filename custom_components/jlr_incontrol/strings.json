@@ -241,6 +241,17 @@
       }
     }
   },
+  "exceptions": {
+    "refresh_failed": {
+      "message": "Could not refresh from Jaguar Land Rover. Live vehicle status is unaffected — it arrives on its own — but the vehicle list and the parked location could not be re-read just now. This is usually temporary; the next scheduled refresh will try again."
+    },
+    "no_telemetry": {
+      "message": "Signed in to Jaguar Land Rover, but no vehicle data arrived over the telemetry connection within {seconds} seconds. Home Assistant will keep retrying."
+    },
+    "auth_failed": {
+      "message": "Jaguar Land Rover refused the stored sign-in ({error}). You will need to sign in again, with a fresh verification code."
+    }
+  },
   "issues": {
     "portal_signed_out": {
       "title": "Sign in again to restore vehicle location",

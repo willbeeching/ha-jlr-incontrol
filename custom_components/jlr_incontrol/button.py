@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -78,4 +79,17 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
         self._attr_unique_id = f"{vin}_refresh"
 
     async def async_press(self) -> None:
+        """Refresh now, and say so if it did not work.
+
+        async_request_refresh swallows the failure — it is built for a
+        background poll, where logging and retrying is right. Pressing a button
+        and getting silence is not: the person is standing there waiting, and
+        the difference between "nothing to update" and "Jaguar Land Rover are
+        not answering" is the whole reason they pressed it.
+        """
         await self.coordinator.async_request_refresh()
+        if not self.coordinator.last_update_success:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="refresh_failed",
+            )
