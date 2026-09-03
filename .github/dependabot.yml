@@ -11,3 +11,10 @@ updates:
       prefix: "ci"
     labels:
       - dependencies
+
+  # The pinned lint and test tooling. Pinned so a release cannot fail an
+  # unrelated commit; watched so the pins do not quietly rot instead.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly

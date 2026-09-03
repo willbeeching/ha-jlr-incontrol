@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install black isort ruff flake8
+      - run: pip install -r requirements-lint.txt
 
       - name: Black
         run: black --check custom_components/ tests/

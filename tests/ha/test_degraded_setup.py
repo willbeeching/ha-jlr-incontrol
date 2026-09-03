@@ -21,9 +21,6 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
 
-from custom_components.jlr_incontrol import (  # noqa: E402
-    coordinator as coordinator_module,
-)
 from custom_components.jlr_incontrol.const import (  # noqa: E402
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
@@ -54,7 +51,10 @@ class TestOneCarSilent:
 
         monkeypatch.setattr(FakeTelemetry, "async_start", start)
         # Setup genuinely waits this out. Real seconds, so make it few.
-        monkeypatch.setattr(coordinator_module, "FIRST_SNAPSHOT_TIMEOUT", 0.05)
+        monkeypatch.setattr(
+            "custom_components.jlr_incontrol.coordinator." "FIRST_SNAPSHOT_TIMEOUT",
+            0.05,
+        )
 
     async def test_the_account_still_loads(
         self,

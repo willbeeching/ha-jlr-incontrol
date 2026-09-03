@@ -1,0 +1,11 @@
+# Pinned deliberately. These were floating, and isort 9 landed between one
+# green run and the next — failing a commit for a formatting opinion that
+# had changed underneath it rather than for anything in the change. A
+# linter that can do that is a linter nobody trusts.
+#
+# Dependabot watches this file, so the upgrade arrives as a pull request
+# that can be read and run, which is the point.
+black==26.5.1
+isort==9.0.1
+ruff==0.16.5
+flake8==7.3.0
