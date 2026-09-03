@@ -49,6 +49,7 @@ from .const import (
     WS_URL,
     WS_VIN_TOPIC,
 )
+from .redact import scrub, scrub_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -365,7 +366,9 @@ class JlrTelemetry:
         try:
             envelope = json.loads(frame.body)
         except ValueError:
-            _LOGGER.debug("telemetry sent a non-JSON message: %.200s", frame.body)
+            _LOGGER.debug(
+                "telemetry sent a non-JSON message: %.200s", scrub_text(frame.body)
+            )
             return
         if not isinstance(envelope, dict):
             return
@@ -392,7 +395,7 @@ class JlrTelemetry:
             if "LAST_UPDATED_TIME" not in status:
                 _LOGGER.debug(
                     "VHS items carry no recognised timestamp; first item is %s",
-                    _first_item(payload),
+                    scrub(_first_item(payload)),
                 )
             self._on_status(vin, status, str(envelope.get("t") or "") or None)
             return
@@ -408,7 +411,7 @@ class JlrTelemetry:
         _LOGGER.debug(
             "telemetry %s message for a vehicle, unhandled: %.300s",
             message_type or "(untyped)",
-            json.dumps(payload),
+            json.dumps(scrub(payload)),
         )
 
     async def _async_ack(

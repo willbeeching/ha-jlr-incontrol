@@ -1,41 +1,21 @@
-"""Diagnostics support for JLR InControl."""
+"""Diagnostics support for JLR InControl.
+
+Everything leaving here is scrubbed as a whole rather than by a list of field
+names. The list approach was tried and quietly failed: it named ``imei`` and
+``serialNumber``, while the payload calls them ``TU_STATUS_IMEI`` and
+``TU_STATUS_SERIAL_NUMBER``, so a permanent hardware identifier was shipped in
+clear in every download. Naming fields only redacts the ones already thought of.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import (
-    CONF_PASSWORD,
-    CONF_PORTAL_COOKIES,
-    CONF_REFRESH_TOKEN,
-    CONF_SSO_COOKIES,
-    DOMAIN,
-)
-
-REDACT_KEYS = {
-    CONF_PASSWORD,
-    # A live credential now that it's persisted in the entry — must never reach
-    # a diagnostics attachment on a public issue.
-    CONF_REFRESH_TOKEN,
-    # A live session for the owner portal, same as the token above.
-    CONF_SSO_COOKIES,
-    # A live portal session, same as the identity one above.
-    CONF_PORTAL_COOKIES,
-    "portal_id",
-    "latitude",
-    "longitude",
-    "vin",
-    "serial_number",
-    # The attributes payload uses camelCase and includes the number plate and
-    # telematics identifiers (leaked unredacted in a public attachment, #1).
-    "registrationNumber",
-    "serialNumber",
-    "imei",
-}
+from .const import DOMAIN
+from .redact import scrub, vehicle_label
 
 
 async def async_get_config_entry_diagnostics(
@@ -44,7 +24,8 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     data = coordinator.data
-    redacted: dict[str, Any] = {
+    pushed_at = getattr(coordinator, "_pushed_at", {})
+    diagnostics: dict[str, Any] = {
         # Where the data is actually coming from. Without this a dump of empty
         # vehicles looks the same whether the socket is down or the car is.
         "telemetry": {
@@ -52,20 +33,19 @@ async def async_get_config_entry_diagnostics(
             "trusted": coordinator.telemetry_ok,
             "vehicles_subscribed": len(data.get("vehicles", {})),
             # Message time, not vehicle time. Here to show the socket is alive;
-            # it is deliberately kept out of the freshness signal.
-            "last_push": dict(getattr(coordinator, "_pushed_at", {})),
+            # it is deliberately kept out of the freshness signal. Keyed by
+            # label — these keys were VINs, and being keys they went round the
+            # redaction applied to the vehicles below.
+            "last_push": {vehicle_label(vin): sent for vin, sent in pushed_at.items()},
         },
         "vehicles": {},
     }
     for vin, vehicle in data.get("vehicles", {}).items():
-        redacted_vehicle = {
+        diagnostics["vehicles"][vehicle_label(vin)] = {
             "role": vehicle.get("role"),
             "attributes": vehicle.get("attributes", {}),
             "status": vehicle.get("status", {}),
             "status_ts": vehicle.get("status_ts"),
             "position_stale": vehicle.get("position_stale"),
         }
-        redacted["vehicles"][vin[-4:]] = async_redact_data(
-            redacted_vehicle, REDACT_KEYS
-        )
-    return redacted
+    return scrub(diagnostics)

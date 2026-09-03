@@ -54,6 +54,7 @@ from .const import (
     TELEMETRY_GRACE,
 )
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
+from .redact import vehicle_label
 from .telemetry import JlrTelemetry
 
 _LOGGER = logging.getLogger(__name__)
@@ -176,7 +177,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning(
                 "no telemetry snapshot from %s within %ss; reloading once their "
                 "data arrives so their entities can be created",
-                ", ".join(sorted(self._awaiting)),
+                ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
                 FIRST_SNAPSHOT_TIMEOUT,
             )
         self._setup_done = True
@@ -291,7 +292,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             attributes = await self.client.async_get_attributes(vin)
         except JlrApiError as err:
-            _LOGGER.debug("attributes for %s unavailable: %s", vin, err)
+            _LOGGER.debug("attributes for %s unavailable: %s", vehicle_label(vin), err)
             return
         if attributes:
             self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
@@ -474,7 +475,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     self._reloaded_for_straggler = True
                     _LOGGER.info(
                         "late telemetry for %s; reloading so its entities exist",
-                        vin,
+                        vehicle_label(vin),
                     )
                     self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
                     return

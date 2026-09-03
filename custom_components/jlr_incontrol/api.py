@@ -55,6 +55,7 @@ from .const import (
     USER_AGENT,
     VIN_BRANDS,
 )
+from .redact import scrub_text, vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -391,7 +392,7 @@ class JlrClient:
                 continue
             identity = identity_fields(payload)
             if identity:
-                _LOGGER.debug("identity for %s came from %s", vin, what)
+                _LOGGER.debug("identity for %s came from %s", vehicle_label(vin), what)
                 # Keep the whole payload when it is the real attributes
                 # document: capability flags live alongside the names.
                 return {**payload, **identity}
@@ -521,7 +522,7 @@ class JlrClient:
             what,
             resp.status,
             seen,
-            body.strip() or "<empty>",
+            scrub_text(body.strip()) or "<empty>",
         )
 
     def _webview_headers(self, accept: str) -> dict[str, str]:
