@@ -430,7 +430,7 @@ class JlrClient:
         primary endpoint does not hide a working alternative.
         """
         await self.async_connect()
-        last_error: JlrApiError | None = None
+        last_error: JlrApiError | JlrAuthError | None = None
         for what, url in self._identity_urls(vin):
             try:
                 status, payload = await self._request(
@@ -598,7 +598,7 @@ class JlrClient:
         }
 
     @staticmethod
-    def _error(what: str, status: int) -> JlrApiError:
+    def _error(what: str, status: int) -> JlrApiError | JlrAuthError:
         if status == 498:
             return JlrApiError(APPROOV_HINT.format(what=what))
         if status == 401:

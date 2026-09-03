@@ -29,6 +29,11 @@ REMOVED_BUTTONS = (
 )
 
 
+# Coordinator-backed and read-only: there is nothing to serialise, and
+# leaving it unset means Home Assistant assumes otherwise.
+PARALLEL_UPDATES = 0
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:

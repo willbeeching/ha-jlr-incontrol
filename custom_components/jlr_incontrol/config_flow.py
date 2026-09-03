@@ -78,7 +78,7 @@ OPTIONS_SCHEMA = vol.Schema(
 )
 
 
-class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
+class JlrConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
     """Handle the JLR InControl config flow."""
 
     VERSION = 1
