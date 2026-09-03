@@ -7,9 +7,10 @@ actually lived, so it is worth testing without a Home Assistant install in the
 way. Binding the directory to a bare module loads those submodules without
 running the package ``__init__``.
 
-Coordinator, config-flow and entity behaviour do need Home Assistant. The CI
-test lane installs one, so those tests run there; where none is installed they
-skip themselves rather than failing the run.
+Coordinator, config-flow and entity behaviour do need Home Assistant, and live
+under ``tests/ha`` against a real core. The CI test lane installs one, so those
+run there; where none is installed they skip themselves rather than failing the
+run.
 """
 
 from __future__ import annotations

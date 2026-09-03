@@ -24,8 +24,10 @@ rules:
   config-flow-test-coverage:
     status: todo
     comment: >-
-      The flow needs Home Assistant to test, and the suite currently covers
-      only the modules that do not import it.
+      The flow is now tested against a real core — every step, both ways of
+      signing in again, and the failure paths that generated the bug reports.
+      Not yet the 100% this rule asks for: the options flow and a few error
+      branches are still uncovered.
   dependency-transparency:
     status: done
     comment: No third-party requirements at all; only what Home Assistant ships.
@@ -68,12 +70,13 @@ rules:
   test-coverage:
     status: todo
     comment: >-
-      The suite covers the API, auth, portal, telemetry and redaction modules,
-      and the coordinator's vehicle-removal path. Not covered: the config flow,
-      setup and unload, reauthentication, diagnostics, and the entities
-      themselves — so line coverage of the package is a long way short of the
-      95% this rule asks for. Deliberately no test count here; the last one
-      was wrong within a week.
+      Setup, unload, reload, repairs, entity creation and availability,
+      diagnostics redaction and the config flow are all exercised against a
+      real core, alongside the API, auth, portal, telemetry and redaction
+      modules. Line coverage of the package is 70%, enforced as a floor in CI
+      so it can only rise. Short of the 95% this rule asks for: the telemetry
+      socket's reconnect handling and the sign-in journey's own error paths
+      are the two big gaps left.
 
   # -------------------------------------------------------------------- gold
   devices: done

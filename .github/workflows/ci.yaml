@@ -60,7 +60,15 @@ jobs:
       # themselves when it is missing, so a lane without one passes while
       # silently running none of them.
       - run: pip install -r requirements-test.txt
-      - run: python -m pytest -q
+      # A floor rather than a target. Home Assistant's quality scale asks
+      # for 95%; this is where the suite actually is, set so that coverage
+      # can only go up from here. Measured by path, not by module name:
+      # some tests import these files under a second name, and a module
+      # spec then reports the file as untouched.
+      - run: >-
+          python -m pytest -q
+          --cov=custom_components/jlr_incontrol
+          --cov-report=term-missing --cov-fail-under=68
 
   types:
     name: Types
