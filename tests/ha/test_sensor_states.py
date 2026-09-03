@@ -61,6 +61,22 @@ class TestChargingStatus:
         assert _charging_status("SOMETHING_NEW") is None
         assert "SOMETHING_NEW" in caplog.text
 
+    def test_it_is_reported_once_not_on_every_evaluation(self, caplog) -> None:
+        # An unrecognised value is not a transient: a car that starts sending
+        # one keeps sending it, so warning each time fills the log for as long
+        # as it charges.
+        caplog.set_level(logging.WARNING)
+        for _ in range(20):
+            _charging_status("SOMETHING_PERSISTENT")
+        assert caplog.text.count("SOMETHING_PERSISTENT") == 1
+
+    def test_a_second_unknown_value_is_still_worth_hearing_about(self, caplog) -> None:
+        caplog.set_level(logging.WARNING)
+        _charging_status("FIRST_NEW_VALUE")
+        _charging_status("SECOND_NEW_VALUE")
+        assert "FIRST_NEW_VALUE" in caplog.text
+        assert "SECOND_NEW_VALUE" in caplog.text
+
     def test_an_empty_value_is_not_worth_a_warning(self, caplog) -> None:
         caplog.set_level(logging.WARNING)
         assert _charging_status("") is None

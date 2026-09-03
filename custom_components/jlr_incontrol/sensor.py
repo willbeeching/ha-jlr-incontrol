@@ -141,16 +141,24 @@ _CHARGING_STATES = {
 }
 
 
+# Charging values seen that this integration has no wording for. Remembered so
+# each one is reported once rather than on every evaluation: an unrecognised
+# value is not a transient — a car that starts reporting one keeps reporting
+# it, so the naive version fills the log for as long as it charges.
+_UNKNOWN_CHARGING_STATES: set[str] = set()
+
+
 def _charging_status(value: str) -> str | None:
     """Map the raw charging enum to a translated option.
 
     Returning None rather than the raw string for anything unrecognised: an
     ENUM sensor whose value is not in its options logs an error on every
-    update. The unknown value is logged once so it can be added here.
+    update. The unknown value is reported once, so it can be added here.
     """
     raw = re.sub(r"[^A-Z]", "", str(value).upper())
     slug = _CHARGING_STATES.get(raw)
-    if slug is None and raw:
+    if slug is None and raw and raw not in _UNKNOWN_CHARGING_STATES:
+        _UNKNOWN_CHARGING_STATES.add(raw)
         _LOGGER.warning(
             "unrecognised EV_CHARGING_STATUS %r — please report it so the "
             "charging status sensor can show it",
