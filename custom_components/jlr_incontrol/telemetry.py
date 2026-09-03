@@ -260,7 +260,7 @@ class JlrTelemetry:
         if frame.command == "ERROR":
             raise JlrTelemetryError(
                 f"telemetry broker refused the connection: "
-                f"{frame.headers.get('message') or frame.body[:200] or 'no reason given'}"
+                f"{frame.headers.get('message') or frame.body[:200] or 'unknown'}"
             )
         if frame.command != "CONNECTED":
             raise JlrTelemetryError(

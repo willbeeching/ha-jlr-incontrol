@@ -448,7 +448,7 @@ class JlrClient:
         return {}
 
     async def async_get_status(self, vin: str) -> dict[str, Any]:
-        """Return the flattened vehicle status ({key: value} from coreStatus/evStatus)."""
+        """Return the flattened status: {key: value} from core and EV status."""
         status, payload = await self._request(
             "GET",
             f"{IF9_BASE}/vehicles/{vin}/status",
@@ -576,7 +576,8 @@ class JlrClient:
             **BROWSER_HEADERS,
             "Authorization": f"Bearer {self._access_token}",
             "X-Device-Id": self._device_id,
-            # The edge literally expects a header named "clientId" equal to the device id.
+            # The edge literally expects a header named "clientId" whose
+            # value is the device id.
             "clientId": self._device_id,
             "Accept": accept,
         }

@@ -27,7 +27,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import aiohttp
@@ -116,7 +116,7 @@ class JlrPortal:
         """
         if self._minted is None:
             return "age unknown"
-        seconds = int((datetime.now(timezone.utc) - self._minted).total_seconds())
+        seconds = int((datetime.now(UTC) - self._minted).total_seconds())
         if seconds < 0:
             return "age unknown"
         hours, minutes = divmod(seconds // 60, 60)
@@ -202,7 +202,7 @@ class JlrPortal:
         }
         if not cookies:
             return
-        self._minted = datetime.now(timezone.utc)
+        self._minted = datetime.now(UTC)
         self._portal_cookies, self._portal_base = cookies, base
         if self._on_portal_session is not None:
             self._on_portal_session(base, dict(cookies), self._minted.isoformat())
@@ -300,10 +300,10 @@ class JlrPortal:
             self._base = None
         if self._base is not None:
             return self._base
-        if fresh and self._portal_base and self._portal_cookies:
-            if await self._async_can_resume(self._portal_base):
-                self._base = self._portal_base
-                return self._base
+        remembered = bool(fresh and self._portal_base and self._portal_cookies)
+        if remembered and await self._async_can_resume(self._portal_base):
+            self._base = self._portal_base
+            return self._base
         _LOGGER.debug(
             "minting a portal session; identity cookies held: %s",
             sorted(self._cookies) or "none",
@@ -527,7 +527,7 @@ def _parked(waypoints: list[Any]) -> dict[str, Any]:
 def _iso(value: Any) -> str | None:
     """Epoch milliseconds to an ISO string, or None if it isn't one."""
     try:
-        moment = datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+        moment = datetime.fromtimestamp(int(value) / 1000, tz=UTC)
     except (TypeError, ValueError, OSError, OverflowError):
         return None
     return moment.isoformat().replace("+00:00", "Z")
@@ -541,4 +541,4 @@ def _parse_iso(value: str | None) -> datetime | None:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)

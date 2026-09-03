@@ -85,7 +85,8 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.WINDOW,
         is_on=lambda v: v == "TRUE",
     ),
-    # Security. LOCK device_class: on == unlocked, so invert the "all doors locked" flag.
+    # Security. LOCK device_class: on == unlocked, so the "all doors locked"
+    # flag is inverted.
     JlrBinaryDescription(
         key="doors_locked",
         translation_key="doors_locked",

@@ -345,8 +345,8 @@ def _should_create_sensor(
         return False
     if description.suppress_for_ev and is_electric(attributes):
         return False
-    if description.requires_ev and not is_electrified(attributes, status):
-        return False
+    if description.requires_ev:
+        return is_electrified(attributes, status)
     return True
 
 

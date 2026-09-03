@@ -7,58 +7,121 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes to the repository. Actions pinned to commit SHAs rather
+# than tags or branches: a tag can be moved and a branch changes under you, so
+# @main is an open invitation to run whatever that repository holds tomorrow.
+permissions:
+  contents: read
+
+env:
+  # The oldest core the integration claims to support. Anything using an API
+  # newer than this has to raise the claim rather than quietly rely on it.
+  MIN_HA_VERSION: "2025.8.0"
+  PYTHON_VERSION: "3.13"
+
 jobs:
-  validate:
-    name: Code Quality Checks
+  lint:
+    name: Lint and format
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install black isort ruff flake8
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 black isort
+      - name: Black
+        run: black --check custom_components/ tests/
 
-      - name: Check code formatting with Black
-        run: |
-          black --check custom_components/jlr_incontrol/
+      - name: isort
+        run: isort --check-only custom_components/ tests/
 
-      - name: Check import sorting with isort
-        run: |
-          isort --check-only custom_components/jlr_incontrol/
+      - name: Ruff
+        run: ruff check custom_components/ tests/
 
-      - name: Lint with flake8
+      # No --exit-zero. A warning nobody has to act on is not a check, and
+      # this ran for months reporting findings that never blocked anything.
+      - name: flake8
+        run: flake8 custom_components/ tests/
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pytest pytest-asyncio aiohttp yarl
+      - run: python -m pytest -q
+
+  imports:
+    name: Imports on Home Assistant ${{ matrix.ha }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the claim. The minimum is the one that matters: the
+        # integration once imported OptionsFlowWithReload while advertising a
+        # core a year older than the release that introduced it, and nothing
+        # would have caught that until a user on an old core installed it.
+        ha: ["2025.8.0", "latest"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Home Assistant
         run: |
-          flake8 custom_components/jlr_incontrol/ --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 custom_components/jlr_incontrol/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          if [ "${{ matrix.ha }}" = "latest" ]; then
+            pip install homeassistant
+          else
+            pip install "homeassistant==${{ matrix.ha }}"
+          fi
+
+      - name: Import every module
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil, sys
+          sys.path.insert(0, ".")
+          package = importlib.import_module("custom_components.jlr_incontrol")
+          for module in pkgutil.iter_modules(package.__path__):
+              importlib.import_module(
+                  f"custom_components.jlr_incontrol.{module.name}"
+              )
+          print("all modules import")
+          PY
+
+      - name: Check the declared minimum matches what is installed
+        if: matrix.ha != 'latest'
+        run: |
+          python - <<'PY'
+          import json
+          from homeassistant.const import __version__ as installed
+
+          declared = json.load(open("hacs.json"))["homeassistant"]
+          assert declared == installed, (
+              f"hacs.json claims {declared} but the minimum lane runs {installed}"
+          )
+          print(f"minimum claim and test lane agree on {declared}")
+          PY
 
   hacs:
-    name: HACS Validation
+    name: HACS validation
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: HACS validation
-        uses: hacs/action@main
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: hacs/action@1ebf01c408f29afcb6406bd431bc98fd8cbb15aa # main
         with:
           category: integration
-          # The integration is not (yet) in the home-assistant/brands repo, which
-          # is expected for a custom integration; skip that check.
+          # The integration is not (yet) in the home-assistant/brands repo,
+          # which is expected for a custom integration; skip that check.
           ignore: brands
 
   hassfest:
-    name: Hassfest Validation
+    name: Hassfest validation
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Hassfest validation
-        uses: home-assistant/actions/hassfest@master
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master

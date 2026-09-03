@@ -88,7 +88,7 @@ supported route would be a better outcome than another workaround.
 
 ## Requirements
 
-- Home Assistant 2024.4 or newer
+- Home Assistant 2025.8 or newer
 - An InControl account with your vehicle(s) added to it
 - Your account email and password
 

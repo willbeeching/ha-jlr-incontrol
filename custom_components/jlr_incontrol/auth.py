@@ -351,7 +351,10 @@ class JlrLogin:
                 if resp.status != 200 or not isinstance(tokens, dict):
                     detail = ""
                     if isinstance(tokens, dict):
-                        detail = f": {tokens.get('error', '')} {tokens.get('error_description', '')}"
+                        detail = (
+                            f": {tokens.get('error', '')} "
+                            f"{tokens.get('error_description', '')}"
+                        )
                     raise JlrLoginError(
                         f"JLR token exchange returned {resp.status}{detail}".strip()
                     )
@@ -361,7 +364,7 @@ class JlrLogin:
 
 
 # ForgeRock labels a callback under different output keys depending on its
-# type: "id" for HiddenValueCallback, "prompt" for choices and inputs, "name"
+# The field named: "id" for HiddenValueCallback, "prompt" for choices and inputs, "name"
 # for some others. Reading only one of them silently finds nothing.
 _NAME_KEYS = ("id", "name", "prompt")
 

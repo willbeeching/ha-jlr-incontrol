@@ -3,3 +3,13 @@ profile = "black"
 
 [tool.black]
 target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+# Beyond ruff's default E4/E7/E9/F: import order, modern syntax, likely bugs,
+# and the simplification rules. Previously there was no configuration at all,
+# so "ruff clean" meant only that the file parsed and had no undefined names.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RET", "PTH"]

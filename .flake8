@@ -1,0 +1,8 @@
+[flake8]
+# Match Black rather than fighting it. The old CI worked around this with
+# --max-line-length=127 --exit-zero, which made every finding advisory.
+max-line-length = 88
+# E203 and W503 disagree with Black by design; both are on Black's own list of
+# checks to disable.
+extend-ignore = E203, W503
+exclude = .git,__pycache__,.venv
