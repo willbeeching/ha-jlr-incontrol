@@ -118,9 +118,34 @@ Each vehicle appears as a device with its own sensors.
 
 ### Options
 
-Under **Configure** on the integration entry you can override distance units (miles / km) and
-pressure units (kPa / bar / psi). Leave both as "Use Home Assistant default" to let Home Assistant
-convert automatically.
+**Settings → Devices & Services → Jaguar Land Rover InControl → Configure.** There are two, both
+purely about display; neither changes what is fetched or how often.
+
+| Option | Values | Default | What it does |
+| --- | --- | --- | --- |
+| Distance unit | Use Home Assistant default / Miles / Kilometres | Use Home Assistant default | Forces distance sensors (odometer, ranges, distance to service) to one unit instead of following your Home Assistant unit system. |
+| Pressure unit | Use Home Assistant default / kPa / bar / psi | Use Home Assistant default | The same for the four tyre pressure sensors. JLR report kPa; the other two are converted. |
+
+Saving reloads the integration, which takes a few seconds and creates nothing new — entity ids
+and history are kept.
+
+### Removing the integration
+
+**Settings → Devices & Services → Jaguar Land Rover InControl → ⋮ → Delete.**
+
+Everything goes with it: the refresh token, the portal session cookies, the device and user ids
+and the cached vehicle details are all held in that config entry and are deleted with it. All the
+devices and entities it created are removed, and any repair notice it raised is withdrawn. Nothing
+is left behind in Home Assistant, and nothing is stored anywhere else — there is no account to
+close and no server of ours holding anything.
+
+Your InControl account itself is untouched. If you want to revoke this integration's access at
+JLR's end rather than just locally, change your InControl password; that invalidates the stored
+token.
+
+To remove **one car** but keep the rest, delete it from your InControl account and it will
+disappear here within fifteen minutes, cached details included. You can also delete its device
+directly, which Home Assistant allows once the account genuinely no longer lists it.
 
 ## How it works
 
@@ -157,10 +182,31 @@ Worth knowing:
 - Sign-in sessions eventually expire. When that happens Home Assistant will ask you to sign in
   again, with a fresh emailed code.
 
-## Recipes
+## What people use it for
 
-Template sensors, automations and dashboard snippets that build on these entities live in
+- **Is the car home?** The `device_tracker` resolves to your zones, so "arrived home" and "left"
+  automations work — bearing in mind it updates when a journey completes, not continuously.
+- **Charge on cheap rate or on solar.** **Plugged in**, **Charging** and the **Battery** percentage
+  are what a tariff automation or a surplus-charging controller needs. The **EVCC status** sensor
+  (off by default) reports IEC 61851 connector state for wallbox controllers that speak it.
+- **Notice you left something open.** The per-door, per-window and sunroof binary sensors, usually
+  combined with the car being at home and the weather turning.
+- **Servicing and consumables.** Distance to service, AdBlue range, tyre pressures and the fluid
+  warnings, as a monthly nudge rather than a dashboard nobody reads.
+- **Preconditioning countdown.** The car reports the remaining minutes once and then sits still, so
+  a live countdown needs a template sensor — there is one in the recipes.
+
+Template sensors, automations and dashboard snippets are in
 [docs/RECIPES.md](docs/RECIPES.md). Contributions very welcome.
+
+## Documentation
+
+| | |
+| --- | --- |
+| [Entities](docs/ENTITIES.md) | Every entity, which vehicles get it, where its data comes from and how it degrades |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | By symptom, not by log line |
+| [Recipes](docs/RECIPES.md) | Template sensors, automations, dashboard cards |
+| [Data model](docs/DATA_MODEL.md) | The raw JLR status keys, for anyone extending this |
 
 ## Disclaimer
 

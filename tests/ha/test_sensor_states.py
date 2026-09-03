@@ -88,3 +88,16 @@ class TestAlarmState:
 
     def test_it_is_not_declared_as_an_enum(self) -> None:
         assert description("alarm_state").options is None
+
+
+class TestWhatTheDocsPromise:
+    """Three entities are documented as off by default. Keep that true."""
+
+    def test_the_noisy_twelve_volt_reading_is_off(self) -> None:
+        assert description("battery_soc_12v").entity_registry_enabled_default is False
+
+    def test_the_voltage_beside_it_is_on(self) -> None:
+        # It is the one that actually says something about 12V health.
+        assert description("battery_voltage").entity_registry_enabled_default is not (
+            False
+        )

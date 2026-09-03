@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 import doubles  # noqa: E402
-from doubles import Doubles, FakeClient  # noqa: E402
+from doubles import KEPT, Doubles, FakeClient  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -131,3 +131,35 @@ class TestAnElectricCarsEntities:
     ) -> None:
         live = states(hass, entry)
         assert not any("charging_status" in name for name in live)
+
+
+class TestWhatTheDocsPromiseAboutEvEntities:
+    """Two are documented as off by default. Checked through the registry,
+    because Home Assistant turns _attr_ class attributes into properties and
+    reading them off the class tells you nothing."""
+
+    def disabled(self, hass: HomeAssistant, entry: MockConfigEntry) -> set[str]:
+        return {
+            item.unique_id
+            for item in er.async_entries_for_config_entry(
+                er.async_get(hass), entry.entry_id
+            )
+            if item.disabled_by is not None
+        }
+
+    async def test_the_evcc_connector_letter_is_off(
+        self, hass: HomeAssistant, entry: MockConfigEntry, charging: Doubles
+    ) -> None:
+        # For wallbox controllers to switch on, not for a dashboard.
+        assert f"{KEPT}_evcc_status" in self.disabled(hass, entry)
+
+    async def test_the_charge_now_override_is_off(
+        self, hass: HomeAssistant, entry: MockConfigEntry, charging: Doubles
+    ) -> None:
+        assert f"{KEPT}_charge_now_setting" in self.disabled(hass, entry)
+
+    async def test_the_battery_percentage_is_not(
+        self, hass: HomeAssistant, entry: MockConfigEntry, charging: Doubles
+    ) -> None:
+        # It is the whole point of an EV showing up in Home Assistant.
+        assert f"{KEPT}_ev_battery" not in self.disabled(hass, entry)
