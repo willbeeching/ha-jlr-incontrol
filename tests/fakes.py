@@ -6,9 +6,18 @@ from typing import Any
 
 
 class FakeResponse:
-    def __init__(self, status: int, payload: Any, headers: dict | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        payload: Any,
+        headers: dict | None = None,
+        text: str | Exception = "",
+    ) -> None:
         self.status, self._payload = status, payload
         self.headers = headers or {}
+        # A body the JSON parser could not read. Pass an exception to stand in
+        # for one that cannot even be decoded to a string.
+        self._text = text
 
     async def __aenter__(self) -> FakeResponse:
         return self
@@ -20,7 +29,9 @@ class FakeResponse:
         return self._payload
 
     async def text(self) -> str:
-        return ""
+        if isinstance(self._text, Exception):
+            raise self._text
+        return self._text
 
 
 class FakeSession:

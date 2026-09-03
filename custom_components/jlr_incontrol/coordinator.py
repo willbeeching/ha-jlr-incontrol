@@ -251,7 +251,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # showing cached state, and undeletable — the removal hook still saw it
         # as current. A reply we cannot parse raises in async_get_vehicles
         # rather than arriving here as an empty list.
+        removed = set(self._vehicles) - set(found)
         self._vehicles = found
+        if removed:
+            self._forget(removed)
         self.telemetry.async_set_vehicles(found)
 
         for vin, vehicle in self._vehicles.items():
@@ -264,6 +267,35 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_read_portal()
         self._persist()
         return self._build()
+
+    def _forget(self, removed: set[str]) -> None:
+        """Drop everything held about vehicles the account no longer has.
+
+        Dropping them from _vehicles alone only hid them. Their location was
+        still fetched from the owner portal on every cycle — a car sold months
+        ago, still being asked after by name — and their nickname and
+        registration stayed in the config entry indefinitely, where the
+        diagnostics dump would go on reporting them.
+
+        Every per-VIN cache is listed here rather than a subset, because the
+        ones that were missed are exactly the ones nobody thinks about: the
+        freshness snapshots and the attributes-retry clock hold no secrets but
+        do keep a sold car alive in the coordinator's idea of the account.
+        """
+        for vin in removed:
+            self._attributes.pop(vin, None)
+            self._attributes_attempted.pop(vin, None)
+            self._status.pop(vin, None)
+            self._pushed_at.pop(vin, None)
+            self._position.pop(vin, None)
+            self._portal_ids.pop(vin, None)
+            self._last_snapshot.pop(vin, None)
+            self._last_changed.pop(vin, None)
+            self._awaiting.discard(vin)
+        # A vehicle we were still waiting on has now gone; nothing will ever
+        # arrive for it, and setup would otherwise sit out the full timeout.
+        if not self._awaiting:
+            self._snapshots_ready.set()
 
     def _seed_identity(self, vin: str, vehicle: dict[str, Any]) -> None:
         """Name the vehicle from what we already have, without asking JLR."""
@@ -339,7 +371,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             if self._portal_vehicles_due is None or now >= self._portal_vehicles_due:
                 await self._async_read_portal_vehicles(now)
-            for vin, portal_id in self._portal_ids.items():
+            # Driven by the vehicle list, not by the id cache: the two can
+            # disagree for a cycle, and it is the account's list that says
+            # which cars we are entitled to be asking about.
+            for vin in self._vehicles:
+                portal_id = self._portal_ids.get(vin)
+                if not portal_id:
+                    continue
                 position = await self.portal.async_get_position(portal_id)
                 if position:
                     self._position[vin] = position
@@ -426,17 +464,29 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def _async_read_portal_vehicles(self, now: Any) -> None:
-        """Fetch names and the per-account ids the dashboard pages need."""
+        """Fetch names and the per-account ids the dashboard pages need.
+
+        The listing is authoritative, including when it is empty: a reply we
+        cannot read raises in async_get_vehicles rather than arriving here as
+        no vehicles. So the id cache is rebuilt from it wholesale — adding to
+        it instead meant a car removed from the account kept its id forever,
+        and with it a location request every cycle.
+
+        A vehicle still listed but whose record happens to carry no setup link
+        keeps the id we already had. That case is common enough to matter: the
+        link is absent while a car is mid-enrolment, and losing the id would
+        cost it its location for no reason.
+        """
         vehicles = await self.portal.async_get_vehicles()
-        if not vehicles:
-            return
         self._portal_vehicles_due = now + PORTAL_VEHICLES_TTL
+        ids: dict[str, str] = {}
         for vin, record in vehicles.items():
-            portal_id = record.pop("portal_id", None)
+            portal_id = record.pop("portal_id", None) or self._portal_ids.get(vin)
             if portal_id:
-                self._portal_ids[vin] = portal_id
+                ids[vin] = portal_id
             if record:
                 self._attributes[vin] = {**self._attributes.get(vin, {}), **record}
+        self._portal_ids = ids
 
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
@@ -457,10 +507,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ):
             if value and self.entry.data.get(key) != value:
                 updates[key] = value
-        if (
-            self._attributes
-            and self.entry.data.get(CONF_ATTRIBUTES) != self._attributes
-        ):
+        # No truthiness guard on the left: clearing the last vehicle's details
+        # has to reach the entry too, or a sold car's nickname and registration
+        # outlive it there — and _attributes only empties when the account's
+        # own vehicle list says the car has gone.
+        if (self.entry.data.get(CONF_ATTRIBUTES) or {}) != self._attributes:
             updates[CONF_ATTRIBUTES] = self._attributes
         if updates:
             self.hass.config_entries.async_update_entry(

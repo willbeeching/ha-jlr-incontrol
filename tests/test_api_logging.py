@@ -25,9 +25,23 @@ def debug_logging(caplog):
     return caplog
 
 
+# What this client knows about itself. A block page quotes any of it back.
+PASSWORD = "hunter2-and-then-some"
+USERNAME = "someone@example.com"
+USER_ID = "user-01H8XK4Q2N"
+DEVICE_ID = "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21"
+ACCESS_TOKEN = "eyJhbGciOiJSUzI1NiJ9.access"
+REFRESH_TOKEN = "eyJhbGciOiJSUzI1NiJ9.refresh"
+
+
 def client() -> JlrClient:
     instance = JlrClient.__new__(JlrClient)
-    instance._password = "hunter2"
+    instance._password = PASSWORD
+    instance._username = USERNAME
+    instance._user_id = USER_ID
+    instance._device_id = DEVICE_ID
+    instance._access_token = ACCESS_TOKEN
+    instance._refresh_token = REFRESH_TOKEN
     return instance
 
 
@@ -58,11 +72,11 @@ class TestErrorBodies:
         assert VIN not in caplog.text
 
     async def test_the_password_is_not_echoed_back(self, caplog) -> None:
-        payload = {"detail": "bad credentials for hunter2"}
+        payload = {"detail": f"bad credentials for {PASSWORD}"}
         await client()._log_error_response(
             FakeResponse(401, payload), "sign in", payload
         )
-        assert "hunter2" not in caplog.text
+        assert PASSWORD not in caplog.text
 
     async def test_a_useful_error_still_reaches_the_log(self, caplog) -> None:
         payload = {"error": "invalid_client", "error_description": "unknown client"}
@@ -72,3 +86,51 @@ class TestErrorBodies:
         assert "invalid_client" in caplog.text
         assert "unknown client" in caplog.text
         assert "401" in caplog.text
+
+
+class TestBodiesNobodyCanParse:
+    """The WAF case: HTML quoting our own request back at us.
+
+    There is no JSON here for scrub() to walk and nothing VIN-shaped for
+    scrub_text() to spot, so the only handle on a block page is that what it
+    echoes came from us in the first place.
+    """
+
+    async def test_an_html_block_page_still_reaches_the_log(self, caplog) -> None:
+        await client()._log_error_response(
+            FakeResponse(403, None, text="<html><body>Access Denied</body></html>"),
+            "vehicle list",
+            None,
+        )
+        assert "Access Denied" in caplog.text
+        assert "403" in caplog.text
+
+    @pytest.mark.parametrize(
+        "secret",
+        [USERNAME, USER_ID, DEVICE_ID, ACCESS_TOKEN, REFRESH_TOKEN, PASSWORD],
+    )
+    async def test_our_own_identifiers_are_not_echoed_back(
+        self, caplog, secret: str
+    ) -> None:
+        page = f"<html><body>Blocked request: {secret}</body></html>"
+        await client()._log_error_response(
+            FakeResponse(403, None, text=page), "vehicle list", None
+        )
+        assert secret not in caplog.text
+        assert "REDACTED" in caplog.text
+
+    async def test_a_bearer_header_quoted_back_is_not_logged(self, caplog) -> None:
+        page = f"Denied. Authorization: Bearer {ACCESS_TOKEN} X-Device-Id: {DEVICE_ID}"
+        await client()._log_error_response(
+            FakeResponse(403, None, text=page), "vehicle list", None
+        )
+        assert ACCESS_TOKEN not in caplog.text
+        assert DEVICE_ID not in caplog.text
+
+    async def test_an_unreadable_body_is_not_fatal(self, caplog) -> None:
+        await client()._log_error_response(
+            FakeResponse(502, None, text=UnicodeDecodeError("utf-8", b"", 0, 1, "bad")),
+            "vehicle list",
+            None,
+        )
+        assert "502" in caplog.text

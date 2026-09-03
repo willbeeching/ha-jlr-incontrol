@@ -63,18 +63,17 @@ rules:
       than every entity depending on the telemetry socket.
   integration-owner: done
   log-when-unavailable: done
-  parallel-updates:
-    status: todo
-    comment: >-
-      No platform sets PARALLEL_UPDATES. Everything here is push or read-only,
-      so it is very likely harmless, but "likely harmless" is not the same as
-      having decided.
+  parallel-updates: done
   reauthentication-flow: done
   test-coverage:
     status: todo
     comment: >-
-      72 tests cover the API, auth, portal, telemetry and redaction modules.
-      The coordinator, config flow and entities are not covered.
+      The suite covers the API, auth, portal, telemetry and redaction modules,
+      and the coordinator's vehicle-removal path. Not covered: the config flow,
+      setup and unload, reauthentication, diagnostics, and the entities
+      themselves — so line coverage of the package is a long way short of the
+      95% this rule asks for. Deliberately no test count here; the last one
+      was wrong within a week.
 
   # -------------------------------------------------------------------- gold
   devices: done

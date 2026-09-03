@@ -55,7 +55,7 @@ from .const import (
     USER_AGENT,
     VIN_BRANDS,
 )
-from .redact import scrub, scrub_text, vehicle_label
+from .redact import REDACTED, scrub, scrub_text, vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -566,10 +566,7 @@ class JlrClient:
                 body = await resp.text()
             except (aiohttp.ClientError, UnicodeDecodeError):
                 body = "<unreadable>"
-        # Debug logs get pasted into public issues; never echo the password back
-        # out if an error body happens to quote the request.
-        if self._password and self._password in body:
-            body = body.replace(self._password, "**REDACTED**")
+        body = self._redact_own(body)
         # Collapse whitespace: block pages are multi-line HTML, and a raw body
         # would put everything after the first line beyond the log entry.
         body = " ".join(body.split())
@@ -585,6 +582,33 @@ class JlrClient:
             seen,
             scrub_text(body.strip()) or "<empty>",
         )
+
+    def _redact_own(self, text: str) -> str:
+        """Blank out this client's own identifiers wherever they appear.
+
+        Debug logs get pasted into public issues, and the two rules above only
+        cover what they can recognise: scrub() knows a value is sensitive from
+        the key above it, and scrub_text() knows the shape of a VIN. Neither
+        helps with a body nobody can parse, which is precisely what an edge or
+        WAF appliance returns — a block page quoting the request back at us,
+        with the account name in a path, a device id in a header or a bearer
+        token in a query string, none of it JSON and none of it VIN-shaped.
+
+        What such a page echoes is ours, though, so it can be matched by value
+        instead of by name. Short values are skipped: a two-character id would
+        match half the page and redact the error along with it.
+        """
+        for secret in (
+            self._password,
+            self._access_token,
+            self._refresh_token,
+            self._username,
+            self._user_id,
+            self._device_id,
+        ):
+            if secret and len(secret) >= 8 and secret in text:
+                text = text.replace(secret, REDACTED)
+        return text
 
     def _webview_headers(self, accept: str) -> dict[str, str]:
         return {
