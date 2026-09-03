@@ -8,6 +8,7 @@ an error anywhere; it just means the user reads a raw slug forever.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -59,11 +60,42 @@ class TestFlowStrings:
 
 
 class TestEnumStates:
-    @pytest.mark.parametrize(
-        "key", ["ev_charging_status", "evcc_status", "charge_now_setting"]
-    )
+    @pytest.mark.parametrize("key", ["ev_charging_status", "charge_now_setting"])
     def test_the_enum_sensors_translate_their_states(self, key: str) -> None:
         # An ENUM sensor with no state translations shows the raw option, and
         # the whole reason for an option list is that it can be worded.
         entry = load("strings.json")["entity"]["sensor"][key]
         assert entry["state"], f"{key} has options but no wording for them"
+
+    def test_the_evcc_letters_are_deliberately_not_translated(self) -> None:
+        # Its state is the raw IEC 61851 connector letter because that is what
+        # reads it. Upper case cannot be a translation key, so there is nothing
+        # to translate and hassfest rejects the attempt — see the rule below.
+        assert "state" not in load("strings.json")["entity"]["sensor"]["evcc_status"]
+
+
+class TestKeysHomeAssistantWillAccept:
+    """hassfest rejects any translation key outside [a-z0-9-_]+.
+
+    Learned from CI: uppercase enum options looked like perfectly good
+    translation keys locally and failed the moment hassfest saw them. Checking
+    it here means the next one is caught in a second rather than a round trip.
+    """
+
+    def walk(self, node: object, path: str = "") -> list[str]:
+        found: list[str] = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                found.append(f"{path}.{key}" if path else key)
+                found.extend(self.walk(value, f"{path}.{key}" if path else key))
+        return found
+
+    @pytest.mark.parametrize("name", ["strings.json", "translations/en.json"])
+    def test_every_key_is_acceptable(self, name: str) -> None:
+        bad = [
+            path
+            for path in self.walk(load(name))
+            if not re.fullmatch(r"[a-z0-9_-]+", path.rsplit(".", 1)[-1])
+            or path.rsplit(".", 1)[-1].strip("-_") != path.rsplit(".", 1)[-1]
+        ]
+        assert bad == []

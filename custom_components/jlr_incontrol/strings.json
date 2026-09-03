@@ -145,19 +145,14 @@
         "name": "Alarm state"
       },
       "evcc_status": {
-        "name": "EVCC status",
-        "state": {
-          "A": "A — disconnected",
-          "B": "B — connected, not charging",
-          "C": "C — charging"
-        }
+        "name": "EVCC status"
       },
       "charge_now_setting": {
         "name": "Charge now setting",
         "state": {
-          "DEFAULT": "No override",
-          "FORCE_ON": "Charging forced on",
-          "FORCE_OFF": "Charging forced off"
+          "default": "No override",
+          "force_on": "Charging forced on",
+          "force_off": "Charging forced off"
         }
       },
       "last_updated": {

@@ -62,8 +62,10 @@ that is.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC
-status** exists for wallbox controllers to read (IEC 61851 connector state: `A` disconnected, `B`
-connected not charging, `C` charging), not for a dashboard. **Charge-now override** answers "why is
+status** exists for wallbox controllers to read, not for a dashboard: its state is the raw IEC
+61851 connector letter — `A` disconnected, `B` connected but not charging, `C` charging — left
+upper case because that is what consumers of it expect, which also means Home Assistant cannot
+translate it. **Charge-now override** answers "why is
 this plugged-in car not charging", which matters when it matters and is noise otherwise. Switch
 any of them on in the entity settings.
 

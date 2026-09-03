@@ -664,7 +664,9 @@ class JlrChargeNowSettingSensor(JlrVehicleEntity, SensorEntity):
 
     _attr_translation_key = "charge_now_setting"
     _attr_device_class = SensorDeviceClass.ENUM
-    _attr_options = ["DEFAULT", "FORCE_ON", "FORCE_OFF"]
+    # Lower case because Home Assistant will not translate an option that is
+    # not [a-z0-9-_]+, and an untranslated enum shows the raw word.
+    _attr_options = ["default", "force_on", "force_off"]
     # Niche: it answers "why is this plugged-in car not charging", which
     # matters when it matters and is noise the rest of the time.
     _attr_entity_registry_enabled_default = False
@@ -676,4 +678,5 @@ class JlrChargeNowSettingSensor(JlrVehicleEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         value = self.coordinator.charge_now_setting(self._vin)
-        return value if value in self._attr_options else None
+        slug = value.lower() if value else None
+        return slug if slug in self._attr_options else None
