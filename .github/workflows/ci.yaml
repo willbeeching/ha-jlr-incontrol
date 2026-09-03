@@ -97,7 +97,7 @@ jobs:
       - run: >-
           python -m pytest -q
           --cov=custom_components/jlr_incontrol
-          --cov-report=term-missing --cov-fail-under=75
+          --cov-report=term-missing --cov-fail-under=85
 
   types:
     name: Types

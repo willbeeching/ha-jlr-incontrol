@@ -70,13 +70,19 @@ rules:
   test-coverage:
     status: todo
     comment: >-
-      Setup, unload, reload, repairs, entity creation and availability,
-      diagnostics redaction and the config flow are all exercised against a
-      real core, alongside the API, auth, portal, telemetry and redaction
-      modules. Line coverage of the package is 70%, enforced as a floor in CI
-      so it can only rise. Short of the 95% this rule asks for: the telemetry
-      socket's reconnect handling and the sign-in journey's own error paths
-      are the two big gaps left.
+      Line coverage of the package is 86%, enforced as a floor in CI so it
+      can only rise, and the suite runs against both the oldest supported core
+      and the newest. Covered against a real core: setup, unload and reload,
+      repairs, entity creation and availability, diagnostics redaction, both
+      config and options flows, and an electric vehicle's entities as well as
+      an ICE one's. Covered without one: the reconnect supervisor and its
+      backoff, the sign-in journey step by step, the portal's session
+      handling, and token rotation.
+
+      Short of the 95% this rule asks for, and the rule wants it per module
+      rather than overall. The weakest are telemetry (the socket read loop
+      itself, which needs a websocket fake to reach) and portal (its
+      interactive sign-in).
 
   # -------------------------------------------------------------------- gold
   devices: done

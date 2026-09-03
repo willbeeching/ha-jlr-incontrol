@@ -23,6 +23,8 @@ from jlr.telemetry import Frame, JlrTelemetry, JlrTelemetryError
 VIN = "SAJAA1234567890AB"
 DEVICE = "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21"
 
+CONNECTED = "CONNECTED\nversion:1.2\nheart-beat:10000,10000\nuser-name:9f3c\n\n\x00"
+
 START = WS_BACKOFF_START.total_seconds()
 MAX = WS_BACKOFF_MAX.total_seconds()
 
@@ -481,3 +483,135 @@ class TestConnectionReporting:
         client._set_connected(True)
         client._set_connected(False)
         assert client.connections == [True, False]
+
+
+class FakeReceiver(FakeWebSocket):
+    """A socket that also answers, so the handshake can be driven."""
+
+    def __init__(self, *frames: Any) -> None:
+        super().__init__()
+        self._frames = list(frames)
+
+    async def receive(self, timeout: float | None = None) -> Any:
+        if not self._frames:
+            raise TimeoutError
+        item = self._frames.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class Message:
+    def __init__(self, kind: Any, data: str = "") -> None:
+        self.type, self.data = kind, data
+
+
+def text(data: str) -> Message:
+    import aiohttp
+
+    return Message(aiohttp.WSMsgType.TEXT, data)
+
+
+class TestHandshake:
+    async def test_a_connected_frame_completes_it(self) -> None:
+        client = telemetry()
+        client._client = type("C", (), {"username": "someone@example.com"})()
+        ws = FakeReceiver(text(CONNECTED))
+        await client._async_handshake(ws, "a-token", DEVICE)
+        assert "CONNECT" in ws.sent[0]
+        # The bearer is what the broker binds the session to.
+        assert "a-token" in ws.sent[0]
+
+    async def test_a_refusal_is_reported_with_its_reason(self) -> None:
+        client = telemetry()
+        client._client = type("C", (), {"username": "someone@example.com"})()
+        ws = FakeReceiver(text("ERROR\nmessage:bad token\n\n\x00"))
+        with pytest.raises(JlrTelemetryError, match="bad token"):
+            await client._async_handshake(ws, "a-token", DEVICE)
+
+    async def test_an_unexpected_frame_is_not_assumed_to_be_fine(self) -> None:
+        client = telemetry()
+        client._client = type("C", (), {"username": "someone@example.com"})()
+        ws = FakeReceiver(text("RECEIPT\nreceipt-id:1\n\n\x00"))
+        with pytest.raises(JlrTelemetryError, match="instead of CONNECTED"):
+            await client._async_handshake(ws, "a-token", DEVICE)
+
+    async def test_silence_is_reported_rather_than_waited_on_forever(self) -> None:
+        client = telemetry()
+        with pytest.raises(JlrTelemetryError, match="did not answer"):
+            await client._async_next_frame(FakeReceiver())
+
+    async def test_a_socket_that_closes_mid_handshake_says_so(self) -> None:
+        import aiohttp
+
+        client = telemetry()
+        ws = FakeReceiver(Message(aiohttp.WSMsgType.CLOSED))
+        with pytest.raises(JlrTelemetryError, match="closed during handshake"):
+            await client._async_next_frame(ws)
+
+    async def test_a_heartbeat_before_the_answer_is_skipped(self) -> None:
+        client = telemetry()
+        ws = FakeReceiver(text("\n"), text(CONNECTED))
+        assert (await client._async_next_frame(ws)).command == "CONNECTED"
+
+
+class TestFindingAPositionInWhateverShape:
+    """Position has not been seen live here, so several spellings are accepted."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"latitude": 51.5074, "longitude": -0.1278},
+            {"position": {"latitude": 51.5074, "longitude": -0.1278}},
+            {"vehiclePosition": {"lat": 51.5074, "lng": -0.1278}},
+            {"position": {"position": {"lat": 51.5074, "lon": -0.1278}}},
+        ],
+    )
+    def test_each_shape_yields_the_same_fix(self, payload: dict) -> None:
+        found = tel._extract_position(payload)
+        assert found["latitude"] == 51.5074
+        assert found["longitude"] == -0.1278
+
+    def test_the_extras_come_along_when_they_are_there(self) -> None:
+        found = tel._extract_position(
+            {
+                "latitude": 51.5074,
+                "longitude": -0.1278,
+                "bearing": 90,
+                "speed": 30,
+                "ts": "2026-08-26T08:00:00.000Z",
+            }
+        )
+        assert found["heading"] == 90
+        assert found["speed"] == 30
+        assert found["timestamp"] == "2026-08-26T08:00:00.000Z"
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {},
+            {"latitude": 51.5074},
+            {"longitude": -0.1278},
+            {"position": "not a mapping"},
+            {"position": {"latitude": None, "longitude": None}},
+        ],
+    )
+    def test_half_a_fix_is_no_fix(self, payload: dict) -> None:
+        # Reporting a coordinate we are not sure of would put someone's car on
+        # the map in the wrong place, which is worse than reporting nothing.
+        assert tel._extract_position(payload) == {}
+
+
+class TestIdentifyingAnUnknownField:
+    def test_it_hands_back_one_raw_item_to_look_at(self) -> None:
+        payload = {"vehicleStatus": {"coreStatus": [{"key": "ODOMETER"}]}}
+        assert tel._first_item(payload) == {"key": "ODOMETER"}
+
+    def test_an_unwrapped_payload_works_too(self) -> None:
+        assert tel._first_item({"coreStatus": [{"key": "ODOMETER"}]})["key"] == (
+            "ODOMETER"
+        )
+
+    @pytest.mark.parametrize("payload", [{}, {"vehicleStatus": {}}, {"coreStatus": []}])
+    def test_nothing_to_show_is_not_a_crash(self, payload: dict) -> None:
+        assert tel._first_item(payload) is None

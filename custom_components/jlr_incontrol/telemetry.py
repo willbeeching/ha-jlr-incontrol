@@ -474,11 +474,15 @@ _LONGITUDE_KEYS = ("longitude", "longitude_", "lon", "lng")
 
 def _extract_position(payload: dict[str, Any]) -> dict[str, Any]:
     """Pull a {latitude, longitude, ...} dict out of a position message."""
+    nested = payload.get("position")
     for candidate in (
         payload,
-        payload.get("position"),
+        nested,
         payload.get("vehiclePosition"),
-        (payload.get("position") or {}).get("position"),
+        # Guarded rather than chained: a "position" that is a string — which a
+        # message shape we have not seen could easily send — raised here,
+        # escaped the message handler, and took the socket down with it.
+        nested.get("position") if isinstance(nested, dict) else None,
     ):
         if not isinstance(candidate, dict):
             continue
