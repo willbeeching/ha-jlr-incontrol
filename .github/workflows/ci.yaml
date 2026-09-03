@@ -52,10 +52,14 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      # Home Assistant as well as the bare aiohttp dependencies: the
-      # coordinator tests import it, and skip themselves where it is
-      # absent — which is silently every run if this lane has none.
-      - run: pip install pytest pytest-asyncio aiohttp yarl homeassistant
+      # The custom-integration test harness rather than a bare core. It
+      # brings a matching Home Assistant along with pytest and the warning
+      # filters the core's own suite runs under — without those, core's
+      # import-time deprecations meet this repo's filterwarnings=error and
+      # the run dies during collection. Tests that need a core skip
+      # themselves when it is missing, so a lane without one passes while
+      # silently running none of them.
+      - run: pip install -r requirements-test.txt
       - run: python -m pytest -q
 
   types:

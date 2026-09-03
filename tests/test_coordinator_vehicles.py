@@ -65,6 +65,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_last_snapshot": {},
         "_last_changed": {},
         "_awaiting": set(),
+        "_snapshots_ready": asyncio.Event(),
         "_portal_signed_out": None,
         "_portal_due": None,
         "_portal_vehicles_due": None,
@@ -76,19 +77,23 @@ def coordinator(**state: Any) -> JlrCoordinator:
 
 
 def with_both_cars(**state: Any) -> JlrCoordinator:
-    """One car kept, one sold, with every cache populated for both."""
-    return coordinator(
-        _vehicles={KEPT: {"vin": KEPT}, SOLD: {"vin": SOLD}},
-        _attributes={KEPT: {"nickname": "Keeper"}, SOLD: {"nickname": "Sold"}},
-        _attributes_attempted={KEPT: 1.0, SOLD: 1.0},
-        _status={KEPT: {"ODOMETER": "1"}, SOLD: {"ODOMETER": "2"}},
-        _pushed_at={KEPT: "t1", SOLD: "t2"},
-        _position={KEPT: {"latitude": 1}, SOLD: {"latitude": 2}},
-        _portal_ids={KEPT: "id-kept", SOLD: "id-sold"},
-        _last_snapshot={KEPT: ({}, {}), SOLD: ({}, {})},
-        _last_changed={KEPT: "t1", SOLD: "t2"},
-        **state,
-    )
+    """One car kept, one sold, with every cache populated for both.
+
+    Anything passed in overrides the pair rather than colliding with it, so a
+    test can narrow the vehicle list to what survives a removal.
+    """
+    both: dict[str, Any] = {
+        "_vehicles": {KEPT: {"vin": KEPT}, SOLD: {"vin": SOLD}},
+        "_attributes": {KEPT: {"nickname": "Keeper"}, SOLD: {"nickname": "Sold"}},
+        "_attributes_attempted": {KEPT: 1.0, SOLD: 1.0},
+        "_status": {KEPT: {"ODOMETER": "1"}, SOLD: {"ODOMETER": "2"}},
+        "_pushed_at": {KEPT: "t1", SOLD: "t2"},
+        "_position": {KEPT: {"latitude": 1}, SOLD: {"latitude": 2}},
+        "_portal_ids": {KEPT: "id-kept", SOLD: "id-sold"},
+        "_last_snapshot": {KEPT: ({}, {}), SOLD: ({}, {})},
+        "_last_changed": {KEPT: "t1", SOLD: "t2"},
+    }
+    return coordinator(**{**both, **state})
 
 
 CACHES = (
@@ -121,7 +126,6 @@ class TestForgetting:
 
     def test_a_vehicle_we_were_waiting_on_stops_being_waited_on(self) -> None:
         coord = with_both_cars(_awaiting={KEPT, SOLD})
-        coord._snapshots_ready = asyncio.Event()
         coord._forget({SOLD})
         assert coord._awaiting == {KEPT}
         assert not coord._snapshots_ready.is_set(), "still waiting on the other"
