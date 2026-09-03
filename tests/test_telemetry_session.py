@@ -1,0 +1,483 @@
+"""The supervisor that keeps the telemetry socket alive, and what it does wrong.
+
+Every reading in this integration arrives through here, and when it stops
+arriving nothing else notices for half an hour. The reconnect loop is also the
+one piece that talks to JLR's servers unprompted, so its backoff is a
+politeness question as much as a correctness one: a client that retries a
+refused connection every five seconds forever is how an unofficial API stops
+being available to everybody.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+import pytest
+from jlr import telemetry as tel
+from jlr.api import JlrApiError, JlrRateLimitError
+from jlr.const import WS_BACKOFF_MAX, WS_BACKOFF_START, WS_TYPE_STATUS
+from jlr.telemetry import Frame, JlrTelemetry, JlrTelemetryError
+
+VIN = "SAJAA1234567890AB"
+DEVICE = "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21"
+
+START = WS_BACKOFF_START.total_seconds()
+MAX = WS_BACKOFF_MAX.total_seconds()
+
+
+class FakeWebSocket:
+    """Records what we sent it. Nothing here reads."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send_str(self, data: str) -> None:
+        self.sent.append(data)
+
+
+def telemetry(**handlers: Any) -> JlrTelemetry:
+    """A telemetry client with no session and recording callbacks."""
+    made = JlrTelemetry.__new__(JlrTelemetry)
+    made._vins = [VIN]
+    made._task = None
+    made._connected = False
+    made.status: list[tuple] = []
+    made.positions: list[tuple] = []
+    made.connections: list[bool] = []
+    made._on_status = handlers.get("on_status", lambda *args: made.status.append(args))
+    made._on_position = handlers.get(
+        "on_position", lambda *args: made.positions.append(args)
+    )
+    made._on_connected = handlers.get(
+        "on_connected", lambda state: made.connections.append(state)
+    )
+    return made
+
+
+class _NoSleep:
+    """asyncio, with sleep recorded instead of served.
+
+    A proxy rather than monkeypatching asyncio.sleep itself: that module
+    object is shared with the test, so replacing the attribute makes the
+    replacement call itself, and the test's own yields get counted as waits.
+    """
+
+    def __init__(self, recorded: list[float]) -> None:
+        self._recorded = recorded
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(asyncio, name)
+
+    async def sleep(self, seconds: float) -> None:
+        self._recorded.append(seconds)
+        # Yield so the test can cancel the loop between attempts.
+        await asyncio.sleep(0)
+
+
+@pytest.fixture
+def waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Capture what the supervisor would sleep for, without sleeping."""
+    recorded: list[float] = []
+    monkeypatch.setattr(tel, "asyncio", _NoSleep(recorded))
+    return recorded
+
+
+async def supervise(client: JlrTelemetry, attempts: int, waits: list[float]) -> None:
+    """Run the supervisor until it has slept `attempts` times, then stop."""
+    task = asyncio.create_task(client._async_supervise())
+    for _ in range(2000):
+        if len(waits) >= attempts:
+            break
+        await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+class TestBackoff:
+    async def test_it_doubles_between_attempts(self, waits) -> None:
+        client = telemetry()
+
+        async def always_fails() -> None:
+            raise JlrTelemetryError("the socket dropped")
+
+        client._async_session = always_fails
+        await supervise(client, 4, waits)
+        assert waits[:4] == [START, START * 2, START * 4, START * 8]
+
+    async def test_it_stops_doubling_at_the_ceiling(self, waits) -> None:
+        client = telemetry()
+
+        async def always_fails() -> None:
+            raise JlrTelemetryError("the socket dropped")
+
+        client._async_session = always_fails
+        await supervise(client, 20, waits)
+        assert max(waits) == MAX
+        assert waits[-1] == MAX
+
+    async def test_a_planned_reconnect_is_not_penalised(self, waits) -> None:
+        # Returning cleanly is the token-expiry reconnect, which happens every
+        # few minutes by design. Backing off for it would throttle normal use.
+        client = telemetry()
+        rounds = 0
+
+        async def expires_then_fails() -> None:
+            nonlocal rounds
+            rounds += 1
+            if rounds <= 3:
+                return
+            raise JlrTelemetryError("the socket dropped")
+
+        client._async_session = expires_then_fails
+        await supervise(client, 1, waits)
+        # Three clean returns slept not at all; the first real failure starts
+        # from the bottom of the ladder rather than part-way up it.
+        assert waits[0] == START
+
+    async def test_a_clean_return_resets_a_climbed_backoff(self, waits) -> None:
+        client = telemetry()
+        rounds = 0
+
+        async def fails_then_recovers() -> None:
+            nonlocal rounds
+            rounds += 1
+            if rounds in (1, 2, 3):
+                raise JlrTelemetryError("the socket dropped")
+            if rounds == 4:
+                return
+            raise JlrTelemetryError("dropped again")
+
+        client._async_session = fails_then_recovers
+        await supervise(client, 4, waits)
+        assert waits[:3] == [START, START * 2, START * 4]
+        assert waits[3] == START, "a good connection should clear the penalty"
+
+
+class TestBeingToldToWait:
+    async def test_a_rate_limit_is_obeyed_rather_than_guessed(self, waits) -> None:
+        # Ignoring Retry-After is how a client stops being throttled and
+        # starts being blocked.
+        client = telemetry()
+
+        async def limited() -> None:
+            raise JlrRateLimitError("slow down", 900)
+
+        client._async_session = limited
+        await supervise(client, 1, waits)
+        assert waits[0] == 900
+
+    async def test_a_rate_limit_without_a_delay_falls_back_to_backoff(
+        self, waits
+    ) -> None:
+        client = telemetry()
+
+        async def limited() -> None:
+            raise JlrRateLimitError("slow down", None)
+
+        client._async_session = limited
+        await supervise(client, 2, waits)
+        assert waits[:2] == [START, START * 2]
+
+    async def test_being_told_to_wait_does_not_reset_the_ladder(self, waits) -> None:
+        client = telemetry()
+        rounds = 0
+
+        async def limited_then_dropped() -> None:
+            nonlocal rounds
+            rounds += 1
+            if rounds == 1:
+                raise JlrRateLimitError("slow down", 900)
+            raise JlrTelemetryError("the socket dropped")
+
+        client._async_session = limited_then_dropped
+        await supervise(client, 2, waits)
+        assert waits == [900, START * 2]
+
+
+class TestTheSupervisorNeverDies:
+    async def test_an_unexpected_error_is_survived(self, waits) -> None:
+        # Anything that escapes here stops every reading in the integration
+        # until Home Assistant is restarted.
+        client = telemetry()
+
+        async def explodes() -> None:
+            raise ZeroDivisionError("something nobody predicted")
+
+        client._async_session = explodes
+        await supervise(client, 3, waits)
+        assert len(waits) >= 3
+
+    async def test_an_api_error_is_survived(self, waits) -> None:
+        client = telemetry()
+
+        async def refused() -> None:
+            raise JlrApiError("Jaguar Land Rover returned 503")
+
+        client._async_session = refused
+        await supervise(client, 2, waits)
+        assert len(waits) >= 2
+
+    async def test_cancellation_is_not_swallowed(self, waits) -> None:
+        # async_stop relies on it: a supervisor that catches CancelledError
+        # would hang the unload.
+        client = telemetry()
+
+        async def cancelled() -> None:
+            raise asyncio.CancelledError
+
+        client._async_session = cancelled
+        task = asyncio.create_task(client._async_supervise())
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    async def test_every_failure_reports_the_socket_down(self, waits) -> None:
+        client = telemetry()
+        client._connected = True
+
+        async def always_fails() -> None:
+            raise JlrTelemetryError("the socket dropped")
+
+        client._async_session = always_fails
+        await supervise(client, 1, waits)
+        assert client.connections == [False]
+        assert client.connected is False
+
+
+class TestStartAndStop:
+    async def test_starting_twice_runs_one_supervisor(self) -> None:
+        client = telemetry()
+        started = 0
+
+        async def counts() -> None:
+            nonlocal started
+            started += 1
+            await asyncio.Event().wait()
+
+        client._async_supervise = counts
+        await client.async_start()
+        # Let it actually begin, or the second start has nothing to collide
+        # with and the test passes for the wrong reason.
+        await asyncio.sleep(0)
+        first = client._task
+        await client.async_start()
+        assert client._task is first
+        await client.async_stop()
+        assert started == 1
+
+    async def test_stopping_unwinds_the_task(self) -> None:
+        client = telemetry()
+
+        async def forever() -> None:
+            await asyncio.Event().wait()
+
+        client._async_supervise = forever
+        await client.async_start()
+        await client.async_stop()
+        assert client._task is None
+
+    async def test_stopping_when_never_started_is_harmless(self) -> None:
+        await telemetry().async_stop()
+
+    async def test_stopping_reports_the_socket_down(self) -> None:
+        client = telemetry()
+        client._connected = True
+
+        async def forever() -> None:
+            await asyncio.Event().wait()
+
+        client._async_supervise = forever
+        await client.async_start()
+        await client.async_stop()
+        assert client.connections == [False]
+
+
+def message(**envelope: Any) -> Frame:
+    return Frame("MESSAGE", {}, json.dumps(envelope))
+
+
+def vhs(vin: str = VIN, **extra: Any) -> Frame:
+    body = json.dumps(
+        {
+            "vehicleStatus": {
+                "coreStatus": [
+                    {
+                        "key": "ODOMETER",
+                        "value": "123456",
+                        "lastUpdatedTime": "2026-08-26T07:00:00.000Z",
+                    }
+                ]
+            }
+        }
+    )
+    return message(eid="e-1", st=WS_TYPE_STATUS, v=vin, a={"b": body}, **extra)
+
+
+class TestFramesWeCanUse:
+    async def test_a_status_message_reaches_the_coordinator(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(t="2026-08-26T08:12:41.589Z"), DEVICE)
+        vin, status, sent = client.status[0]
+        assert vin == VIN
+        assert status["ODOMETER"] == "123456"
+        assert sent == "2026-08-26T08:12:41.589Z"
+
+    async def test_a_message_is_acknowledged(self) -> None:
+        # The broker redelivers anything unacknowledged, forever.
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(), DEVICE)
+        assert any("messageReceived" in frame for frame in ws.sent)
+        assert any("e-1" in frame for frame in ws.sent)
+
+    async def test_a_position_message_reaches_the_coordinator(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        body = json.dumps({"position": {"latitude": 51.5074, "longitude": -0.1278}})
+        await client._async_handle(
+            ws, message(eid="e-2", st="VHP", v=VIN, a={"b": body}), DEVICE
+        )
+        assert client.positions[0][0] == VIN
+        assert client.positions[0][1]["latitude"] == 51.5074
+
+
+class TestFramesWeCannot:
+    async def test_a_broker_error_frame_drops_the_connection(self) -> None:
+        # It has to reach the supervisor, which reconnects; swallowing it
+        # leaves a socket that will never deliver anything again.
+        client, ws = telemetry(), FakeWebSocket()
+        with pytest.raises(JlrTelemetryError, match="rejected"):
+            await client._async_handle(
+                ws, Frame("ERROR", {"message": "rejected"}, ""), DEVICE
+            )
+
+    @pytest.mark.parametrize("command", ["RECEIPT", "CONNECTED", "SUBSCRIBE"])
+    async def test_other_commands_are_ignored(self, command: str) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, Frame(command, {}, ""), DEVICE)
+        assert client.status == []
+
+    @pytest.mark.parametrize(
+        "body", ["not json", "", "[1, 2, 3]", '"a bare string"', "null"]
+    )
+    async def test_a_body_we_cannot_read_is_not_fatal(self, body: str) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, Frame("MESSAGE", {}, body), DEVICE)
+        assert client.status == []
+
+    async def test_a_message_with_no_vin_is_dropped(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(
+            ws, message(eid="e-3", st=WS_TYPE_STATUS, a={"b": "{}"}), DEVICE
+        )
+        assert client.status == []
+
+    async def test_a_vin_message_with_an_unreadable_body_is_dropped(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(
+            ws, message(eid="e-4", st=WS_TYPE_STATUS, v=VIN, a={"b": "{{{"}), DEVICE
+        )
+        assert client.status == []
+
+    async def test_an_unhandled_type_reaches_neither_callback(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        body = json.dumps({"serviceStatus": {"status": "Started"}})
+        await client._async_handle(
+            ws, message(eid="e-5", st="RDL", v=VIN, a={"b": body}), DEVICE
+        )
+        assert client.status == []
+        assert client.positions == []
+
+    async def test_an_unacknowledgeable_message_is_still_read(self) -> None:
+        # No eid means nothing to acknowledge, not nothing to do.
+        client, ws = telemetry(), FakeWebSocket()
+        frame = message(st=WS_TYPE_STATUS, v=VIN, a={"b": vhs().body})
+        await client._async_handle(ws, vhs(), DEVICE)
+        assert client.status
+        assert frame
+
+
+class TestRepeatedAndReorderedFrames:
+    """The broker redelivers until acknowledged, so both really happen."""
+
+    async def test_a_redelivered_frame_is_acknowledged_again(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(), DEVICE)
+        await client._async_handle(ws, vhs(), DEVICE)
+        assert sum("e-1" in frame for frame in ws.sent) == 2
+        assert len(client.status) == 2
+
+    async def test_the_last_frame_delivered_wins(self) -> None:
+        # Documented, not accidental: the timestamp is per status key and is
+        # often absent, so there is nothing dependable to order two snapshots
+        # by. The coordinator takes the newest delivery, and a redelivery of
+        # an older one after a reconnect would briefly show the older values.
+        client, ws = telemetry(), FakeWebSocket()
+        newer = json.dumps(
+            {
+                "vehicleStatus": {
+                    "coreStatus": [
+                        {
+                            "key": "ODOMETER",
+                            "value": "999999",
+                            "lastUpdatedTime": "2026-08-26T09:00:00.000Z",
+                        }
+                    ]
+                }
+            }
+        )
+        await client._async_handle(
+            ws, message(eid="e-9", st=WS_TYPE_STATUS, v=VIN, a={"b": newer}), DEVICE
+        )
+        await client._async_handle(ws, vhs(), DEVICE)
+        assert client.status[-1][1]["ODOMETER"] == "123456"
+
+
+class TestSubscribing:
+    async def test_the_device_topic_comes_before_the_vehicles(self) -> None:
+        # The app's own order. The device topic carries the receipts for each
+        # vehicle subscription, so subscribing to it second loses them.
+        client, ws = telemetry(), FakeWebSocket()
+        client._vins = [VIN, "SALBB9876543210CD"]
+        await client._async_subscribe(ws, DEVICE)
+        assert "sub-dev" in ws.sent[0]
+        assert DEVICE in ws.sent[0]
+
+    async def test_every_vehicle_gets_its_own_subscription(self) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        client._vins = [VIN, "SALBB9876543210CD"]
+        await client._async_subscribe(ws, DEVICE)
+        assert sum("sub-vin-" in frame for frame in ws.sent) == 2
+        assert any(VIN in frame for frame in ws.sent)
+        assert any("SALBB9876543210CD" in frame for frame in ws.sent)
+
+    async def test_an_account_with_no_vehicles_still_subscribes_to_the_device(
+        self,
+    ) -> None:
+        client, ws = telemetry(), FakeWebSocket()
+        client._vins = []
+        await client._async_subscribe(ws, DEVICE)
+        assert len(ws.sent) == 1
+
+    async def test_a_vehicle_added_later_is_picked_up_on_reconnect(self) -> None:
+        # async_set_vehicles only changes the list; the next connection is
+        # what acts on it. A car added to the account mid-session would
+        # otherwise never be subscribed.
+        client, ws = telemetry(), FakeWebSocket()
+        client.async_set_vehicles({VIN, "SALBB9876543210CD"})
+        await client._async_subscribe(ws, DEVICE)
+        assert sum("sub-vin-" in frame for frame in ws.sent) == 2
+
+    async def test_the_vehicle_list_is_ordered_so_ids_are_stable(self) -> None:
+        client = telemetry()
+        client.async_set_vehicles({"SALBB9876543210CD", VIN})
+        assert client._vins == sorted([VIN, "SALBB9876543210CD"])
+
+
+class TestConnectionReporting:
+    def test_it_only_reports_a_change(self) -> None:
+        client = telemetry()
+        client._set_connected(True)
+        client._set_connected(True)
+        client._set_connected(False)
+        assert client.connections == [True, False]
