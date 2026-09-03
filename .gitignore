@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 .eggs/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 .mypy_cache/
 .ruff_cache/
 .venv/
