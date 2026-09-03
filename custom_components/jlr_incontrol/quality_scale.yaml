@@ -68,19 +68,15 @@ rules:
   test-coverage:
     status: done
     comment: >-
-      98% of the package, every module at or above the 95% this rule asks for,
-      enforced as a floor in CI and run against both the oldest supported core
-      and the newest. The config flow is at 100%.
+      98% of the package, and every module at or above the 95% this rule asks
+      for — checked per module in CI, not just as an average, because the
+      average is the number that hides one module rotting. Run against both
+      the oldest supported core and the newest. The config flow is at 100%.
 
       What is left uncovered is the handful of branches that need a real JLR
       server to reach — a 403 from an edge appliance mid-request, an endpoint
       answering 200 with a body nobody has seen — and each is a log line rather
       than a decision.
-
-      Short of the 95% this rule asks for, and the rule wants it per module
-      rather than overall. The weakest are telemetry (the socket read loop
-      itself, which needs a websocket fake to reach) and portal (its
-      interactive sign-in).
 
   # -------------------------------------------------------------------- gold
   devices: done

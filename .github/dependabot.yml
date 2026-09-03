@@ -18,3 +18,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Both pins in requirements-test-min.txt are the point of that file,
+      # and dependabot has proposed undoing each of them once already.
+      #
+      # The harness pin selects the release carrying the oldest core this
+      # integration supports; bumping it tests a newer core twice and the
+      # old one never, which the lane then fails on its own assertion.
+      - dependency-name: pytest-homeassistant-custom-component
+      # And aiodns reads a pycares 5 API that does not exist, so widening
+      # this reinstates a break that is already understood.
+      - dependency-name: pycares

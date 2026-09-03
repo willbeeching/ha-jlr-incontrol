@@ -8,6 +8,7 @@ __pycache__/
 .coverage.*
 htmlcov/
 coverage.xml
+coverage.json
 .mypy_cache/
 .ruff_cache/
 .venv/

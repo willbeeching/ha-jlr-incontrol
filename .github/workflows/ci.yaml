@@ -96,7 +96,11 @@ jobs:
       - run: >-
           python -m pytest -q
           --cov=custom_components/jlr_incontrol
-          --cov-report=term-missing --cov-fail-under=95
+          --cov-report=term-missing --cov-report=json --cov-fail-under=95
+      # The aggregate above is the number that hides the problem: one module
+      # can rot to nothing while the average stays comfortable. The rule this
+      # repo claims to meet asks per module, so check per module.
+      - run: python scripts/coverage_gate.py
 
   types:
     name: Types
@@ -108,7 +112,11 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       # Against a real Home Assistant: without it every helper is Any and the
       # check passes by knowing nothing.
-      - run: pip install mypy homeassistant
+      # mypy pinned for the same reason as the linters — a new release is
+      # a new set of opinions, and it should arrive as a pull request.
+      # Home Assistant is deliberately not pinned here: catching a core
+      # that breaks this integration is the point of the lane.
+      - run: pip install -r requirements-types.txt homeassistant
       # No --ignore-missing-imports: the settings live in pyproject.toml
       # and a missing stub is a real finding when core is installed here.
       - run: mypy custom_components/jlr_incontrol/
