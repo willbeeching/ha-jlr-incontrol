@@ -7,7 +7,7 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/willbeeching/ha-jlr-incontrol",
-  "integration_type": "device",
+  "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/willbeeching/ha-jlr-incontrol/issues",
   "requirements": [],

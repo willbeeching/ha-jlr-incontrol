@@ -16,7 +16,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     UnitOfElectricPotential,
@@ -30,6 +29,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
+from . import JlrConfigEntry
 from .const import (
     DISTANCE_UNIT_DEFAULT,
     DISTANCE_UNIT_KM,
@@ -350,7 +350,7 @@ def _should_create_sensor(
     return True
 
 
-def _distance_unit_override(entry: ConfigEntry) -> str | None:
+def _distance_unit_override(entry: JlrConfigEntry) -> str | None:
     """Return a distance unit override from options, or None for HA default."""
     unit = entry.options.get(OPT_DISTANCE_UNIT, DISTANCE_UNIT_DEFAULT)
     if unit == DISTANCE_UNIT_MILES:
@@ -360,7 +360,7 @@ def _distance_unit_override(entry: ConfigEntry) -> str | None:
     return None
 
 
-def _pressure_unit_override(entry: ConfigEntry) -> str | None:
+def _pressure_unit_override(entry: JlrConfigEntry) -> str | None:
     """Return a pressure unit override from options, or None for HA default."""
     unit = entry.options.get(OPT_PRESSURE_UNIT, PRESSURE_UNIT_DEFAULT)
     if unit == PRESSURE_UNIT_KPA:
@@ -373,7 +373,7 @@ def _pressure_unit_override(entry: ConfigEntry) -> str | None:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up JLR sensors.
 
@@ -381,7 +381,7 @@ async def async_setup_entry(
     a given model doesn't have (e.g. AdBlue on a non-diesel) aren't created and
     left showing unknown.
     """
-    coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     distance_unit = _distance_unit_override(entry)
     pressure_unit = _pressure_unit_override(entry)
 

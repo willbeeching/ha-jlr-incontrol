@@ -10,11 +10,11 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import JlrConfigEntry
 from .const import CLIMATE_ACTIVE_STATES, DOMAIN
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities, is_electrified
@@ -171,14 +171,14 @@ def _has_rear_doors(attributes: dict) -> bool:
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up JLR binary sensors.
 
     Only add a sensor if the vehicle actually reports its status key, so e.g. a
     Defender without AdBlue doesn't get an AdBlue warning stuck at unknown.
     """
-    coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     def build(vin: str) -> list[JlrBinarySensor]:
         vehicle = coordinator.data.get("vehicles", {}).get(vin, {})

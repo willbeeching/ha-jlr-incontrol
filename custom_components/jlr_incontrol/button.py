@@ -11,11 +11,11 @@ they are removed rather than left to fail.
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from . import JlrConfigEntry
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities
@@ -30,10 +30,10 @@ REMOVED_BUTTONS = (
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant, entry: JlrConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the refresh button and clear out the commands that cannot run."""
-    coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_vehicle_entities(
         entry,
         coordinator,

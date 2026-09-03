@@ -110,6 +110,20 @@ jobs:
           printf '### Manual\n' >> release-body.md
           printf 'Download `jlr_incontrol.zip`, extract into `config/custom_components/`, and restart Home Assistant.\n' >> release-body.md
 
+      - name: Check the manifest version matches the tag
+        env:
+          VERSION_NUMBER: ${{ steps.get_version.outputs.VERSION_NUMBER }}
+        run: |
+          # HACS reads the manifest, not the tag, so a mismatch ships a release
+          # that reports itself as a different version than it is — which is
+          # exactly how a debugging session loses an afternoon.
+          MANIFEST=$(python -c "import json;print(json.load(open('custom_components/jlr_incontrol/manifest.json'))['version'])")
+          if [ "$MANIFEST" != "$VERSION_NUMBER" ]; then
+            echo "manifest says $MANIFEST but the release is $VERSION_NUMBER" >&2
+            exit 1
+          fi
+          echo "manifest and tag agree on $MANIFEST"
+
       - name: Build from the tag, not the branch tip
         env:
           VERSION: ${{ steps.get_version.outputs.VERSION }}

@@ -11,8 +11,13 @@ from homeassistant.helpers import issue_registry as ir
 from .const import DOMAIN, ISSUE_PORTAL_SIGNED_OUT, PLATFORMS
 from .coordinator import JlrCoordinator
 
+# The coordinator lives on the entry rather than in hass.data: typed, tied
+# to the entry's lifetime, and gone when it unloads without anyone having to
+# remember to pop it.
+JlrConfigEntry = ConfigEntry[JlrCoordinator]
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+
+async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     """Set up JLR InControl from a config entry."""
     coordinator = JlrCoordinator(hass, entry)
     # Housekeeping first (token, device registration, vehicle list), then the
@@ -25,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # clear these, so they would sit in Repairs forever.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    entry.runtime_data = coordinator
     _async_drop_removed_platforms(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -37,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 REMOVED_PLATFORMS = ("lock", "climate")
 
 
-def _async_drop_removed_platforms(hass: HomeAssistant, entry: ConfigEntry) -> None:
+def _async_drop_removed_platforms(hass: HomeAssistant, entry: JlrConfigEntry) -> None:
     """Delete entities belonging to platforms this version no longer has."""
     registry = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
@@ -46,7 +51,7 @@ def _async_drop_removed_platforms(hass: HomeAssistant, entry: ConfigEntry) -> No
 
 
 async def async_remove_config_entry_device(
-    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+    hass: HomeAssistant, entry: JlrConfigEntry, device: dr.DeviceEntry
 ) -> bool:
     """Allow deleting the device for a vehicle the account no longer has.
 
@@ -56,8 +61,8 @@ async def async_remove_config_entry_device(
     genuinely does not list the vehicle — a failed listing must not be taken as
     evidence that someone's car is gone.
     """
-    coordinator: JlrCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinator is None or not coordinator.last_update_success:
+    coordinator = entry.runtime_data
+    if not coordinator.last_update_success:
         return False
     known = set(coordinator.data.get("vehicles", {}))
     return not any(
@@ -67,7 +72,7 @@ async def async_remove_config_entry_device(
     )
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None:
     """Take this entry's repair with it when the entry is deleted.
 
     A repair outlives the thing it is about otherwise: the coordinator that
@@ -77,11 +82,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}")
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     """Unload a config entry."""
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
-        coordinator: JlrCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        coordinator = entry.runtime_data
         await coordinator.telemetry.async_stop()
         await coordinator.portal.async_close()
     return unloaded

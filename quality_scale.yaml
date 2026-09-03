@@ -1,0 +1,120 @@
+# An honest assessment against Home Assistant's integration quality scale.
+#
+# This is a custom integration, so nothing here is enforced by hassfest. It is
+# kept because writing down what is not done is the only way the list stops
+# growing quietly — every "todo" below was found by someone reading the code,
+# not by a check.
+#
+# Rule names are taken from script/hassfest/quality_scale.py in home-assistant
+# /core, not invented.
+
+rules:
+  # ------------------------------------------------------------------ bronze
+  action-setup:
+    status: exempt
+    comment: >-
+      No actions are registered. Remote commands were removed when Jaguar Land
+      Rover put device attestation over the endpoints that performed them.
+  appropriate-polling: done
+  brands:
+    status: exempt
+    comment: A custom integration cannot be in the home-assistant/brands repo.
+  common-modules: done
+  config-flow: done
+  config-flow-test-coverage:
+    status: todo
+    comment: >-
+      The flow needs Home Assistant to test, and the suite currently covers
+      only the modules that do not import it.
+  dependency-transparency:
+    status: done
+    comment: No third-party requirements at all; only what Home Assistant ships.
+  docs-actions:
+    status: exempt
+    comment: No actions.
+  docs-conditions:
+    status: exempt
+    comment: No conditions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: todo
+  docs-triggers:
+    status: exempt
+    comment: No triggers.
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry: done
+
+  # ------------------------------------------------------------------ silver
+  action-exceptions:
+    status: exempt
+    comment: No actions.
+  config-entry-unloading: done
+  docs-configuration-parameters: todo
+  docs-installation-parameters: done
+  entity-unavailable:
+    status: done
+    comment: >-
+      Availability follows the source each entity actually reads from, rather
+      than every entity depending on the telemetry socket.
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates:
+    status: todo
+    comment: >-
+      No platform sets PARALLEL_UPDATES. Everything here is push or read-only,
+      so it is very likely harmless, but "likely harmless" is not the same as
+      having decided.
+  reauthentication-flow: done
+  test-coverage:
+    status: todo
+    comment: >-
+      72 tests cover the API, auth, portal, telemetry and redaction modules.
+      The coordinator, config flow and entities are not covered.
+
+  # -------------------------------------------------------------------- gold
+  devices: done
+  diagnostics: done
+  discovery:
+    status: exempt
+    comment: A cloud account; there is nothing on the network to discover.
+  discovery-update-info:
+    status: exempt
+    comment: As above.
+  docs-data-update: todo
+  docs-examples: todo
+  docs-known-limitations: done
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: todo
+  docs-use-cases: todo
+  dynamic-devices: done
+  entity-category: todo
+  entity-device-class: done
+  entity-disabled-by-default: todo
+  entity-translations: done
+  exception-translations: todo
+  icon-translations:
+    status: todo
+    comment: No icons.json; icons are set per entity description.
+  reconfiguration-flow: done
+  repair-issues:
+    status: done
+    comment: Scoped per config entry and removed with it.
+  stale-devices: done
+
+  # ---------------------------------------------------------------- platinum
+  async-dependency:
+    status: done
+    comment: Fully async; aiohttp throughout, no blocking client.
+  inject-websession:
+    status: todo
+    comment: >-
+      The API and telemetry clients take Home Assistant's shared session. The
+      portal client deliberately does not: it needs an isolated cookie jar, so
+      the sign-in session cannot leak into or be clobbered by other traffic.
+  strict-typing: todo

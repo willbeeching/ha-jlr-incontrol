@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Only GitHub Actions: the integration has no third-party Python
+  # requirements, and its Home Assistant floor is a deliberate decision rather
+  # than something to bump automatically.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
