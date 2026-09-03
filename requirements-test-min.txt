@@ -3,7 +3,7 @@
 # imported against it. 0.13.269 is the newest release pinning 2025.8.0; the
 # CI lane asserts that, so this and MIN_HA_VERSION cannot drift apart
 # silently.
-pytest-homeassistant-custom-component==0.13.269
+pytest-homeassistant-custom-component==0.13.361
 pytest-cov
 # aiodns 3.5 reads a pycares 5 API that does not exist, and a core of this
 # vintage floats both. Same hold as the minimum-core import lane.
