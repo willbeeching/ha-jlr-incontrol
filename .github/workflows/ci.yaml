@@ -45,8 +45,22 @@ jobs:
         run: flake8 custom_components/ tests/
 
   test:
-    name: Tests
+    name: Tests on Home Assistant ${{ matrix.label }}
     runs-on: ubuntu-latest
+    strategy:
+      # Both lanes always report. Knowing a failure is specific to the old
+      # core is most of the diagnosis, and cancelling the other lane throws
+      # that away.
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest core the integration claims to support. Importing
+          # against it proved only that nothing had moved module; this runs
+          # the behaviour, which is where a changed helper signature shows up.
+          - label: "2025.8 (minimum)"
+            requirements: requirements-test-min.txt
+          - label: latest
+            requirements: requirements-test.txt
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -59,7 +73,22 @@ jobs:
       # the run dies during collection. Tests that need a core skip
       # themselves when it is missing, so a lane without one passes while
       # silently running none of them.
-      - run: pip install -r requirements-test.txt
+      - run: pip install -r ${{ matrix.requirements }}
+      - name: Check the pinned harness still matches the declared minimum
+        if: matrix.requirements == 'requirements-test-min.txt'
+        run: |
+          python - <<'CHECK'
+          from homeassistant.const import __version__ as core
+          import os, sys
+          want = os.environ["MIN_HA_VERSION"]
+          if core != want:
+              sys.exit(
+                  f"manifest and CI claim {want} is the minimum, but the pinned "
+                  f"test harness installs {core}. Bump the pin in "
+                  "requirements-test-min.txt, or MIN_HA_VERSION."
+              )
+          print(f"minimum lane is running core {core}")
+          CHECK
       # A floor rather than a target. Home Assistant's quality scale asks
       # for 95%; this is where the suite actually is, set so that coverage
       # can only go up from here. Measured by path, not by module name:
