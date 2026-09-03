@@ -602,8 +602,11 @@ class JlrChargeNowSettingSensor(JlrVehicleEntity, SensorEntity):
 
     A read-only view of the tri-state override, replacing the old binary
     switch that couldn't tell DEFAULT (no override) from FORCE_OFF (charge
-    actively suppressed) — both looked like "off" (#6). Drive it with the
-    Force charge on / Force charge off buttons.
+    actively suppressed) — both looked like "off" (#6).
+
+    Read-only in the strict sense: the buttons that used to set it were remote
+    commands and are gone. What it is for now is telling an automation why a
+    plugged-in car is not charging, which "off" never could.
     """
 
     _attr_translation_key = "charge_now_setting"

@@ -31,11 +31,11 @@ list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 > **Cache lag on lock & alarm.** `DOOR_IS_ALL_DOORS_LOCKED` and `THEFT_ALARM_STATUS` only
 > refresh in JLR's cache on a full vehicle wake, so after locking/arming with the key fob they
 > can report the old state for hours until the car next wakes on its own. A plain re-poll
-> (Refresh) reads the same stale cache; the **VHS** command ("Update from vehicle") wakes the
-> car and pushes fresh values. This is a JLR-side limitation, not a mapping bug — confirmed on
-> an L405 and an L460. Don't paper over it by waking the car on a timer: repeatedly waking a
-> JLR vehicle drains its 12V battery (the InControl app warns about this) and hammers JLR's
-> servers, which risks the whole webview access being blocked.
+> (Refresh) reads the same stale cache. Waking the car took the **VHS** remote command, which
+> JLR now gate behind the app's device attestation, so there is no way to force fresh values
+> from here at all. This is a JLR-side limitation, not a mapping bug — confirmed on an L405 and
+> an L460. Read both keys as "last known" and lean on `LAST_UPDATED_TIME` to say how old that
+> is.
 - **Tyres / fluids (alert feed)**: `TYRE_PRESSURE_{FL,FR,RL,RR}`, `BRAKE_FLUID_STATUS`,
   `BRAKE_PAD_WEAR`, `COOLANT_LEVEL`, `WASHER_FLUID_LEVEL`, `OIL_LEVEL`, `ENGINE_MALFUNCTION`.
 - **Service / DEF**: `EXT_KILOMETERS_TO_SERVICE`, `EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM`,

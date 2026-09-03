@@ -39,7 +39,8 @@ body:
         - Setup / login
         - Sensors / binary sensors
         - Device tracker / location
-        - Remote command (lock / climate / honk & flash)
+        - Refresh button / data freshness
+        - Vehicle names, or a car missing entirely
         - Other
     validations:
       required: false

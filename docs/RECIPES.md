@@ -14,11 +14,15 @@ data varies between generations.
 
 ## A note on politeness
 
-Several recipes below avoid calling **Update from vehicle** (VHS) on a timer. VHS wakes the car,
-and repeatedly waking a parked JLR drains its 12V battery — the official app warns about this
-too. It also puts avoidable load on JLR's servers, which this integration reaches through an
-unofficial API. Prefer event-driven refreshes (a state change, arriving home, opening a
-dashboard) over polling, and count down locally rather than re-asking the car.
+This integration is read-only and mostly push-driven: vehicle data arrives over a telemetry
+socket rather than being asked for. **Refresh** is the one button, and it re-reads what JLR
+already hold rather than waking the car — there is no longer any way to wake a vehicle from
+Home Assistant, because that took a remote command and JLR now gate those behind the app's
+device attestation.
+
+That does not make polling free. Every refresh is a request to JLR's servers, reached through
+an unofficial API that they can withdraw. Prefer event-driven refreshes (a state change,
+arriving home, opening a dashboard) over a timer, and count down locally rather than re-asking.
 
 ## Preconditioning countdown
 
@@ -205,15 +209,19 @@ contain valid states.
 The sensor is available only when the integration reports a valid preconditioning state and the end-time helper contains
 a valid date and time. You can now use this sensor to display a countdown while preconditioning is active.
 
-## Fresh lock & alarm state on arrival
+## Stale lock & alarm state
 
 **Problem:** `DOOR_IS_ALL_DOORS_LOCKED` and `THEFT_ALARM_STATUS` only refresh in JLR's cache when
-the car next wakes, so after locking with the key fob they can read stale for hours. **Refresh**
-re-reads the same stale cache; only **Update from vehicle** (VHS) wakes the car.
+the car next wakes on its own, so after locking with the key fob they can read stale for hours.
+**Refresh** re-reads that same cache and will not change the answer.
 
-**Approach:** trigger the **Update from vehicle** button from an event rather than a timer — for
-example when you arrive home (a `zone` trigger), or when you open the dashboard you check the car
-on. You get an accurate state exactly when you'd look at it, without waking the car all day.
+**There is no fix from here.** Waking the car took the VHS remote command, and JLR now require
+the app's device attestation on that path, so it is not available to this integration at any
+price. The official app can still do it.
+
+**What you can do:** treat both entities as "last known", not "now". If an automation must not
+act on a stale lock state, gate it on the vehicle's **Last updated** sensor — a value older than
+an hour or two is telling you the car has not reported since, not that nothing has changed.
 
 _Recipe wanted._ See [issue #5](https://github.com/willbeeching/ha-jlr-incontrol/issues/5) for
 the background.
