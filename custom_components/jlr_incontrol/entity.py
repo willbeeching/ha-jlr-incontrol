@@ -19,7 +19,7 @@ def async_add_vehicle_entities(
     entry: ConfigEntry,
     coordinator: JlrCoordinator,
     async_add_entities: Callable[[Sequence[Entity]], None],
-    build: Callable[[str], list[Entity]],
+    build: Callable[[str], Sequence[Entity]],
 ) -> None:
     """Create entities per vehicle, now and whenever a new one turns up.
 
@@ -27,6 +27,9 @@ def async_add_vehicle_entities(
     afterwards was picked up by housekeeping and subscribed to telemetry, and
     its data then arrived for entities that had never been created — so it
     stayed invisible until the user reloaded the integration.
+
+    Sequence rather than list in the callback's return: list is invariant, so
+    a platform returning its own entity type would not satisfy list[Entity].
 
     A vehicle counts as done only once it has actually produced entities. That
     matters because most of them are gated on the status keys a given model
