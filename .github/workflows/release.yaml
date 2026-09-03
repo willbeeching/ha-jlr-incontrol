@@ -80,11 +80,21 @@ jobs:
           echo "CHANGELOG<<GHEOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "GHEOF" >> $GITHUB_OUTPUT
-          # Anything a commit body marked BREAKING: is something a user has to
+          # Anything a commit body marked BREAKING is something a user has to
           # act on. Buried in a commit nobody reads it; it belongs at the top of
           # the release notes.
-          BREAKING=$(git log $RANGE --pretty=format:"%b" --no-merges \
-            | sed -n 's/^BREAKING: *//p')
+          #
+          # The whole paragraph, not just the marker line. sed -n p printed one
+          # line, so a wrapped sentence reached the notes truncated mid-clause
+          # under a warning heading — which is worse than not surfacing it at
+          # all. A comma is accepted alongside the colon: the slip is easy to
+          # make and the intent is identical, and the one time it happened the
+          # real breaking change silently missed the section it was written for.
+          BREAKING=$(git log $RANGE --pretty=format:"%b%n" --no-merges | awk '
+            /^BREAKING[:,] */ { sub(/^BREAKING[:,] */, ""); grab = 1; print; next }
+            grab && NF        { print; next }
+            grab && !NF       { grab = 0; print "" }
+          ')
           echo "BREAKING<<GHEOF" >> $GITHUB_OUTPUT
           echo "$BREAKING" >> $GITHUB_OUTPUT
           echo "GHEOF" >> $GITHUB_OUTPUT
