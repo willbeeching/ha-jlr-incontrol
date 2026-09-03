@@ -72,7 +72,6 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
     _requires_telemetry = False
 
     _attr_translation_key = "refresh"
-    _attr_icon = "mdi:refresh"
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)

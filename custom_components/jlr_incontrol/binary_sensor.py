@@ -102,7 +102,6 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         key="alarm",
         translation_key="alarm",
         status_key="THEFT_ALARM_STATUS",
-        icon="mdi:shield-car",
         is_on=lambda v: v == "ALARM_ARMED",
     ),
     # The app's own enum has three going-off variants.

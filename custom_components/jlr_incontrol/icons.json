@@ -1,0 +1,66 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "alarm": {
+        "default": "mdi:shield-car"
+      }
+    },
+    "button": {
+      "refresh": {
+        "default": "mdi:refresh"
+      }
+    },
+    "device_tracker": {
+      "location": {
+        "default": "mdi:car"
+      }
+    },
+    "sensor": {
+      "adblue_range": {
+        "default": "mdi:water-opacity"
+      },
+      "alarm_state": {
+        "default": "mdi:shield-car"
+      },
+      "all_info": {
+        "default": "mdi:database"
+      },
+      "battery_soc_12v": {
+        "default": "mdi:car-battery"
+      },
+      "charge_now_setting": {
+        "default": "mdi:ev-station"
+      },
+      "distance_to_service": {
+        "default": "mdi:wrench-clock"
+      },
+      "ev_charging_status": {
+        "default": "mdi:ev-station"
+      },
+      "ev_precondition_remaining": {
+        "default": "mdi:timer-sand"
+      },
+      "ev_range": {
+        "default": "mdi:map-marker-distance"
+      },
+      "ev_range_combined": {
+        "default": "mdi:map-marker-distance"
+      },
+      "ev_time_to_full": {
+        "default": "mdi:timer-sand"
+      },
+      "evcc_status": {
+        "default": "mdi:ev-plug-type2"
+      },
+      "fuel_level": {
+        "default": "mdi:fuel"
+      },
+      "last_updated": {
+        "default": "mdi:update"
+      },
+      "odometer": {
+        "default": "mdi:counter"
+      }
+    }
+  }
+}

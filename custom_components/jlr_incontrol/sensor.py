@@ -5,6 +5,8 @@ Values come from the flattened vehicle status dict (see coordinator data shape).
 
 from __future__ import annotations
 
+import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -100,11 +102,61 @@ class JlrSensorDescription(SensorEntityDescription):
     requires_ev: bool = False
 
 
+_LOGGER = logging.getLogger(__name__)
+
+
 def _alarm_state(value: str) -> str:
-    """Humanise the THEFT_ALARM_STATUS enum (ALARM_NOT_SET__DOOR_OPEN etc.)."""
+    """Humanise the THEFT_ALARM_STATUS enum (ALARM_NOT_SET__DOOR_OPEN etc.).
+
+    Deliberately not a translated ENUM sensor, unlike ev_charging_status
+    below. An ENUM has to declare every option it will ever report, and a
+    value outside that list becomes an error and an unavailable entity for
+    whoever's car produced it. JLR's alarm enum is demonstrably open-ended —
+    ALARM_NOT_SET__DOOR_OPEN is one of a family whose other members nobody
+    here has seen — so declaring it closed would break exactly the owners
+    whose cars report something new.
+
+    The two states worth automating on are already proper binary sensors
+    (armed, and triggered), which is where the closed-world assumption is
+    safe. This one is the readable detail next to them.
+    """
     return (
         str(value).removeprefix("ALARM_").replace("__", "_").replace("_", " ").title()
     )
+
+
+# EV_CHARGING_STATUS, as documented in docs/DATA_MODEL.md and confirmed live.
+# Unlike the alarm enum this one is closed, so it can be a translated ENUM.
+# "No Message" is what the key falls to after unplugging.
+_CHARGING_STATES = {
+    "CHARGING": "charging",
+    "BULKCHARGED": "bulk_charged",
+    "FULLYCHARGED": "fully_charged",
+    "WAITINGTOCHARGE": "waiting_to_charge",
+    "INITIALIZATION": "initialization",
+    "PAUSED": "paused",
+    "NOTCONNECTED": "not_connected",
+    "FAULT": "fault",
+    "NOMESSAGE": "no_message",
+}
+
+
+def _charging_status(value: str) -> str | None:
+    """Map the raw charging enum to a translated option.
+
+    Returning None rather than the raw string for anything unrecognised: an
+    ENUM sensor whose value is not in its options logs an error on every
+    update. The unknown value is logged once so it can be added here.
+    """
+    raw = re.sub(r"[^A-Z]", "", str(value).upper())
+    slug = _CHARGING_STATES.get(raw)
+    if slug is None and raw:
+        _LOGGER.warning(
+            "unrecognised EV_CHARGING_STATUS %r — please report it so the "
+            "charging status sensor can show it",
+            value,
+        )
+    return slug
 
 
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
@@ -113,7 +165,9 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         translation_key="alarm_state",
         status_key="THEFT_ALARM_STATUS",
         value_fn=_alarm_state,
-        icon="mdi:shield-car",
+        # Detail, not a primary control surface: armed and triggered are
+        # binary sensors, and this is the wording underneath them.
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrSensorDescription(
         key="fuel_level",
@@ -122,7 +176,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:fuel",
         suppress_for_ev=True,
     ),
     JlrSensorDescription(
@@ -145,7 +198,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
-        icon="mdi:counter",
         attr_fn=_odometer_attrs,
     ),
     JlrSensorDescription(
@@ -157,7 +209,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
-        icon="mdi:water-opacity",
     ),
     JlrSensorDescription(
         key="distance_to_service",
@@ -168,7 +219,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
-        icon="mdi:wrench-clock",
     ),
     JlrSensorDescription(
         key="battery_voltage",
@@ -178,6 +228,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrSensorDescription(
         key="battery_soc_12v",
@@ -190,7 +241,11 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         # 12V health is better read from battery_voltage. Fuel % is a separate sensor.
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:car-battery",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # Off by default for the same reason it has no device class: it reads
+        # 0 whenever the car is asleep, so left on it writes a sawtooth into
+        # the recorder that means nothing. battery_voltage is the real signal.
+        entity_registry_enabled_default=False,
     ),
     JlrSensorDescription(
         key="engine_coolant_temp",
@@ -283,7 +338,6 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
-        icon="mdi:map-marker-distance",
         requires_ev=True,
     ),
     JlrSensorDescription(
@@ -295,7 +349,6 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
-        icon="mdi:map-marker-distance",
         value_fn=_combined_range,
         suppress_for_ev=True,
         requires_ev=True,
@@ -308,15 +361,15 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:timer-sand",
         requires_ev=True,
     ),
     JlrSensorDescription(
         key="ev_charging_status",
         translation_key="ev_charging_status",
         status_key="EV_CHARGING_STATUS",
-        value_fn=lambda v: str(v).replace("_", " ").title(),
-        icon="mdi:ev-station",
+        value_fn=_charging_status,
+        device_class=SensorDeviceClass.ENUM,
+        options=sorted(set(_CHARGING_STATES.values())),
         requires_ev=True,
     ),
     # EV preconditioning countdown. The ICE CLIMATE_STATUS_REMAINING_RUNTIME
@@ -330,7 +383,6 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:timer-sand",
         requires_ev=True,
     ),
 )
@@ -519,7 +571,6 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
 
     _attr_translation_key = "last_updated"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_icon = "mdi:update"
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
@@ -551,7 +602,6 @@ class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     _attr_translation_key = "all_info"
-    _attr_icon = "mdi:database"
     _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
@@ -578,7 +628,10 @@ class JlrEvccStatusSensor(JlrVehicleEntity, SensorEntity):
     _attr_translation_key = "evcc_status"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = ["A", "B", "C"]
-    _attr_icon = "mdi:ev-plug-type2"
+    # Exists for wallbox controllers to read, not for a dashboard. Anyone
+    # wiring up surplus charging can switch it on; everyone else should not
+    # be paying recorder space for an IEC 61851 connector letter.
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)
@@ -612,7 +665,9 @@ class JlrChargeNowSettingSensor(JlrVehicleEntity, SensorEntity):
     _attr_translation_key = "charge_now_setting"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = ["DEFAULT", "FORCE_ON", "FORCE_OFF"]
-    _attr_icon = "mdi:ev-station"
+    # Niche: it answers "why is this plugged-in car not charging", which
+    # matters when it matters and is noise the rest of the time.
+    _attr_entity_registry_enabled_default = False
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)

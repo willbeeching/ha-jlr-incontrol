@@ -41,7 +41,6 @@ class JlrDeviceTracker(JlrVehicleEntity, TrackerEntity):
     _requires_telemetry = False
 
     _attr_translation_key = "location"
-    _attr_icon = "mdi:car"
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
         super().__init__(coordinator, vin)

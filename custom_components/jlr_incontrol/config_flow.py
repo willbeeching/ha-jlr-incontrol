@@ -16,6 +16,11 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .api import JlrClient, JlrConnectionError
 from .auth import JlrInvalidCode, JlrLogin, JlrLoginError, JlrSessionExpired
@@ -51,28 +56,44 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
 
 STEP_CODE_SCHEMA = vol.Schema({vol.Required("code"): str})
 
+
+def _unit_selector(translation_key: str, values: list[str]) -> SelectSelector:
+    """A dropdown whose labels come from strings.json, not from here.
+
+    vol.In with English labels baked in was untranslatable: "Miles" and "Use
+    Home Assistant default" reached every user in every language exactly as
+    written. The stored values are unchanged, so existing entries keep their
+    setting.
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=values,
+            translation_key=translation_key,
+            mode=SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
 OPTIONS_SCHEMA = vol.Schema(
     {
         vol.Optional(
             OPT_DISTANCE_UNIT,
             default=DISTANCE_UNIT_DEFAULT,
-        ): vol.In(
-            {
-                DISTANCE_UNIT_DEFAULT: "Use Home Assistant default",
-                DISTANCE_UNIT_MILES: "Miles",
-                DISTANCE_UNIT_KM: "Kilometres",
-            }
+        ): _unit_selector(
+            "distance_unit",
+            [DISTANCE_UNIT_DEFAULT, DISTANCE_UNIT_MILES, DISTANCE_UNIT_KM],
         ),
         vol.Optional(
             OPT_PRESSURE_UNIT,
             default=PRESSURE_UNIT_DEFAULT,
-        ): vol.In(
-            {
-                PRESSURE_UNIT_DEFAULT: "Use Home Assistant default",
-                PRESSURE_UNIT_KPA: "kPa",
-                PRESSURE_UNIT_BAR: "bar",
-                PRESSURE_UNIT_PSI: "psi",
-            }
+        ): _unit_selector(
+            "pressure_unit",
+            [
+                PRESSURE_UNIT_DEFAULT,
+                PRESSURE_UNIT_KPA,
+                PRESSURE_UNIT_BAR,
+                PRESSURE_UNIT_PSI,
+            ],
         ),
     }
 )

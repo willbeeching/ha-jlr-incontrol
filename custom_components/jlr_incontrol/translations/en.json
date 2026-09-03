@@ -9,13 +9,6 @@
           "password": "Password"
         }
       },
-      "init": {
-        "title": "Jaguar Land Rover InControl options",
-        "data": {
-          "distance_unit": "Distance unit",
-          "pressure_unit": "Pressure unit"
-        }
-      },
       "code": {
         "title": "Enter your verification code",
         "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.\n\nThe code expires quickly, so enter it as soon as it arrives — if the sign-in session times out you'll be asked for your password again.",
@@ -51,6 +44,34 @@
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
       "reauth_successful": "Signed in again successfully.",
       "unknown_entry": "That integration entry no longer exists."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Jaguar Land Rover InControl options",
+        "data": {
+          "distance_unit": "Distance unit",
+          "pressure_unit": "Pressure unit"
+        }
+      }
+    }
+  },
+  "selector": {
+    "distance_unit": {
+      "options": {
+        "default": "Use Home Assistant default",
+        "miles": "Miles",
+        "km": "Kilometres"
+      }
+    },
+    "pressure_unit": {
+      "options": {
+        "default": "Use Home Assistant default",
+        "kpa": "kPa",
+        "bar": "bar",
+        "psi": "psi"
+      }
     }
   },
   "entity": {
@@ -104,7 +125,18 @@
         "name": "Time to full charge"
       },
       "ev_charging_status": {
-        "name": "Charging status"
+        "name": "Charging status",
+        "state": {
+          "charging": "Charging",
+          "bulk_charged": "Bulk charged",
+          "fully_charged": "Fully charged",
+          "waiting_to_charge": "Waiting to charge",
+          "initialization": "Starting up",
+          "paused": "Paused",
+          "not_connected": "Not connected",
+          "fault": "Fault",
+          "no_message": "No message"
+        }
       },
       "ev_precondition_remaining": {
         "name": "Preconditioning time remaining"
@@ -113,10 +145,20 @@
         "name": "Alarm state"
       },
       "evcc_status": {
-        "name": "EVCC status"
+        "name": "EVCC status",
+        "state": {
+          "A": "A — disconnected",
+          "B": "B — connected, not charging",
+          "C": "C — charging"
+        }
       },
       "charge_now_setting": {
-        "name": "Charge now setting"
+        "name": "Charge now setting",
+        "state": {
+          "DEFAULT": "No override",
+          "FORCE_ON": "Charging forced on",
+          "FORCE_OFF": "Charging forced off"
+        }
       },
       "last_updated": {
         "name": "Last updated"
