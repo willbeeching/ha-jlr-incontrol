@@ -9,6 +9,7 @@ not possibly have helped — while their credentials were perfectly good.
 from __future__ import annotations
 
 import pytest
+from fakes import FakeResponse, FakeSession
 from jlr.api import (
     JlrApiError,
     JlrAuthError,
@@ -16,32 +17,6 @@ from jlr.api import (
     JlrRateLimitError,
     _retry_after,
 )
-
-
-class FakeResponse:
-    def __init__(self, status: int, payload, headers: dict | None = None) -> None:
-        self.status, self._payload = status, payload
-        self.headers = headers or {}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    async def json(self):
-        return self._payload
-
-    async def text(self):
-        return ""
-
-
-class FakeSession:
-    def __init__(self, response: FakeResponse) -> None:
-        self._response = response
-
-    def request(self, *args, **kwargs):
-        return self._response
 
 
 def client_for(status: int, payload, headers: dict | None = None) -> JlrClient:
@@ -55,13 +30,13 @@ class TestExpiredCredentials:
     """Only these mean the user genuinely has to sign in again."""
 
     async def test_invalid_grant_is_an_auth_failure(self) -> None:
+        # RFC 6749: the refresh token is expired, revoked, or already rotated.
         with pytest.raises(JlrAuthError):
             await client_for(400, {"error": "invalid_grant"})._refresh()
 
-    @pytest.mark.parametrize("status", [401, 403])
-    async def test_rejected_credentials_are_an_auth_failure(self, status: int) -> None:
+    async def test_invalid_grant_is_believed_whatever_the_status(self) -> None:
         with pytest.raises(JlrAuthError):
-            await client_for(status, {})._refresh()
+            await client_for(401, {"error": "invalid_grant"})._refresh()
 
     async def test_a_missing_refresh_token_is_an_auth_failure(self) -> None:
         client = client_for(200, {})
@@ -84,6 +59,22 @@ class TestTemporaryFailures:
             await client_for(429, None, {"Retry-After": "120"})._refresh()
         assert not isinstance(raised.value, JlrAuthError)
         assert raised.value.retry_after == 120
+
+    @pytest.mark.parametrize("status", [401, 403])
+    async def test_a_bare_rejection_is_not_proof_of_spent_credentials(
+        self, status: int
+    ) -> None:
+        # 401 without a body is invalid_client — our client id, not the user's
+        # credentials — and JLR return 403 from an edge rule as readily as from
+        # anything about authorisation. Neither is fixed by an emailed code.
+        with pytest.raises(JlrApiError) as raised:
+            await client_for(status, {})._refresh()
+        assert not isinstance(raised.value, JlrAuthError)
+
+    async def test_invalid_client_is_not_the_users_problem(self) -> None:
+        with pytest.raises(JlrApiError) as raised:
+            await client_for(401, {"error": "invalid_client"})._refresh()
+        assert not isinstance(raised.value, JlrAuthError)
 
     async def test_a_400_without_invalid_grant_is_temporary(self) -> None:
         # A malformed request is our bug, not spent credentials — signing in

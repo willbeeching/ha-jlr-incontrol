@@ -531,7 +531,10 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"stale": self._vehicle.get("position_stale", False)}
+        # Of the status, matching native_value. This reported position_stale,
+        # so a car sending telemetry every few minutes from a spot it parked in
+        # three days ago showed a timestamp from moments ago marked stale.
+        return {"stale": self._vehicle.get("status_stale", False)}
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):

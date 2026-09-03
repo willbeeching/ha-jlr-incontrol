@@ -55,7 +55,7 @@ from .const import (
     USER_AGENT,
     VIN_BRANDS,
 )
-from .redact import scrub_text, vehicle_label
+from .redact import scrub, scrub_text, vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -290,12 +290,16 @@ class JlrClient:
             error = ""
             if isinstance(tokens, dict):
                 error = str(tokens.get("error") or "")
-            if error == "invalid_grant" or status in (401, 403):
-                # Genuinely spent: the refresh token is dead or already
-                # rotated, and only a fresh sign-in can replace it.
-                raise JlrAuthError(
-                    f"{what} was refused ({error or status}); sign in again"
-                )
+            if error == "invalid_grant":
+                # The only answer that means what a sign-in would fix. RFC 6749
+                # gives invalid_grant for a refresh token that is expired,
+                # revoked or already rotated. A bare 401 or 403 does not: 401
+                # is invalid_client, which is our client id rather than the
+                # user's credentials, and JLR return 403 from an edge rule as
+                # readily as from anything to do with authorisation. Sending
+                # someone for an emailed code on a status code alone is how
+                # this integration spent a weekend.
+                raise JlrAuthError(f"{what} was refused ({error}); sign in again")
             # Everything else — a 5xx, a gateway hiccup, a malformed reply —
             # says nothing about whether the credentials are still good, and
             # an emailed code would not fix it. Fail temporarily so the caller
@@ -387,7 +391,14 @@ class JlrClient:
         )
         if status != 200:
             raise self._error("vehicle list", status)
-        return (payload or {}).get("vehicles", [])
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("vehicles"), list
+        ):
+            # An empty list is authoritative — the caller acts on it by
+            # forgetting cars — so a reply we cannot read must not be allowed
+            # to look like one.
+            raise JlrApiError("the vehicle list was not in the expected shape")
+        return payload["vehicles"]
 
     def _identity_urls(self, vin: str) -> tuple[tuple[str, str], ...]:
         """Endpoints that might name the vehicle, best first.
@@ -440,7 +451,7 @@ class JlrClient:
             _LOGGER.debug(
                 "%s answered 200 for %s but named nothing; keys=%s",
                 what,
-                vin,
+                vehicle_label(vin),
                 sorted(payload)[:20],
             )
         if last_error:
@@ -545,7 +556,11 @@ class JlrClient:
         if not _LOGGER.isEnabledFor(logging.DEBUG):
             return
         if payload is not None:
-            body = json.dumps(payload)
+            # Scrubbed as a structure, before it becomes a string. Going
+            # via text first left only the VIN-shape rule to catch things,
+            # so an error body carrying a token went out in full — and the
+            # token endpoint is exactly where such a body comes from.
+            body = json.dumps(scrub(payload))
         else:
             try:
                 body = await resp.text()
