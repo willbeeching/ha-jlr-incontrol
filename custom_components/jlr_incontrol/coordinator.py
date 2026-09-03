@@ -15,7 +15,8 @@ from datetime import datetime
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -189,6 +190,32 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass, self._async_keepalive, PORTAL_KEEPALIVE_INTERVAL
             )
         )
+
+    def async_stop_on_hass_shutdown(self) -> None:
+        """Close the socket when Home Assistant stops, not only on unload.
+
+        Home Assistant does not unload config entries when it restarts, so
+        async_unload_entry — the only thing that was stopping the socket — never
+        ran. What happened instead was that core tore down the aiohttp session
+        underneath the read loop, which saw the websocket already gone and
+        logged a dropped connection and a retry, on the way out of a process
+        that was exiting. One spurious warning on every restart, and four in
+        this log to prove it.
+
+        Worse than the noise: the socket was never closed. Vanishing leaves the
+        broker holding a session until it times the connection out on its own,
+        which is not how to treat somebody else's server. Cancelling the
+        supervisor unwinds through the websocket's context manager, which sends
+        a close frame and says goodbye properly.
+        """
+        self.entry.async_on_unload(
+            self.hass.bus.async_listen_once(
+                EVENT_HOMEASSISTANT_STOP, self._async_hass_stopping
+            )
+        )
+
+    async def _async_hass_stopping(self, _event: Event) -> None:
+        await self.async_shutdown()
 
     async def _async_keepalive(self, _now: Any = None) -> None:
         """Touch the owner portal so its session does not idle out.

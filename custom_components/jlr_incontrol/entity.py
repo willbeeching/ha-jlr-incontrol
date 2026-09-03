@@ -26,6 +26,7 @@ def async_add_vehicle_entities(
     coordinator: JlrCoordinator,
     async_add_entities: Callable[[Sequence[Entity]], None],
     build: Callable[[str], Sequence[Entity]],
+    protect: Callable[[str], set[str]] | None = None,
 ) -> None:
     """Create entities per vehicle, now and whenever a new one turns up.
 
@@ -54,7 +55,14 @@ def async_add_vehicle_entities(
             entities = build(vin)
             if entities:
                 built.add(vin)
-                _prune(coordinator, entry, platform, vin, entities)
+                _prune(
+                    coordinator,
+                    entry,
+                    platform,
+                    vin,
+                    entities,
+                    protect(vin) if protect else set(),
+                )
                 fresh.extend(entities)
         if fresh:
             async_add_entities(fresh)
@@ -70,6 +78,7 @@ def _prune(
     platform: Platform,
     vin: str,
     entities: Sequence[Entity],
+    protected: set[str],
 ) -> None:
     """Delete registry entries this vehicle no longer has an entity for.
 
@@ -89,8 +98,19 @@ def _prune(
     documents and the coordinator already replaces its cache wholesale on each
     one, so a partial snapshot is not something these cars send; the removals
     are logged at INFO so that assumption is visible if it ever breaks.
+
+    ``protected`` is the second precondition, and the one that matters for
+    electric cars. Deleting because a status key is absent is acting on an
+    observation. Deleting because this integration *judged* the car not to be
+    electrified is acting on an inference, and while the inference is only ever
+    reached through a key the car did send, it falls back to a heuristic
+    whenever ``fuelType`` is missing — which is currently the normal case,
+    because Approov walls the attributes endpoint. A platform names the ids it
+    declined to build on that basis, and they are kept: an EV that dropped
+    EV_STATE_OF_CHARGE from one snapshot would otherwise lose its charging
+    history permanently, and an unwanted entity on an ICE car is only untidy.
     """
-    keep = {entity.unique_id for entity in entities}
+    keep = {entity.unique_id for entity in entities} | protected
     registry = er.async_get(coordinator.hass)
     prefix = f"{vin}_"
     for registered in er.async_entries_for_config_entry(registry, entry.entry_id):

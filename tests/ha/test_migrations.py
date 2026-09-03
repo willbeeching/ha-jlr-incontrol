@@ -220,3 +220,75 @@ class TestEntitiesTheCarStoppedReporting:
 
         assert survives(hass, silent)
         assert not survives(hass, talkative)
+
+
+class TestTheEvJudgementIsNotEvidenceEnoughToDelete:
+    """Deleting on an observation is fine; deleting on a guess is not.
+
+    Everything else the prune acts on is "the car did not send this key". The
+    EV entities are different: they are additionally gated on is_electrified,
+    which reads fuelType where it can and otherwise looks for
+    EV_STATE_OF_CHARGE. JLR currently walls the attributes endpoint behind
+    Approov, so on a live account fuelType is usually absent and the fallback
+    is all there is. Good enough not to create an entity; nowhere near good
+    enough to delete one and its history.
+    """
+
+    @pytest.fixture
+    def no_fuel_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from doubles import FakeClient
+
+        async def attributes(self: FakeClient, vin: str) -> dict[str, Any]:
+            return {"vehicleBrand": "Jaguar", "nickname": "Test Car"}
+
+        monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+
+    @pytest.mark.parametrize("key", ["ev_battery", "ev_charging_status"])
+    async def test_an_ev_sensor_survives_when_the_fuel_type_is_unknown(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        no_fuel_type: None,
+        key: str,
+    ) -> None:
+        stale = plant(hass, entry, "sensor", key)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert survives(hass, stale)
+
+    async def test_an_ev_binary_sensor_survives_when_the_fuel_type_is_unknown(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        no_fuel_type: None,
+    ) -> None:
+        stale = plant(hass, entry, "binary_sensor", "ev_charging")
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert survives(hass, stale)
+
+    async def test_it_still_goes_once_the_car_says_what_it_burns(
+        self, hass: HomeAssistant, entry: MockConfigEntry, doubles: Doubles
+    ) -> None:
+        # The default fake reports fuelType Diesel, so "not electrified" is an
+        # answer from the car rather than a guess, and deleting is honest.
+        stale = plant(hass, entry, "sensor", "ev_battery")
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert not survives(hass, stale)
+
+    async def test_the_protection_does_not_spare_everything_else(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        no_fuel_type: None,
+    ) -> None:
+        # Only the EV family is held back. AdBlue is judged purely on whether
+        # the key arrived, so an unknown fuel type changes nothing for it.
+        stale = plant(hass, entry, "sensor", "adblue_range")
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert not survives(hass, stale)

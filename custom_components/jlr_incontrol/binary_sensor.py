@@ -201,8 +201,22 @@ async def async_setup_entry(
             and (not description.requires_ev or is_electrified(attributes, status))
         ]
 
+    def protect(vin: str) -> set[str]:
+        """Ids withheld from the prune because the EV judgement is a guess.
+
+        See the sensor platform: is_electrified falls back to a status key
+        whenever fuelType is missing, which is fine for deciding not to create
+        an entity and much too thin for deleting one that already exists.
+        """
+        attributes = (
+            coordinator.data.get("vehicles", {}).get(vin, {}).get("attributes", {})
+        )
+        if attributes.get("fuelType"):
+            return set()
+        return {f"{vin}_{d.key}" for d in VEHICLE_BINARY_SENSORS if d.requires_ev}
+
     async_add_vehicle_entities(
-        entry, Platform.BINARY_SENSOR, coordinator, async_add_entities, build
+        entry, Platform.BINARY_SENSOR, coordinator, async_add_entities, build, protect
     )
 
 

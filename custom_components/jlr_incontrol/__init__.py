@@ -27,6 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     await coordinator.async_start_telemetry()
     coordinator.async_start_keepalive()
+    coordinator.async_stop_on_hass_shutdown()
 
     # Repairs raised before the id was scoped to the entry. Nothing will ever
     # clear these, so they would sit in Repairs forever.

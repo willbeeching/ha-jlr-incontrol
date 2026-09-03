@@ -14,6 +14,7 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 
 from doubles import KEPT, Doubles, FakeClient  # noqa: E402
 from homeassistant.config_entries import ConfigEntryState  # noqa: E402
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import device_registry as dr  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
@@ -133,3 +134,33 @@ class TestUnload:
         assert first.stopped, "the socket from before the reload is still running"
         assert loaded.telemetry is not first
         assert loaded.telemetry.connected
+
+
+class TestHomeAssistantStopping:
+    """A restart is not an unload, and used to leave the socket dangling.
+
+    Core does not unload config entries when it shuts down, so
+    async_unload_entry never ran on a restart. The socket was never closed —
+    core simply tore the aiohttp session down underneath the read loop, which
+    then logged a dropped connection and scheduled a retry on the way out of a
+    process that was exiting. Four of those in one day's log on a live install.
+    """
+
+    async def test_the_socket_is_closed_when_core_stops(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_block_till_done()
+        assert loaded.telemetry.stopped, "the broker was left holding the session"
+        assert loaded.portal.closed
+
+    async def test_unloading_afterwards_is_not_a_second_teardown(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # Both paths can fire in one shutdown; the second must be a no-op
+        # rather than an error on an already-cancelled task.
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+        await hass.async_block_till_done()
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.NOT_LOADED

@@ -89,14 +89,20 @@ backed by a key that never arrives would sit unavailable forever. See
 ## "An entity disappeared after an update"
 
 Entities are matched to the status keys a car actually reports, and that matching has tightened
-over several versions — a diesel-only AdBlue sensor on a petrol car, EV sensors on an ICE car,
-rear doors on a two-door. Anything an older version created that your car does not report is now
-removed rather than left behind permanently greyed out. Each removal is logged, so
-`grep jlr_incontrol` in the log will name what went.
+over several versions — a diesel-only AdBlue sensor on a petrol car, rear doors on a two-door.
+Anything an older version created that your car does not report is now removed rather than left
+behind permanently greyed out.
 
-It only ever happens for a car that has just sent a snapshot. A car that is silent — flat 12V, no
-signal — keeps every entity it has, because "not reporting anything" and "does not have it" are
-not the same thing.
+Two things are never removed. A car that is silent — flat 12V, no signal — keeps every entity it
+has, because "not reporting anything" and "does not have it" are not the same thing; removal only
+happens for a car that has just sent a snapshot. And the EV entities are kept whenever the car has
+not told us its fuel type, which is the usual case while JLR keep the attributes endpoint behind
+app attestation. Deciding a car is not electric from the absence of a battery reading is a good
+enough reason not to create a sensor and nowhere near good enough to delete one, so on those
+accounts an unwanted EV entity on a petrol car stays until the fuel type is known.
+
+Removals are logged at INFO, which most installs do not show. To see them, turn on debug logging
+for the integration *before* the restart that will do the removing.
 
 ## "An entity I want is not there at all"
 

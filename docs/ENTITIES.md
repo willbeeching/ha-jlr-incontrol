@@ -5,7 +5,9 @@ Two cars on the same account will not necessarily have the same entities, and th
 deliberate: an entity backed by a key a car never sends would sit unavailable forever, which
 reads like a fault rather than an absence. The same applies in reverse — an entity an older
 version created for a key your car does not report is deleted the first time the new version
-sees a snapshot from that car, rather than left behind greyed out.
+sees a snapshot from that car, rather than left behind greyed out. The EV entities are the one
+exception: they are kept unless the car has actually reported its fuel type, because that
+judgement otherwise rests on a heuristic and deleting is not undoable.
 
 ## Where the data comes from
 

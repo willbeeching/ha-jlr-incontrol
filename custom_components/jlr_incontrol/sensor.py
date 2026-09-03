@@ -478,8 +478,25 @@ async def async_setup_entry(
             entities.append(JlrChargeNowSettingSensor(coordinator, vin))
         return entities
 
+    def protect(vin: str) -> set[str]:
+        """Ids withheld from the prune because the EV judgement is a guess.
+
+        Every one of these is gated on is_electrified, which reads fuelType
+        when it has it and falls back to looking for EV_STATE_OF_CHARGE when
+        it does not. The fallback is sound for deciding whether to *create*
+        an entity and far too thin for deciding to delete one and its history.
+        """
+        attributes = (
+            coordinator.data.get("vehicles", {}).get(vin, {}).get("attributes", {})
+        )
+        if attributes.get("fuelType"):
+            return set()
+        keys = [d.key for d in EV_SENSORS if d.requires_ev]
+        keys += ["evcc_status", "charge_now_setting"]
+        return {f"{vin}_{key}" for key in keys}
+
     async_add_vehicle_entities(
-        entry, Platform.SENSOR, coordinator, async_add_entities, build
+        entry, Platform.SENSOR, coordinator, async_add_entities, build, protect
     )
 
     ent_reg = er.async_get(hass)

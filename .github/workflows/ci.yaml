@@ -6,6 +6,12 @@ on:
       - master
   pull_request:
   workflow_dispatch:
+  # Two of these lanes float on purpose — hassfest tracks core's master, and
+  # the types lane installs Home Assistant unpinned — so they can start failing
+  # on a day nobody pushed anything. Run nightly as well, or the first person
+  # to find out that a new core broke this integration is whoever installed it.
+  schedule:
+    - cron: "0 3 * * *"
 
 # Nothing here writes to the repository. Actions pinned to commit SHAs rather
 # than tags or branches: a tag can be moved and a branch changes under you, so
