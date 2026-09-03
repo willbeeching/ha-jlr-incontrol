@@ -105,8 +105,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # one of them is still silent.
         self._awaiting: set[str] = set()
         self._snapshots_ready = asyncio.Event()
-        self._setup_done = False
-        self._reloaded_for_straggler = False
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -180,7 +178,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
                 FIRST_SNAPSHOT_TIMEOUT,
             )
-        self._setup_done = True
 
     def async_start_keepalive(self) -> None:
         """Put the portal keep-alive on its own short clock."""
@@ -476,21 +473,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._pushed_at[vin] = sent
         self._note_change(vin)
         if vin in self._awaiting:
+            # A car whose snapshot arrives after setup no longer needs the
+            # integration reloaded to get entities: the platforms watch for
+            # vehicles they have not built yet and pick it up on this update.
             self._awaiting.discard(vin)
-            if self._setup_done:
-                # A straggler that missed platform setup: its entities were
-                # never created, so a reload is the only way to give it any.
-                # Once per load — a car that is reliably slower than the setup
-                # window would otherwise reload the integration forever.
-                if not self._reloaded_for_straggler:
-                    self._reloaded_for_straggler = True
-                    _LOGGER.info(
-                        "late telemetry for %s; reloading so its entities exist",
-                        vehicle_label(vin),
-                    )
-                    self.hass.config_entries.async_schedule_reload(self.entry.entry_id)
-                    return
-            elif not self._awaiting:
+            if not self._awaiting:
                 self._snapshots_ready.set()
         self._push()
 

@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CLIMATE_ACTIVE_STATES, DOMAIN
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity, is_electrified
+from .entity import JlrVehicleEntity, async_add_vehicle_entities, is_electrified
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -178,21 +178,24 @@ async def async_setup_entry(
     Defender without AdBlue doesn't get an AdBlue warning stuck at unknown.
     """
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities = [
-        JlrBinarySensor(coordinator, vin, description)
-        for vin, vehicle in coordinator.data.get("vehicles", {}).items()
-        for description in VEHICLE_BINARY_SENSORS
-        if description.status_key in vehicle.get("status", {})
-        and (
-            description.key not in REAR_DOOR_KEYS
-            or _has_rear_doors(vehicle.get("attributes", {}))
-        )
-        and (
-            not description.requires_ev
-            or is_electrified(vehicle.get("attributes", {}), vehicle.get("status", {}))
-        )
-    ]
-    async_add_entities(entities)
+
+    def build(vin: str) -> list[JlrBinarySensor]:
+        vehicle = coordinator.data.get("vehicles", {}).get(vin, {})
+        status = vehicle.get("status", {})
+        attributes = vehicle.get("attributes", {})
+        if not status:
+            # Every one of these is gated on a status key, so without a
+            # snapshot the answer is "none" rather than "this car has none".
+            return []
+        return [
+            JlrBinarySensor(coordinator, vin, description)
+            for description in VEHICLE_BINARY_SENSORS
+            if description.status_key in status
+            and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
+            and (not description.requires_ev or is_electrified(attributes, status))
+        ]
+
+    async_add_vehicle_entities(entry, coordinator, async_add_entities, build)
 
     # Drop phantom entities created by earlier versions before the 2/3-door
     # and electrified gating existed.

@@ -2,13 +2,55 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
+
+
+def async_add_vehicle_entities(
+    entry: ConfigEntry,
+    coordinator: JlrCoordinator,
+    async_add_entities: Callable[[Sequence[Entity]], None],
+    build: Callable[[str], list[Entity]],
+) -> None:
+    """Create entities per vehicle, now and whenever a new one turns up.
+
+    Platforms used to run exactly once, at setup. A car added to the account
+    afterwards was picked up by housekeeping and subscribed to telemetry, and
+    its data then arrived for entities that had never been created — so it
+    stayed invisible until the user reloaded the integration.
+
+    A vehicle counts as done only once it has actually produced entities. That
+    matters because most of them are gated on the status keys a given model
+    reports, so a car whose first snapshot has not landed yet builds nothing
+    and is simply reconsidered on the next update, rather than being marked
+    done and left with no sensors at all.
+    """
+    built: set[str] = set()
+
+    @callback
+    def _add_missing() -> None:
+        fresh: list[Entity] = []
+        for vin in coordinator.data.get("vehicles", {}):
+            if vin in built:
+                continue
+            entities = build(vin)
+            if entities:
+                built.add(vin)
+                fresh.extend(entities)
+        if fresh:
+            async_add_entities(fresh)
+
+    _add_missing()
+    entry.async_on_unload(coordinator.async_add_listener(_add_missing))
 
 
 def is_electric(attributes: dict[str, Any]) -> bool:

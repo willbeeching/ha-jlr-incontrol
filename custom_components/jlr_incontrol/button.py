@@ -18,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity
+from .entity import JlrVehicleEntity, async_add_vehicle_entities
 
 # Buttons earlier versions created that can no longer do anything.
 REMOVED_BUTTONS = (
@@ -34,9 +34,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up the refresh button and clear out the commands that cannot run."""
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        JlrRefreshButton(coordinator, vin)
-        for vin in coordinator.data.get("vehicles", {})
+    async_add_vehicle_entities(
+        entry,
+        coordinator,
+        async_add_entities,
+        lambda vin: [JlrRefreshButton(coordinator, vin)],
     )
 
     ent_reg = er.async_get(hass)

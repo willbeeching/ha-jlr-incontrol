@@ -43,7 +43,12 @@ from .const import (
     PRESSURE_UNIT_PSI,
 )
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity, is_electric, is_electrified
+from .entity import (
+    JlrVehicleEntity,
+    async_add_vehicle_entities,
+    is_electric,
+    is_electrified,
+)
 
 
 def _to_float(value: Any) -> float | None:
@@ -379,10 +384,18 @@ async def async_setup_entry(
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
     distance_unit = _distance_unit_override(entry)
     pressure_unit = _pressure_unit_override(entry)
-    entities: list[Any] = []
-    for vin, vehicle in coordinator.data.get("vehicles", {}).items():
+
+    def build(vin: str) -> list[Any]:
+        vehicle = coordinator.data.get("vehicles", {}).get(vin, {})
         status = vehicle.get("status", {})
         attributes = vehicle.get("attributes", {})
+        if not status:
+            # No snapshot yet. Most sensors are gated on the status keys this
+            # model reports, so building now would create almost none and mark
+            # the car done; leaving it produces nothing and it is reconsidered
+            # on the next update.
+            return []
+        entities: list[Any] = []
         entities.extend(
             JlrVehicleSensor(
                 coordinator, vin, description, distance_unit, pressure_unit
@@ -396,7 +409,9 @@ async def async_setup_entry(
             entities.append(JlrEvccStatusSensor(coordinator, vin))
         if is_electrified(attributes, status) and "EV_CHARGE_NOW_SETTING" in status:
             entities.append(JlrChargeNowSettingSensor(coordinator, vin))
-    async_add_entities(entities)
+        return entities
+
+    async_add_vehicle_entities(entry, coordinator, async_add_entities, build)
 
     # Drop entities left behind by earlier versions: the last-trip sensor
     # (trips support was removed — the webview edge 504s on the legacy /trips

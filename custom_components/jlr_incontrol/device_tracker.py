@@ -11,7 +11,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity
+from .entity import JlrVehicleEntity, async_add_vehicle_entities
 
 
 async def async_setup_entry(
@@ -19,9 +19,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up JLR device trackers."""
     coordinator: JlrCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(
-        JlrDeviceTracker(coordinator, vin)
-        for vin in coordinator.data.get("vehicles", {})
+    async_add_vehicle_entities(
+        entry,
+        coordinator,
+        async_add_entities,
+        lambda vin: [JlrDeviceTracker(coordinator, vin)],
     )
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
@@ -42,6 +43,28 @@ def _async_drop_removed_platforms(hass: HomeAssistant, entry: ConfigEntry) -> No
     for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
         if entity.domain in REMOVED_PLATFORMS:
             registry.async_remove(entity.entity_id)
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: ConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Allow deleting the device for a vehicle the account no longer has.
+
+    Sold, traded or removed from InControl, a car leaves its device and its
+    entities behind forever otherwise, because nothing else prunes them.
+    Deletion is only permitted once the account has been read successfully and
+    genuinely does not list the vehicle — a failed listing must not be taken as
+    evidence that someone's car is gone.
+    """
+    coordinator: JlrCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is None or not coordinator.last_update_success:
+        return False
+    known = set(coordinator.data.get("vehicles", {}))
+    return not any(
+        identifier[1] in known
+        for identifier in device.identifiers
+        if identifier[0] == DOMAIN
+    )
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
