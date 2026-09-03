@@ -144,7 +144,7 @@ jobs:
           zip -r ../jlr_incontrol.zip jlr_incontrol/
 
       - name: Create release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           target_commitish: ${{ github.sha }}
