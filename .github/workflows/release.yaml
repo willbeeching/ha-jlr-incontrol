@@ -148,34 +148,60 @@ jobs:
             git checkout --quiet --detach "$VERSION"
           fi
 
-      - name: Create ZIP archive
-        run: |
-          cd custom_components
-          zip -r ../jlr_incontrol.zip jlr_incontrol/
-
-      # The asset is for people installing by hand, who are told to extract it
-      # into config/custom_components/ — so the integration directory belongs
-      # at the root of the archive.
+      # Two archives, because the two consumers want opposite shapes and one
+      # file cannot be both. 1.6.1 shipped one file for both and broke every
+      # HACS install.
       #
-      # It is deliberately NOT what HACS installs. Pointing HACS at it via
-      # zip_release broke every install in 1.6.1: HACS runs
-      # extractall(config/custom_components/jlr_incontrol), so an archive
-      # containing jlr_incontrol/ lands at custom_components/jlr_incontrol
-      # /jlr_incontrol/ and Home Assistant reports the integration as not
-      # found. The two consumers want opposite shapes and only one of them
-      # can have this file.
-      - name: Check the asset is usable
+      #   jlr_incontrol.zip       contains jlr_incontrol/... — for people
+      #                           installing by hand, who extract it into
+      #                           config/custom_components/.
+      #   jlr_incontrol-hacs.zip  contains the integration's files at its root
+      #                           — HACS runs extractall() against
+      #                           config/custom_components/jlr_incontrol,
+      #                           so anything wrapping them in a directory
+      #                           lands a level too deep.
+      - name: Create ZIP archives
         run: |
-          if [ ! -s jlr_incontrol.zip ]; then
-            echo "jlr_incontrol.zip is missing or empty" >&2
-            exit 1
-          fi
-          if ! unzip -Z1 jlr_incontrol.zip | grep -qx "jlr_incontrol/manifest.json"; then
-            echo "jlr_incontrol.zip has no jlr_incontrol/manifest.json at its root" >&2
-            unzip -Z1 jlr_incontrol.zip | head -20 >&2
-            exit 1
-          fi
-          echo "jlr_incontrol.zip is present and correctly shaped for a manual install"
+          (cd custom_components && zip -qr ../jlr_incontrol.zip jlr_incontrol/)
+          (cd custom_components/jlr_incontrol && zip -qr ../../jlr_incontrol-hacs.zip .)
+
+      # Extract them the way their consumers actually do and look at where the
+      # files land. The check this replaces listed the archive's entries and
+      # asserted the wrong invariant, so it passed the archive that broke
+      # 1.6.1 — reading the names cannot tell you what a path will become.
+      - name: Extract both archives and check where the files land
+        run: |
+          python3 - <<'CHECK'
+          import pathlib, shutil, sys, zipfile
+
+          def extract(archive, into):
+              root = pathlib.Path("/tmp/relcheck") / archive
+              shutil.rmtree(root, ignore_errors=True)
+              dest = root / into
+              dest.mkdir(parents=True)
+              with zipfile.ZipFile(archive) as z:
+                  z.extractall(dest)
+              return root
+
+          failed = []
+          # HACS: extractall() straight into the integration directory.
+          root = extract("jlr_incontrol-hacs.zip", "custom_components/jlr_incontrol")
+          if not (root / "custom_components/jlr_incontrol/manifest.json").is_file():
+              failed.append("HACS install would leave no manifest.json for Home Assistant to find")
+          if (root / "custom_components/jlr_incontrol/jlr_incontrol").exists():
+              failed.append("HACS install would nest the integration one level too deep")
+
+          # Manual: told to extract into config/custom_components/.
+          root = extract("jlr_incontrol.zip", "custom_components")
+          if not (root / "custom_components/jlr_incontrol/manifest.json").is_file():
+              failed.append("manual install would not produce custom_components/jlr_incontrol")
+
+          for line in failed:
+              print(f"::error::{line}", file=sys.stderr)
+          if failed:
+              sys.exit(1)
+          print("both archives extract to the right place")
+          CHECK
 
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -184,7 +210,9 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: "JLR InControl ${{ steps.get_version.outputs.VERSION }}"
           body_path: release-body.md
-          files: jlr_incontrol.zip
+          files: |
+            jlr_incontrol.zip
+            jlr_incontrol-hacs.zip
           prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
