@@ -153,6 +153,37 @@ jobs:
           cd custom_components
           zip -r ../jlr_incontrol.zip jlr_incontrol/
 
+      # hacs.json sets zip_release, so HACS installs this asset rather than
+      # reading the files from the tag. That makes the asset load-bearing: a
+      # release without it, or carrying one HACS cannot use, does not install
+      # badly — it does not install at all. None of the checks below can fail
+      # on a healthy build, which is the point of running them here rather
+      # than finding out from somebody's broken update.
+      - name: Check the asset is the one HACS has been told to fetch
+        run: |
+          NAME=$(python -c "import json;print(json.load(open('hacs.json'))['filename'])")
+          if [ ! -f "$NAME" ]; then
+            echo "hacs.json asks HACS for $NAME and the build did not produce it" >&2
+            exit 1
+          fi
+          if [ ! -s "$NAME" ]; then
+            echo "$NAME is empty" >&2
+            exit 1
+          fi
+          # HACS unpacks the archive straight into custom_components/, so the
+          # integration directory has to be at the root of it. A zip built one
+          # level up would extract to a path Home Assistant never looks in.
+          # Matched whole-line against the entry names rather than by substring:
+          # the wrong archive contains custom_components/jlr_incontrol/manifest
+          # .json, which a substring test happily accepts — verified by building
+          # one and watching the first version of this check pass it.
+          if ! unzip -Z1 "$NAME" | grep -qx "jlr_incontrol/manifest.json"; then
+            echo "$NAME has no jlr_incontrol/manifest.json at its root" >&2
+            unzip -Z1 "$NAME" | head -20 >&2
+            exit 1
+          fi
+          echo "$NAME is present and correctly shaped ($(du -h "$NAME" | cut -f1))"
+
       - name: Create release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
