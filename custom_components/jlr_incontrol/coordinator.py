@@ -36,6 +36,7 @@ from .const import (
     ATTRIBUTES_TTL,
     CONF_ATTRIBUTES,
     CONF_DEVICE_ID,
+    CONF_LAST_CHANGED,
     CONF_PASSWORD,
     CONF_PORTAL_BASE,
     CONF_PORTAL_COOKIES,
@@ -85,7 +86,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # static while parked, so observing when the data actually changes is
         # the only freshness signal that always works.
         self._last_snapshot: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
-        self._last_changed: dict[str, str] = {}
         # Attributes come from a walled endpoint, so the last known set is
         # persisted in the config entry: losing them would cost every vehicle
         # its name, model and fuel type until JLR lift the wall.
@@ -99,6 +99,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When the broker last pushed for this VIN. Message time, not car time —
         # surfaced in diagnostics only, never used as a freshness signal.
         self._pushed_at: dict[str, str] = {}
+        # Restored, not started empty: this is the only statement the
+        # integration can make about when a car last reported anything, and
+        # rebuilding it from nothing on every reload is what made the
+        # "last updated" sensor fall back to a position fix and jump backwards.
+        self._last_changed: dict[str, str] = dict(
+            entry.data.get(CONF_LAST_CHANGED) or {}
+        )
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
         self._disconnected_since: datetime | None = dt_util.utcnow()
@@ -557,6 +564,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # own vehicle list says the car has gone.
         if (self.entry.data.get(CONF_ATTRIBUTES) or {}) != self._attributes:
             updates[CONF_ATTRIBUTES] = self._attributes
+        if (self.entry.data.get(CONF_LAST_CHANGED) or {}) != self._last_changed:
+            updates[CONF_LAST_CHANGED] = self._last_changed
         if updates:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, **updates}
@@ -629,8 +638,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # fallback — reports a permanently fresh vehicle. These cars send no
             # per-item timestamp at all, which leaves change detection as the
             # only honest signal, and unknown until something moves.
+            #
+            # And deliberately not the position's timestamp either, which used
+            # to be first in this list. A GPS fix is not a report from the car's
+            # body controller, and borrowing it meant this sensor answered a
+            # different question than its name — then jumped backwards whenever
+            # a reload emptied the change tracking and left the fix as the only
+            # input. Seen live: a door reported open since Thursday under a
+            # timestamp that was really the last time the car was located.
             status_ts = self._newest(
-                position.get("timestamp"),
                 status.get("LAST_UPDATED_TIME"),
                 self._last_changed.get(vin),
             )

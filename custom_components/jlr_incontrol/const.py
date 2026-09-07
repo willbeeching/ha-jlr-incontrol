@@ -214,6 +214,10 @@ CONF_REFRESH_TOKEN = "refresh_token"
 # endpoint that serves them is behind the Approov wall: without this a restart
 # would lose every vehicle's name, model and fuel type for good.
 CONF_ATTRIBUTES = "attributes"
+# When each vehicle's reported status last actually differed. Persisted
+# because it is the only honest answer to "when did this car last tell us
+# something", and losing it on a reload sent that sensor backwards.
+CONF_LAST_CHANGED = "last_changed"
 # The ForgeRock session cookies captured at sign-in. The owner web portal has
 # no token-based entry point — it authenticates by handing its own OAuth dance
 # to the AM session in the browser — so reading location means keeping that
