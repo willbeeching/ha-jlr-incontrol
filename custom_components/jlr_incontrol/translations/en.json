@@ -18,7 +18,7 @@
       },
       "reauth_confirm": {
         "title": "Sign in to Jaguar Land Rover again",
-        "description": "The saved sign-in for {email} has expired. Enter your password and JLR will email a new verification code.",
+        "description": "The saved sign-in for {email} has expired, so vehicle location and names can no longer be refreshed. Live vehicle status is unaffected and keeps working throughout. Enter your password and JLR will email a new verification code. Your entities, history and automations are kept.",
         "data": {
           "password": "Password"
         }
@@ -43,7 +43,8 @@
     "abort": {
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
       "reauth_successful": "Signed in again successfully.",
-      "unknown_entry": "That integration entry no longer exists."
+      "unknown_entry": "That integration entry no longer exists.",
+      "reconfigure_successful": "Signed in again successfully."
     }
   },
   "options": {

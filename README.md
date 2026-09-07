@@ -135,7 +135,7 @@ and history are kept.
 
 Everything goes with it: the refresh token, the portal session cookies, the device and user ids
 and the cached vehicle details are all held in that config entry and are deleted with it. All the
-devices and entities it created are removed, and any repair notice it raised is withdrawn. Nothing
+devices and entities it created are removed, and any sign-in prompt it raised is withdrawn. Nothing
 is left behind in Home Assistant, and nothing is stored anywhere else — there is no account to
 close and no server of ours holding anything.
 

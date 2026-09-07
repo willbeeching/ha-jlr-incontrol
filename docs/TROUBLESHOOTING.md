@@ -20,8 +20,8 @@ getting right.
   diagnostics.
 - **Immediately after signing in.** The account may be signed in on another device that has
   invalidated this session. Sign in once more and leave it.
-- **Only location stopped, and there is a repair about the portal.** That is the *other* session —
-  the owner web portal's — not your credentials. Use **⋮ → Reconfigure** on the entry: it signs in
+- **Only location stopped, and you are being asked to sign in again.** That is the *other* session —
+  the owner web portal's — not your credentials. Follow the prompt, or use **⋮ → Reconfigure**: it signs in
   again and keeps every entity id, so your automations and dashboards survive. Deleting and
   re-adding the integration does not.
 

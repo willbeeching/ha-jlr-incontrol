@@ -14,16 +14,13 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 from doubles import KEPT, SOLD, Doubles, FakeClient, FakePortal  # noqa: E402
-from homeassistant.config_entries import ConfigEntryState  # noqa: E402
+from homeassistant.config_entries import (  # noqa: E402
+    SOURCE_REAUTH,
+    ConfigEntryState,
+)
 from homeassistant.core import HomeAssistant  # noqa: E402
-from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
-)
-
-from custom_components.jlr_incontrol.const import (  # noqa: E402
-    DOMAIN,
-    ISSUE_PORTAL_SIGNED_OUT,
 )
 
 
@@ -112,20 +109,18 @@ class TestAnEntryWithNoPortalSession:
         await hass.async_block_till_done()
         assert entry.runtime_data.data["vehicles"]
 
-    async def test_a_repair_says_how_to_fix_it(
+    async def test_it_asks_for_a_sign_in_rather_than_retrying(
         self,
         hass: HomeAssistant,
         entry: MockConfigEntry,
         unconfigured: None,
         doubles: Doubles,
     ) -> None:
-        # A repair rather than a back-off: there is nothing to retry, and only
-        # Reconfigure can put it right — which keeps every entity id.
+        # There is nothing to retry: only an interactive sign-in can put this
+        # right, and doing it this way keeps every entity id.
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-        assert ir.async_get(hass).async_get_issue(
-            DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}"
-        )
+        assert list(entry.async_get_active_flows(hass, {SOURCE_REAUTH}))
 
     async def test_the_location_is_never_asked_for(
         self,

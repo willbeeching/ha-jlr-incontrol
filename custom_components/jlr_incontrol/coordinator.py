@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
@@ -450,28 +450,38 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return f"{ISSUE_PORTAL_SIGNED_OUT}_{self.entry.entry_id}"
 
     def _async_raise_signed_out_issue(self) -> None:
-        """Tell the user once, in the place Home Assistant puts such things.
+        """Ask for the sign-in the only way that can actually collect one.
 
-        Once per load, not once per retry. Dismissing a repair is the user
-        saying they have read it; re-raising it every six hours over a problem
-        they cannot currently fix is nagging, not informing.
+        This used to raise a repair with is_fixable=False, which is a notice
+        rather than a prompt: it described the steps and left the user to go
+        and perform them, and the only button on it dismissed the message. A
+        reauth flow is what every other integration uses for exactly this, and
+        it is the thing Home Assistant will put in front of someone and then
+        walk them through.
+
+        Once per load, not once per retry. Home Assistant already refuses to
+        stack a second reauth flow on an entry that has one, so this flag is
+        about not re-prompting somebody who dismissed the last one over a
+        problem they may not be able to fix right now.
         """
         if self._signed_out_issue_raised:
             return
         self._signed_out_issue_raised = True
-        ir.async_create_issue(
-            self.hass,
-            DOMAIN,
-            self.issue_id,
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=ISSUE_PORTAL_SIGNED_OUT,
-        )
+        self.entry.async_start_reauth(self.hass)
 
     def _async_clear_signed_out_issue(self) -> None:
-        """Withdraw the sign-in repair once the portal answers again."""
+        """Withdraw the request once the portal answers again.
+
+        The repair is deleted for the sake of anyone upgrading with the old
+        is_fixable=False notice still sitting in their Repairs list; nothing
+        raises it any more.
+        """
         self._signed_out_issue_raised = False
         ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
+        for flow in self.entry.async_get_active_flows(self.hass, {SOURCE_REAUTH}):
+            # A session that came back on its own leaves a sign-in prompt that
+            # would now do nothing but cost somebody an emailed code.
+            self.hass.config_entries.flow.async_abort(flow["flow_id"])
 
     def _store_portal_session(
         self, base: str, cookies: dict[str, str], minted: str

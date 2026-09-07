@@ -16,16 +16,14 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 from doubles import Doubles  # noqa: E402
+from homeassistant.config_entries import SOURCE_REAUTH  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
-from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
     async_fire_time_changed,
 )
 
 from custom_components.jlr_incontrol.const import (  # noqa: E402
-    DOMAIN,
-    ISSUE_PORTAL_SIGNED_OUT,
     PORTAL_KEEPALIVE_INTERVAL,
 )
 from custom_components.jlr_incontrol.portal import (  # noqa: E402
@@ -63,15 +61,13 @@ class TestTheTouch:
 
 
 class TestWhenTheTouchFails:
-    async def test_a_refused_session_raises_the_repair_immediately(
+    async def test_a_refused_session_asks_for_a_sign_in_immediately(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, freezer
     ) -> None:
         # Rather than waiting for the next half-hourly read to notice.
         loaded.portal.error = JlrPortalAuthError("the portal signed us out")
         await tick(hass, freezer)
-        assert ir.async_get(hass).async_get_issue(
-            DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}"
-        )
+        assert list(entry.async_get_active_flows(hass, {SOURCE_REAUTH}))
 
     async def test_it_stops_touching_once_the_session_is_gone(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, freezer
@@ -88,9 +84,7 @@ class TestWhenTheTouchFails:
     ) -> None:
         loaded.portal.error = JlrPortalError("the portal is slow today")
         await tick(hass, freezer)
-        assert not ir.async_get(hass).async_get_issue(
-            DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}"
-        )
+        assert not list(entry.async_get_active_flows(hass, {SOURCE_REAUTH}))
 
     async def test_nothing_a_timer_does_may_escape(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, freezer

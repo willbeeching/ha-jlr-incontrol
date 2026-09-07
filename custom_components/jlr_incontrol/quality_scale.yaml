@@ -118,8 +118,14 @@ rules:
   icon-translations: done
   reconfiguration-flow: done
   repair-issues:
-    status: done
-    comment: Scoped per config entry and removed with it.
+    status: exempt
+    comment: >-
+      The one condition needing a person is an expired owner-portal session,
+      and that is a reauth flow rather than a repair. It was a repair, raised
+      with is_fixable=False, which described the steps and left the user to go
+      and carry them out; its only button dismissed it. A reauth flow is what
+      the rule means by actionable, and what every other integration uses to
+      ask for a sign-in.
   stale-devices: done
 
   # ---------------------------------------------------------------- platinum

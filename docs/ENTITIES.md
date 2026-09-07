@@ -17,7 +17,7 @@ how fresh it can be and what happens when that source is down.
 | Source | What it feeds | How often | If it fails |
 | --- | --- | --- | --- |
 | Telemetry socket (STOMP over websocket) | every sensor and binary sensor below | pushed by the car; a full snapshot on each connection, then updates as the car reports | entities go unavailable after a 30-minute grace, because a value nobody can refresh is not a reading |
-| Owner web portal | `device_tracker`, and the vehicle's real name and registration | location every 30 minutes; names once a day | location holds its last fix and reports `trusted: false`; a repair appears if the session has gone |
+| Owner web portal | `device_tracker`, and the vehicle's real name and registration | location every 30 minutes; names once a day | location holds its last fix and reports `trusted: false`; Home Assistant asks you to sign in again if the session has gone |
 | IF9 REST API | the vehicle list, and the account housekeeping | every 15 minutes | setup retries; nothing already on screen is lost |
 
 The socket reconnects roughly every five minutes by design — the session is bound to an access
@@ -104,7 +104,7 @@ Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "win
 | --- | --- |
 | Socket down under 30 minutes | nothing; reconnects are routine and flapping every entity would be noise |
 | Socket down over 30 minutes | status entities unavailable; location and the refresh button keep working, because they do not come from the socket |
-| Portal session expired | a repair in **Settings → Repairs**; location stops updating and reports `trusted: false`; everything else is unaffected |
+| Portal session expired | Home Assistant prompts you to sign in again, on the integration and in **Settings → Repairs**; location stops updating and reports `trusted: false`; everything else is unaffected |
 | Portal slow or erroring | retried; nothing is reported to you unless it keeps failing |
 | Refresh token spent | Home Assistant asks you to sign in again, with a fresh emailed code |
 | JLR outage or rate limit | retried with a growing backoff; no reauthentication prompt, because an outage says nothing about your credentials |
