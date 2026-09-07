@@ -77,6 +77,30 @@ class TestRaising:
         assert result["step_id"] == "reauth_confirm"
         assert "password" in str(result["data_schema"].schema)
 
+    async def test_it_appears_in_repairs_and_opens_the_sign_in(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        signed_out: None,
+        loaded: Doubles,
+    ) -> None:
+        """The prompt has to be somewhere a person will actually meet it.
+
+        Home Assistant raises its own repair for an active reauth flow and
+        carries the flow id on it, which is what lets the Repairs list open
+        the sign-in dialog rather than describe it. This asserts core's
+        behaviour rather than ours on purpose: it is the reason there is no
+        bespoke repair here any more, and if it ever stopped being true the
+        prompt would quietly go back to being hard to find.
+        """
+        issue = ir.async_get(hass).async_get_issue(
+            "homeassistant", f"config_entry_reauth_{DOMAIN}_{entry.entry_id}"
+        )
+        assert issue is not None
+        assert issue.issue_domain == DOMAIN
+        assert issue.severity is ir.IssueSeverity.ERROR
+        assert issue.data["flow_id"] == prompts(hass, entry)[0]["flow_id"]
+
     async def test_the_rest_of_the_integration_still_loads(
         self,
         hass: HomeAssistant,
@@ -141,6 +165,12 @@ class TestClearing:
         await hass.async_block_till_done()
 
         assert not prompts(hass, entry)
+        assert (
+            ir.async_get(hass).async_get_issue(
+                "homeassistant", f"config_entry_reauth_{DOMAIN}_{entry.entry_id}"
+            )
+            is None
+        ), "aborting the flow must take Home Assistant's repair with it"
 
     async def test_recovery_also_clears_a_repair_left_by_an_older_version(
         self,
