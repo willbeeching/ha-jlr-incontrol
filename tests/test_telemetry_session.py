@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -871,3 +872,75 @@ class TestRepeatedHeaders:
         raw = "CONNECTED\nnonsense\nversion:1.2\n\n\x00"
         (frame,) = tel._decode(raw)
         assert frame.headers == {"version": "1.2"}
+
+
+class TestTheSnapshotAgeDiagnostic:
+    """Instrumentation for the one question this integration cannot answer.
+
+    These cars send no timestamp with a status, so nothing distinguishes a
+    snapshot recorded an hour ago from one recorded last night — and JLR
+    deliver them late and out of order, so the last to arrive is not the
+    newest. The envelope's ``t`` is read and then distrusted as the broker's
+    send time; whether that is true decides whether ordering is possible at
+    all, and it is answerable only from a live log.
+
+    The line has to carry ``t`` next to something that betrays the payload's
+    real age. Coolant temperature does: a car parked overnight cannot honestly
+    report ninety-one degrees.
+    """
+
+    async def test_it_logs_t_beside_the_markers_that_date_the_payload(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client, ws = telemetry(), FakeWebSocket()
+        body = json.dumps(
+            {
+                "vehicleStatus": {
+                    "coreStatus": [
+                        {"key": "ENGINE_COOLANT_TEMP", "value": "91"},
+                        {"key": "BATTERY_VOLTAGE", "value": "13.3"},
+                        {"key": "VEHICLE_STATE_TYPE", "value": "KEY_REMOVED"},
+                        {"key": "ODOMETER_MILES", "value": "34650"},
+                    ]
+                }
+            }
+        )
+        await client._async_handle(
+            ws,
+            message(
+                eid="e-1",
+                st=WS_TYPE_STATUS,
+                v=VIN,
+                a={"b": body},
+                t="2026-09-08T19:58:34.000Z",
+            ),
+            DEVICE,
+        )
+        line = next(m for m in caplog.messages if " t=" in m)
+        assert "t=2026-09-08T19:58:34.000Z" in line
+        assert "coolant=91" in line
+        assert "volts=13.3" in line
+        assert "state=KEY_REMOVED" in line
+        assert "odo=34650" in line
+
+    async def test_it_does_not_put_the_vin_in_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Debug logs get pasted into issues.
+        caplog.set_level(logging.DEBUG)
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(t="2026-08-26T08:12:41.589Z"), DEVICE)
+        assert VIN not in caplog.text
+
+    async def test_it_reports_the_envelope_and_header_keys(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Both are places a timestamp could be hiding that nothing has looked
+        # at; the point is to find out what is actually there.
+        caplog.set_level(logging.DEBUG)
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(t="2026-08-26T08:12:41.589Z"), DEVICE)
+        line = next(m for m in caplog.messages if " t=" in m)
+        assert "envelope=" in line and "'t'" in line
+        assert "headers=" in line

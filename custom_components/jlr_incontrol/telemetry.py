@@ -49,7 +49,7 @@ from .const import (
     WS_URL,
     WS_VIN_TOPIC,
 )
-from .redact import scrub, scrub_text
+from .redact import scrub, scrub_text, vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -408,6 +408,32 @@ class JlrTelemetry:
                     "VHS items carry no recognised timestamp; first item is %s",
                     scrub(_first_item(payload)),
                 )
+            # Diagnostic, and the whole reason for it: these cars send no
+            # timestamp of their own, so nothing here can tell an old snapshot
+            # from a new one. The envelope's ``t`` is read below and then
+            # distrusted, on the belief that it is when the broker sent the
+            # message rather than when the car reported — which, if wrong,
+            # is the ordering key this integration has been missing.
+            #
+            # Deciding that needs a snapshot whose content betrays its own age.
+            # A car parked overnight that pushes a payload reading 91°C coolant
+            # was plainly recorded hours before it arrived; if ``t`` agrees with
+            # the content it is the event time, and if it agrees with the clock
+            # it is the delivery time. Hence the engine markers alongside it,
+            # none of which identify anybody. The header set comes too: nothing
+            # has ever looked at what the broker stamps on a MESSAGE frame.
+            _LOGGER.debug(
+                "VHS %s: t=%s envelope=%s headers=%s | coolant=%s volts=%s "
+                "state=%s odo=%s",
+                vehicle_label(str(vin)),
+                envelope.get("t"),
+                sorted(envelope),
+                scrub(dict(frame.headers)),
+                status.get("ENGINE_COOLANT_TEMP"),
+                status.get("BATTERY_VOLTAGE"),
+                status.get("VEHICLE_STATE_TYPE"),
+                status.get("ODOMETER_MILES"),
+            )
             self._on_status(vin, status, str(envelope.get("t") or "") or None)
             return
 
