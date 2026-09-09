@@ -62,7 +62,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_pushed_at": {},
         "_position": {},
         "_portal_ids": {},
-        "_last_snapshot": {},
+        "_last_status_seen": {},
         "_last_changed": {},
         "_awaiting": set(),
         "_snapshots_ready": asyncio.Event(),
@@ -90,7 +90,7 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_pushed_at": {KEPT: "t1", SOLD: "t2"},
         "_position": {KEPT: {"latitude": 1}, SOLD: {"latitude": 2}},
         "_portal_ids": {KEPT: "id-kept", SOLD: "id-sold"},
-        "_last_snapshot": {KEPT: ({}, {}), SOLD: ({}, {})},
+        "_last_status_seen": {KEPT: {}, SOLD: {}},
         "_last_changed": {KEPT: "t1", SOLD: "t2"},
     }
     return coordinator(**{**both, **state})
@@ -103,7 +103,7 @@ CACHES = (
     "_pushed_at",
     "_position",
     "_portal_ids",
-    "_last_snapshot",
+    "_last_status_seen",
     "_last_changed",
 )
 
@@ -371,7 +371,7 @@ class TestNamingACarWithoutAskingJlr:
 
 class TestPushedData:
     def quiet(self) -> JlrCoordinator:
-        coord = with_both_cars(_last_snapshot={}, _last_changed={})
+        coord = with_both_cars(_last_status_seen={}, _last_changed={})
         coord._push = lambda: None
         return coord
 
@@ -404,6 +404,33 @@ class TestPushedData:
     def test_a_real_change_is(self) -> None:
         coord = self.quiet()
         coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "2"}, None)
+        assert coord._last_changed.get(KEPT)
+
+    def test_a_position_push_is_not_a_status_change(self) -> None:
+        # The one that mattered on a real car. A parked Range Rover reports
+        # nothing from its body controller for hours, but keeps producing GPS
+        # fixes; counting those as the status changing renewed the freshness
+        # of a door reading from the night before, so an open window looked
+        # current all day.
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"}, None)
+        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"}, None)
+        before = coord._last_changed.get(KEPT)
+
+        coord._handle_position(KEPT, {"latitude": 52.0, "longitude": -1.0})
+        coord._handle_position(KEPT, {"latitude": 52.1, "longitude": -1.1})
+
+        assert (
+            coord._last_changed.get(KEPT) == before
+        ), "a new fix is not the car reporting its state"
+
+    def test_a_status_change_still_registers_while_the_car_is_moving(self) -> None:
+        # The other half: separating the two must not make a real change
+        # invisible just because a fix arrived alongside it.
+        coord = self.quiet()
+        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_position(KEPT, {"latitude": 52.0})
         coord._handle_status(KEPT, {"ODOMETER": "2"}, None)
         assert coord._last_changed.get(KEPT)
 

@@ -24,7 +24,15 @@ ignore = [
 ]
 
 [tool.mypy]
-python_version = "3.13"
+# The version mypy parses under, which is core's floor rather than this
+# integration's: the types lane installs Home Assistant unpinned, and core
+# has required 3.14 since 2026.7 — its own source will not parse under an
+# older target, and mypy stops at the first syntax error it meets in it.
+#
+# This does not licence 3.14-only syntax here. The integration still claims
+# core 2025.8, which runs on 3.13, and the imports lane imports every module
+# under exactly that pairing; anything too new for it fails there.
+python_version = "3.14"
 # Home Assistant's Platinum standard. Every setting below is what `strict`
 # turns on, spelled out rather than inherited from the flag so that turning
 # one off later has to be a deliberate, visible decision with a reason.

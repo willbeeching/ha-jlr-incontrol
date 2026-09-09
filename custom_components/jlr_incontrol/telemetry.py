@@ -29,7 +29,7 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any, NamedTuple
 
 import aiohttp
@@ -420,15 +420,23 @@ class JlrTelemetry:
             # was plainly recorded hours before it arrived; if ``t`` agrees with
             # the content it is the event time, and if it agrees with the clock
             # it is the delivery time. Hence the engine markers alongside it,
-            # none of which identify anybody. The header set comes too: nothing
-            # has ever looked at what the broker stamps on a MESSAGE frame.
+            # none of which identify anybody.
+            #
+            # The frame headers come as names plus the values of anything
+            # time-shaped, not as a whole dict. Redaction here works on key
+            # names, and a header value is a free-form string that can carry
+            # an identifier inside it — the broker addresses a frame as
+            # ``/user/topic/DEVICE.<uuid>``, where the uuid sits under no key
+            # of its own. Names alone still answer what this line was added to
+            # ask: whether the broker stamps a time we have never read.
             _LOGGER.debug(
-                "VHS %s: t=%s envelope=%s headers=%s | coolant=%s volts=%s "
-                "state=%s odo=%s",
+                "VHS %s: t=%s envelope=%s header names=%s times=%s | "
+                "coolant=%s volts=%s state=%s odo=%s",
                 vehicle_label(str(vin)),
                 envelope.get("t"),
                 sorted(envelope),
-                scrub(dict(frame.headers)),
+                sorted(frame.headers),
+                scrub(_time_headers(frame.headers)),
                 status.get("ENGINE_COOLANT_TEMP"),
                 status.get("BATTERY_VOLTAGE"),
                 status.get("VEHICLE_STATE_TYPE"),
@@ -467,6 +475,25 @@ class JlrTelemetry:
         if connected != self._connected:
             self._connected = connected
             self._on_connected(connected)
+
+
+# Header names worth reading the value of. The one thing being looked for is
+# a time the broker stamps on the frame, and every other header either says
+# where the frame was addressed or how long it is — both of which can carry
+# an identifier and neither of which answers anything.
+_TIME_HEADER_HINTS = ("TIME", "DATE", "STAMP", "TS")
+
+
+def _time_headers(headers: Mapping[str, str]) -> dict[str, str]:
+    """The frame headers that look like they carry a time, and only those."""
+    return {
+        name: value
+        for name, value in headers.items()
+        if any(
+            hint in "".join(c for c in name.upper() if c.isalnum())
+            for hint in _TIME_HEADER_HINTS
+        )
+    }
 
 
 def _first_item(payload: dict[str, Any]) -> Any:

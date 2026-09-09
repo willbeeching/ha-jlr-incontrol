@@ -12,11 +12,10 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, Doubles, FakeClient  # noqa: E402
+from doubles import KEPT, Doubles, FakeClient, device_for  # noqa: E402
 from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
-from homeassistant.helpers import device_registry as dr  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
@@ -26,7 +25,6 @@ from custom_components.jlr_incontrol.api import (  # noqa: E402
     JlrApiError,
     JlrAuthError,
 )
-from custom_components.jlr_incontrol.const import DOMAIN  # noqa: E402
 
 
 class TestSetup:
@@ -39,7 +37,7 @@ class TestSetup:
     async def test_the_vehicle_gets_a_device(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, KEPT)})
+        device = device_for(hass, entry, KEPT)
         assert device is not None
         assert device.manufacturer == "Jaguar"
 

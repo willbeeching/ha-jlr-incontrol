@@ -13,6 +13,27 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
+
+def device_for(hass: Any, entry: Any, vin: str) -> Any:
+    """The device registry entry for a vehicle, on old and new cores alike.
+
+    ``async_get_device`` is deprecated from 2026.x — identifiers stopped being
+    unique across config entries — and calling it from a test now raises
+    rather than warning. The replacement wants the config entry as well, and
+    does not exist on the oldest core this integration supports, so the lookup
+    is written once here rather than five times across two behaviours.
+    """
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.jlr_incontrol.const import DOMAIN
+
+    registry = dr.async_get(hass)
+    by_identifier = getattr(registry, "async_get_device_by_identifier", None)
+    if by_identifier is not None:
+        return by_identifier((DOMAIN, vin), entry.entry_id)
+    return registry.async_get_device(identifiers={(DOMAIN, vin)})
+
+
 KEPT = "SAJAA1234567890AB"
 SOLD = "SALBB9876543210CD"
 

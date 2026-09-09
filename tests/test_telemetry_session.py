@@ -26,6 +26,17 @@ DEVICE = "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21"
 
 CONNECTED = "CONNECTED\nversion:1.2\nheart-beat:10000,10000\nuser-name:9f3c\n\n\x00"
 
+# What a STOMP broker actually stamps on a MESSAGE frame. The destination is
+# the identifying one: it is the topic the frame was addressed to, and this
+# integration's own topics are named after the device id and the VIN.
+BROKER_HEADERS = {
+    "destination": f"/user/topic/DEVICE.{DEVICE}",
+    "subscription": "sub-0",
+    "message-id": f"msg-1@@{VIN}",
+    "content-length": "512",
+    "timestamp": "2026-08-26T08:12:41.589Z",
+}
+
 START = WS_BACKOFF_START.total_seconds()
 MAX = WS_BACKOFF_MAX.total_seconds()
 
@@ -297,8 +308,8 @@ class TestStartAndStop:
         assert client.connections == [False]
 
 
-def message(**envelope: Any) -> Frame:
-    return Frame("MESSAGE", {}, json.dumps(envelope))
+def message(_headers: dict[str, str] | None = None, **envelope: Any) -> Frame:
+    return Frame("MESSAGE", _headers or {}, json.dumps(envelope))
 
 
 def vhs(vin: str = VIN, **extra: Any) -> Frame:
@@ -315,7 +326,14 @@ def vhs(vin: str = VIN, **extra: Any) -> Frame:
             }
         }
     )
-    return message(eid="e-1", st=WS_TYPE_STATUS, v=vin, a={"b": body}, **extra)
+    return message(
+        extra.pop("_headers", None),
+        eid="e-1",
+        st=WS_TYPE_STATUS,
+        v=vin,
+        a={"b": body},
+        **extra,
+    )
 
 
 class TestFramesWeCanUse:
@@ -933,14 +951,37 @@ class TestTheSnapshotAgeDiagnostic:
         await client._async_handle(ws, vhs(t="2026-08-26T08:12:41.589Z"), DEVICE)
         assert VIN not in caplog.text
 
-    async def test_it_reports_the_envelope_and_header_keys(
+    async def test_it_reports_the_envelope_and_header_names(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         # Both are places a timestamp could be hiding that nothing has looked
         # at; the point is to find out what is actually there.
         caplog.set_level(logging.DEBUG)
         client, ws = telemetry(), FakeWebSocket()
-        await client._async_handle(ws, vhs(t="2026-08-26T08:12:41.589Z"), DEVICE)
+        await client._async_handle(ws, vhs(t="...", _headers=BROKER_HEADERS), DEVICE)
         line = next(m for m in caplog.messages if " t=" in m)
         assert "envelope=" in line and "'t'" in line
-        assert "headers=" in line
+        assert "'destination'" in line and "'message-id'" in line
+
+    async def test_it_reports_the_value_of_a_header_that_carries_a_time(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Finding one of these is the whole point of the diagnostic.
+        caplog.set_level(logging.DEBUG)
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(t="...", _headers=BROKER_HEADERS), DEVICE)
+        line = next(m for m in caplog.messages if " t=" in m)
+        assert "2026-08-26T08:12:41.589Z" in line
+
+    async def test_it_does_not_report_identifiers_from_header_values(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A header value is free-form text, and the broker puts the device id
+        # and the VIN inside the topic it addresses a frame to. Redaction
+        # matches on key names, so a whole-header dump walks straight past
+        # both — and these lines get pasted into public issues.
+        caplog.set_level(logging.DEBUG)
+        client, ws = telemetry(), FakeWebSocket()
+        await client._async_handle(ws, vhs(t="...", _headers=BROKER_HEADERS), DEVICE)
+        assert DEVICE not in caplog.text
+        assert VIN not in caplog.text

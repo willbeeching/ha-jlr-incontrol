@@ -88,6 +88,31 @@ class TestVinShapedText:
         assert scrub_text("L8B2-70712-AAC") == "L8B2-70712-AAC"
 
 
+class TestUuidShapedText:
+    """The device id, which a key-based rule keeps missing.
+
+    It is a uuid4 this integration generates for itself, and JLR hand it back
+    in two places no suffix in the sensitive list matches: inside the STOMP
+    topic a frame is addressed to, and under ``clientId`` in the token
+    exchange. Neither is a key that names an identifier; both carry one.
+    """
+
+    DEVICE = "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21"
+
+    def test_catches_a_device_id_embedded_in_a_topic(self) -> None:
+        assert self.DEVICE not in scrub_text(f"/user/topic/DEVICE.{self.DEVICE}")
+
+    def test_catches_a_device_id_under_an_unrecognised_key(self) -> None:
+        # "clientId" normalises to CLIENTID, which ends in no sensitive
+        # suffix — so before the shape rule this went out in full.
+        assert self.DEVICE not in json.dumps(scrub({"clientId": self.DEVICE}))
+
+    def test_leaves_ordinary_values_alone(self) -> None:
+        assert scrub_text("KEY_REMOVED 2026-08-26T08:12:41.589Z") == (
+            "KEY_REMOVED 2026-08-26T08:12:41.589Z"
+        )
+
+
 class TestDiagnosticsShape:
     def test_no_identifier_survives_a_realistic_dump(self) -> None:
         """The whole point: serialise a dump and grep it for the real values."""

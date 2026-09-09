@@ -85,7 +85,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # report no LAST_UPDATED_TIME at all and the position timestamp goes
         # static while parked, so observing when the data actually changes is
         # the only freshness signal that always works.
-        self._last_snapshot: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        self._last_status_seen: dict[str, dict[str, Any]] = {}
         # Attributes come from a walled endpoint, so the last known set is
         # persisted in the config entry: losing them would cost every vehicle
         # its name, model and fuel type until JLR lift the wall.
@@ -330,7 +330,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._pushed_at.pop(vin, None)
             self._position.pop(vin, None)
             self._portal_ids.pop(vin, None)
-            self._last_snapshot.pop(vin, None)
+            self._last_status_seen.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -562,10 +562,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # has to reach the entry too, or a sold car's nickname and registration
         # outlive it there — and _attributes only empties when the account's
         # own vehicle list says the car has gone.
+        # Copies, not the live dictionaries. An entry stores what it is handed
+        # by reference, so writing these through would leave the entry and the
+        # coordinator sharing one object: every later mutation would land in
+        # both at once, the comparison above would find them equal, and the
+        # second change onwards would never be written. Which is the shape of
+        # bug that only shows up as a restart having forgotten everything
+        # after the first save.
         if (self.entry.data.get(CONF_ATTRIBUTES) or {}) != self._attributes:
-            updates[CONF_ATTRIBUTES] = self._attributes
+            updates[CONF_ATTRIBUTES] = {
+                vin: dict(attrs) for vin, attrs in self._attributes.items()
+            }
         if (self.entry.data.get(CONF_LAST_CHANGED) or {}) != self._last_changed:
-            updates[CONF_LAST_CHANGED] = self._last_changed
+            updates[CONF_LAST_CHANGED] = dict(self._last_changed)
         if updates:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, **updates}
@@ -579,7 +588,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._status[vin] = status
         if sent:
             self._pushed_at[vin] = sent
-        self._note_change(vin)
+        self._note_status_change(vin)
         if vin in self._awaiting:
             # A car whose snapshot arrives after setup no longer needs the
             # integration reloaded to get entities: the platforms watch for
@@ -590,9 +599,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._push()
 
     def _handle_position(self, vin: str, position: dict[str, Any]) -> None:
-        """Adopt a pushed position."""
+        """Adopt a pushed position.
+
+        Deliberately does not touch the status change tracking: a fix carries
+        its own timestamp, and letting it stand in for one the car never sent
+        is what made a day-old door reading claim to be current.
+        """
         self._position[vin] = position
-        self._note_change(vin)
         self._push()
 
     def _handle_connected(self, connected: bool) -> None:
@@ -604,11 +617,24 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self.data is not None:
             self._push()
 
-    def _note_change(self, vin: str) -> None:
-        snapshot = (self._status.get(vin, {}), self._position.get(vin, {}))
-        if self._last_snapshot.get(vin) not in (None, snapshot):
+    def _note_status_change(self, vin: str) -> None:
+        """Record when the car's reported state last actually changed.
+
+        The status only. This used to watch the position as well, which meant
+        a car that had not reported anything since yesterday was recorded as
+        having "changed" the moment a new GPS fix arrived — and since the fix
+        is what moves while the body controller is asleep, the freshness of a
+        stale door reading was being renewed by the one signal that says
+        nothing about it. Whether the fix is current is a separate question,
+        answered separately by ``position_ts``.
+
+        The first snapshot for a VIN is not a change: it is the first thing we
+        have seen, and when it changed is unknown.
+        """
+        status = self._status.get(vin, {})
+        if self._last_status_seen.get(vin) not in (None, status):
             self._last_changed[vin] = dt_util.utcnow().isoformat()
-        self._last_snapshot[vin] = snapshot
+        self._last_status_seen[vin] = status
 
     def _push(self) -> None:
         """Publish new state to the entities.

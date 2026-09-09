@@ -52,6 +52,16 @@ _SENSITIVE_FRAGMENTS = (
 # that happens to sit under a key we recognise.
 _VIN_RE = re.compile(r"\b[A-HJ-NPR-Z0-9]{17}\b")
 
+# The device id this integration invents for itself is a uuid4, and JLR echo
+# it back in places a key-based rule cannot reach: inside the STOMP topic a
+# frame is addressed to (``/user/topic/DEVICE.<uuid>``), and under ``clientId``
+# in the token exchange, which is not a name any suffix above matches. Catching
+# the shape covers both, and nothing this integration wants to read is a uuid.
+_UUID_RE = re.compile(
+    r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+    r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
+)
+
 
 def vehicle_label(vin: str) -> str:
     """A stable, non-identifying name for a vehicle, for logs and diagnostics.
@@ -77,8 +87,13 @@ def _is_sensitive(key: Any) -> bool:
 
 
 def scrub_text(text: str) -> str:
-    """Replace anything VIN-shaped in free text."""
-    return _VIN_RE.sub(REDACTED, text)
+    """Replace anything VIN- or uuid-shaped in free text.
+
+    By shape, because the identifiers that have actually escaped did so
+    embedded in a value — a URL, a topic name, an error body — where there is
+    no key to match on.
+    """
+    return _UUID_RE.sub(REDACTED, _VIN_RE.sub(REDACTED, text))
 
 
 def scrub(value: Any) -> Any:
