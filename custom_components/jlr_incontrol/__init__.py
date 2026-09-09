@@ -90,6 +90,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         coordinator = entry.runtime_data
+        # Before the collaborators go, and before a reload builds a new
+        # coordinator from what the entry holds: anything gathered since the
+        # last poll is only in memory until this runs.
+        coordinator.async_save()
         await coordinator.telemetry.async_stop()
         await coordinator.portal.async_close()
     return unloaded

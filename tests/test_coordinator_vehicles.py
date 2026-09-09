@@ -372,7 +372,13 @@ class TestNamingACarWithoutAskingJlr:
 class TestPushedData:
     def quiet(self) -> JlrCoordinator:
         coord = with_both_cars(_last_status_seen={}, _last_changed={})
+        # Both stubbed for the same reason: this class is about what counts
+        # as a change, and neither publishing to entities nor writing the
+        # config entry can happen without a running Home Assistant. That the
+        # write is made at all is covered against a real one, in
+        # tests/ha/test_persistence.py.
         coord._push = lambda: None
+        coord._persist = lambda: None
         return coord
 
     def test_a_status_push_is_adopted(self) -> None:

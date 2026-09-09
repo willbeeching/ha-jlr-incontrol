@@ -16,7 +16,7 @@ from typing import Any
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -260,7 +260,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.exception("unexpected failure keeping the portal awake")
 
     async def async_shutdown(self) -> None:
-        """Stop the telemetry socket and portal session, then the coordinator."""
+        """Stop the telemetry socket and portal session, then the coordinator.
+
+        Saving first. A rotated token or a freshly seeded attribute can be
+        held in memory with the next housekeeping poll fifteen minutes away,
+        and Home Assistant stopping is exactly when that poll never comes.
+        """
+        self._persist()
         await self.telemetry.async_stop()
         await self.portal.async_close()
         await super().async_shutdown()
@@ -539,6 +545,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._attributes[vin] = {**self._attributes.get(vin, {}), **record}
         self._portal_ids = ids
 
+    @callback
+    def async_save(self) -> None:
+        """Write anything held only in memory back to the config entry.
+
+        For callers outside the coordinator that know the process is about to
+        stop holding it: unload, and Home Assistant shutting down.
+        """
+        self._persist()
+
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
 
@@ -634,6 +649,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         status = self._status.get(vin, {})
         if self._last_status_seen.get(vin) not in (None, status):
             self._last_changed[vin] = dt_util.utcnow().isoformat()
+            # Written now, not at the next housekeeping poll. This arrives on
+            # a socket push, which is nothing to do with the fifteen-minute
+            # cycle that was the only thing calling _persist — so a reload in
+            # between threw the change away and the sensor went backwards to
+            # whatever was last saved. Home Assistant coalesces entry writes
+            # behind a delayed save, so a car reporting during a drive costs
+            # one write, not one per push.
+            self._persist()
         self._last_status_seen[vin] = status
 
     def _push(self) -> None:

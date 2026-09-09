@@ -121,3 +121,64 @@ class TestTheEntryKeepsItsOwnCopy:
         # has nothing to fall back on but the position fix, which is the
         # question it was just stopped from answering.
         assert entry.runtime_data._last_changed[KEPT] == SECOND
+
+
+class TestAChangeIsSavedWhenItHappens:
+    """Without anything in the test calling the save helper itself.
+
+    The tests above reach for ``_persist`` directly, which is how they missed
+    the gap they were meant to cover: a status change lands on a socket push,
+    and until now the only thing that wrote it was the fifteen-minute
+    housekeeping poll. Reloading in between reverted the timestamp to
+    whatever had last been saved, which is the same visible symptom as never
+    having saved at all.
+    """
+
+    async def test_a_push_survives_a_reload(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "1"})
+        await hass.async_block_till_done()
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "2"})
+        await hass.async_block_till_done()
+        changed = entry.runtime_data._last_changed[KEPT]
+        assert changed, "a changed status did not register as a change"
+
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert (
+            entry.runtime_data._last_changed[KEPT] == changed
+        ), "the reload went back to the last saved timestamp"
+
+    async def test_the_entry_holds_it_before_any_reload(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # The same thing said without a reload: the point is that the write
+        # happens when the change does, so a crash or a power cut between
+        # housekeeping polls does not cost the timestamp either.
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "1"})
+        await hass.async_block_till_done()
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "2"})
+        await hass.async_block_till_done()
+
+        assert (
+            entry.data[CONF_LAST_CHANGED][KEPT]
+            == entry.runtime_data._last_changed[KEPT]
+        )
+
+    async def test_unloading_writes_what_is_still_only_in_memory(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # Not everything is written the moment it changes — a rotated token
+        # and a freshly seeded attribute are not — so the teardown flush has
+        # to run whether or not anything pushed.
+        coord = entry.runtime_data
+        coord._attributes[KEPT] = {"nickname": "Written on the way out"}
+
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert entry.data[CONF_ATTRIBUTES][KEPT]["nickname"] == (
+            "Written on the way out"
+        )
