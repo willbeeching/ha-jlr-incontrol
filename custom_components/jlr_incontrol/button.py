@@ -77,7 +77,14 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
         and getting silence is not: the person is standing there waiting, and
         the difference between "nothing to update" and "Jaguar Land Rover are
         not answering" is the whole reason they pressed it.
+
+        The portal gate is cleared first. Without that this button inherited
+        the half-hourly background cadence and did nothing at all most of the
+        time — it re-authenticated, listed the vehicles and returned, never
+        reaching the location read that is the only thing here worth pressing
+        a button for.
         """
+        self.coordinator.async_force_portal_read()
         await self.coordinator.async_request_refresh()
         if not self.coordinator.last_update_success:
             raise HomeAssistantError(

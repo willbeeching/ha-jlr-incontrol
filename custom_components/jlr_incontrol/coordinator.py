@@ -47,6 +47,7 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
+    PORTAL_FORCE_FLOOR,
     PORTAL_INTERVAL,
     PORTAL_KEEPALIVE_INTERVAL,
     PORTAL_RETRY_AFTER,
@@ -376,6 +377,34 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if attributes:
             self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
+
+    @callback
+    def async_force_portal_read(self) -> bool:
+        """Let the next housekeeping read the portal even if it is not due.
+
+        The scheduled read runs every half hour, and until this existed the
+        Refresh button was gated by that clock — so for twenty-nine minutes in
+        every thirty, pressing it re-authenticated, asked for the vehicle list
+        and returned without reading the one thing it polls. Silently: the
+        press looked identical either way, which is why nobody could tell
+        whether the button did anything.
+
+        Returns whether the gate was actually cleared, so the caller can say
+        so. Refused inside the floor, because a deliberate act deserves to be
+        honoured but not repeated as fast as somebody can press.
+        """
+        now = dt_util.utcnow()
+        if (
+            self._portal_read_at is not None
+            and now - self._portal_read_at < PORTAL_FORCE_FLOOR
+        ):
+            _LOGGER.debug(
+                "portal read requested %s ago; too soon to ask again",
+                now - self._portal_read_at,
+            )
+            return False
+        self._portal_due = None
+        return True
 
     async def _async_read_portal(self) -> None:
         """Top up names and location from the owner portal.

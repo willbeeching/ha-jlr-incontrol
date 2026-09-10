@@ -77,6 +77,11 @@ ONE_SHOT_COOKIES = frozenset({"OAUTH_REQUEST_ATTRIBUTES"})
 # to gain from asking often — and a legacy servlet app is not somewhere to be
 # impolite.
 PORTAL_INTERVAL = timedelta(minutes=30)
+# The shortest gap between two portal reads that a person pressing Refresh can
+# force. The scheduled interval above is a background cadence and has no
+# business gating a deliberate act, but somebody leaning on the button should
+# not turn into a request per press either — this is somebody else's server.
+PORTAL_FORCE_FLOOR = timedelta(minutes=1)
 # How often to touch the portal so its session does not idle out. Its own
 # clock, not the housekeeping one: the session has been watched die inside
 # fifteen minutes of a fresh sign-in, and once it has, the identity session

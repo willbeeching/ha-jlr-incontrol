@@ -441,6 +441,40 @@ class TestPushedData:
         assert coord._last_changed.get(KEPT)
 
 
+class TestForcingAPortalRead:
+    """What the Refresh button clears, and the floor under it.
+
+    The portal is read on a half-hourly cadence, and the button used to share
+    that gate — so for twenty-nine minutes in every thirty a press did nothing
+    at all, silently. Clearing the gate is what makes the button mean
+    something; the floor is what stops it meaning too much.
+    """
+
+    def test_it_clears_the_gate_when_the_last_read_is_old(self) -> None:
+        coord = coordinator(
+            _portal_due=dt_util.utcnow() + timedelta(minutes=20),
+            _portal_read_at=dt_util.utcnow() - timedelta(minutes=10),
+        )
+        assert coord.async_force_portal_read() is True
+        assert coord._portal_due is None, "the next read is still gated"
+
+    def test_it_refuses_inside_the_floor(self) -> None:
+        # Somebody leaning on the button is not a reason to hammer somebody
+        # else's server.
+        due = dt_util.utcnow() + timedelta(minutes=20)
+        coord = coordinator(
+            _portal_due=due,
+            _portal_read_at=dt_util.utcnow() - timedelta(seconds=5),
+        )
+        assert coord.async_force_portal_read() is False
+        assert coord._portal_due == due, "the gate was cleared anyway"
+
+    def test_a_first_press_is_never_refused(self) -> None:
+        # Nothing has been read yet, so there is nothing to be too soon after.
+        coord = coordinator(_portal_due=None, _portal_read_at=None)
+        assert coord.async_force_portal_read() is True
+
+
 class TestAttributesBehindTheWall:
     async def test_a_refusal_leaves_what_we_already_had(self) -> None:
         # Losing the name because JLR blocked one request would rename every
