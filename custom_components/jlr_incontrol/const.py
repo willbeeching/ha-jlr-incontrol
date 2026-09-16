@@ -227,6 +227,12 @@ CONF_LAST_CHANGED = "last_changed"
 # same reason as the above: a restart that reset it would trust a mid-shutdown
 # snapshot for another half hour, and restarts are not rare.
 CONF_UNSETTLED_SINCE = "unsettled_since"
+# The readings as they were when that clock started. Persisted with it and for
+# the same reason: without it, the first snapshot after a restart cannot be
+# told apart from the one before, so a lock that has genuinely just moved is
+# treated as the broker handing back what it already held — and a reading that
+# has just become true stays hidden.
+CONF_VOLATILE_SEEN = "volatile_seen"
 # The ForgeRock session cookies captured at sign-in. The owner web portal has
 # no token-based entry point — it authenticates by handing its own OAuth dance
 # to the AM session in the browser — so reading location means keeping that

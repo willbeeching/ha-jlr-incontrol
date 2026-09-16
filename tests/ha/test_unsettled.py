@@ -279,3 +279,60 @@ class TestTheClockSurvivesARestart:
         await hass.async_block_till_done()
 
         assert locking(hass).state == STATE_UNKNOWN
+
+
+class TestARestartThatMissesAChange:
+    """The cost of not restarting the clock on the first snapshot back.
+
+    That guard exists so a broker handing back what it already held does not
+    look like the car reporting in. But after a restart there is nothing to
+    compare against, so a snapshot whose locks have genuinely moved is treated
+    the same as one that has not — and a reading that just became true stays
+    hidden.
+    """
+
+    async def test_a_changed_reading_gets_a_fresh_window(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+        entry.runtime_data._persist()
+        await age(hass, entry, freezer, minutes=45)
+        assert locking(hass).state == STATE_UNKNOWN
+
+        # Somebody locked it. Still mid-use — the key has not come out — but
+        # this is a new observation and deserves to be believed.
+        locked = {**CAUGHT_MID_USE, "DOOR_IS_ALL_DOORS_LOCKED": "TRUE"}
+        monkeypatch.setattr(doubles, "STATUS", locked)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == "off", (
+            "a lock reading that had just changed stayed hidden across a "
+            "restart, because nothing remembered what it changed from"
+        )
+
+    async def test_an_unchanged_one_stays_hidden(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The other half, and the reason the guard is there at all.
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+        entry.runtime_data._persist()
+        await age(hass, entry, freezer, minutes=45)
+
+        monkeypatch.setattr(doubles, "STATUS", CAUGHT_MID_USE)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == STATE_UNKNOWN

@@ -46,6 +46,7 @@ from .const import (
     CONF_UNSETTLED_SINCE,
     CONF_USER_ID,
     CONF_USERNAME,
+    CONF_VOLATILE_SEEN,
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
     OPT_UNSETTLED_MINUTES,
@@ -129,7 +130,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsettled_since: dict[str, str] = dict(
             entry.data.get(CONF_UNSETTLED_SINCE) or {}
         )
-        self._volatile_seen: dict[str, tuple[Any, ...]] = {}
+        # Restored as tuples: this round-trips through JSON, which has no
+        # tuples, and a list would never compare equal to a fresh reading.
+        self._volatile_seen: dict[str, tuple[Any, ...]] = {
+            vin: tuple(seen)
+            for vin, seen in (entry.data.get(CONF_VOLATILE_SEEN) or {}).items()
+        }
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
         self._disconnected_since: datetime | None = dt_util.utcnow()
@@ -646,6 +652,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updates[CONF_LAST_CHANGED] = dict(self._last_changed)
         if (self.entry.data.get(CONF_UNSETTLED_SINCE) or {}) != self._unsettled_since:
             updates[CONF_UNSETTLED_SINCE] = dict(self._unsettled_since)
+        # Compared as lists, because that is what comes back out of the entry;
+        # holding tuples here and lists there would make every poll look like
+        # a change and write the entry on each one.
+        stored = {vin: list(seen) for vin, seen in self._volatile_seen.items()}
+        if (self.entry.data.get(CONF_VOLATILE_SEEN) or {}) != stored:
+            updates[CONF_VOLATILE_SEEN] = stored
         if updates:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, **updates}
@@ -739,9 +751,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         fingerprint = tuple(status.get(key) for key in VOLATILE_STATUS_KEYS)
         previous = self._volatile_seen.get(vin)
-        # A restored clock with nothing seen yet is the first snapshot after a
-        # restart, and restarting the clock there would hand back the half hour
-        # persisting it was meant to preserve.
+        # Both halves survive a restart, so the first snapshot back is judged
+        # on what it says rather than on there being nothing to compare it
+        # with. Identical means the broker handed back what it already held and
+        # the clock keeps running; different means the car has actually
+        # reported something new, whether or not we were watching at the time.
         if vin not in self._unsettled_since or (
             previous is not None and previous != fingerprint
         ):
