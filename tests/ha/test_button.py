@@ -21,6 +21,7 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
 
+from custom_components.jlr_incontrol import coordinator  # noqa: E402
 from custom_components.jlr_incontrol.api import JlrApiError  # noqa: E402
 
 
@@ -126,3 +127,65 @@ class TestRefreshReachesThePortal:
     # a frozen wall clock does not move — so a second press here measures the
     # debouncer rather than anything this integration decides. It is covered
     # directly instead, in tests/test_coordinator_vehicles.py.
+
+
+class TestRefreshReachesTheCar:
+    """The other half of the press, and the half people meant.
+
+    Vehicle status does not come from the portal or the REST API — JLR wall
+    the status endpoint behind app attestation — it comes over the telemetry
+    socket, and the broker sends a snapshot only when a subscription is made.
+    So a press that read the portal moved the map pin and left every door,
+    window and fuel reading exactly as it was.
+    """
+
+    async def test_a_press_resubscribes_the_socket(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        await press(hass, refresh_button(hass))
+        assert loaded.telemetry.stopped is True
+        assert loaded.telemetry.connected is True
+
+    async def test_a_second_press_does_not_hammer_the_broker(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # Somebody leaning on the button must not turn into a reconnect loop
+        # against somebody else's server.
+        await press(hass, refresh_button(hass))
+        loaded.telemetry.stopped = False
+
+        await press(hass, refresh_button(hass))
+        assert loaded.telemetry.stopped is False
+
+    async def test_the_floor_lifts(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        await press(hass, refresh_button(hass))
+        loaded.telemetry.stopped = False
+        freezer.tick(timedelta(minutes=2))
+
+        await press(hass, refresh_button(hass))
+        assert loaded.telemetry.stopped is True
+
+    async def test_a_socket_that_does_not_come_back_says_so(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        monkeypatch: Any,
+    ) -> None:
+        # Silence here is the original complaint in a new place: the press
+        # would report success while the readings stayed as stale as before.
+        async def never(*_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        monkeypatch.setattr(coordinator, "RESUBSCRIBE_TIMEOUT", 0.01)
+        monkeypatch.setattr(loaded.telemetry, "async_start", never)
+
+        with pytest.raises(HomeAssistantError) as raised:
+            await press(hass, refresh_button(hass))
+        assert raised.value.translation_key == "refresh_failed"

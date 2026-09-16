@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -68,6 +69,11 @@ _LOGGER = logging.getLogger(__name__)
 # handshake and the broker's first push.
 FIRST_SNAPSHOT_TIMEOUT = 60
 
+# How long a Refresh press waits for the socket to come back before it
+# reports failure. Shorter than setup's wait on purpose: somebody is
+# standing in front of the button.
+RESUBSCRIBE_TIMEOUT = 15
+
 
 class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Owns the JLR client, the telemetry socket, and the merged vehicle state."""
@@ -115,6 +121,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # one of them is still silent.
         self._awaiting: set[str] = set()
         self._snapshots_ready = asyncio.Event()
+        # None rather than 0.0 for "never": time.monotonic() counts from an
+        # arbitrary origin, and on a host where that origin is recent the
+        # sentinel would sit inside the floor and swallow the first press.
+        self._resubscribed_at: float | None = None
+        # Mirrors the socket's state as an awaitable, for the one caller that
+        # needs to know the moment it comes back rather than on the next poll.
+        self._connected = asyncio.Event()
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -190,6 +203,41 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
                 FIRST_SNAPSHOT_TIMEOUT,
             )
+
+    # The broker re-delivers a snapshot on every subscription, which is the
+    # only thing that produces new vehicle data on demand: the REST status
+    # endpoint is walled and the car itself pushes only when it wakes. Floored
+    # so a leant-on button cannot turn into a reconnect loop against JLR.
+    RESUBSCRIBE_FLOOR = 60.0
+
+    async def async_resubscribe_telemetry(self) -> bool:
+        """Cycle the telemetry socket so the broker pushes a fresh snapshot.
+
+        Returns True once the socket is back up, False if it did not come back
+        within the wait -- the caller is a button press, and somebody standing
+        there deserves to be told that nothing arrived.
+        """
+        now = time.monotonic()
+        if self._resubscribed_at is not None:
+            since = now - self._resubscribed_at
+            if since < self.RESUBSCRIBE_FLOOR:
+                _LOGGER.debug(
+                    "telemetry resubscribed %.0fs ago; too soon to ask again", since
+                )
+                return self.telemetry.connected
+        self._resubscribed_at = now
+        self._connected.clear()
+        await self.telemetry.async_stop()
+        await self.telemetry.async_start()
+        # Waiting on the socket's own signal rather than polling it: the
+        # supervisor task does the reconnecting and the handshake, and the
+        # snapshot that is the point of this arrives after it.
+        try:
+            async with asyncio.timeout(RESUBSCRIBE_TIMEOUT):
+                await self._connected.wait()
+        except TimeoutError:
+            return False
+        return True
 
     def async_start_keepalive(self) -> None:
         """Put the portal keep-alive on its own short clock."""
@@ -655,6 +703,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _handle_connected(self, connected: bool) -> None:
         """Track socket state so entities can go unavailable on a real outage."""
         self._disconnected_since = None if connected else dt_util.utcnow()
+        if connected:
+            self._connected.set()
+        else:
+            self._connected.clear()
         _LOGGER.debug(
             "telemetry socket %s", "connected" if connected else "disconnected"
         )
