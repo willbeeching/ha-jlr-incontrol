@@ -37,10 +37,13 @@ from .const import (
     DOMAIN,
     OPT_DISTANCE_UNIT,
     OPT_PRESSURE_UNIT,
+    OPT_UNSETTLED_MINUTES,
     PRESSURE_UNIT_BAR,
     PRESSURE_UNIT_DEFAULT,
     PRESSURE_UNIT_KPA,
     PRESSURE_UNIT_PSI,
+    UNSETTLED_MINUTES_CHOICES,
+    UNSETTLED_MINUTES_DEFAULT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,6 +97,19 @@ OPTIONS_SCHEMA = vol.Schema(
                 PRESSURE_UNIT_BAR,
                 PRESSURE_UNIT_PSI,
             ],
+        ),
+        vol.Optional(
+            OPT_UNSETTLED_MINUTES,
+            # A string, because that is what a select selector stores and
+            # validates. The constant stays an int — it is a duration — and
+            # the coordinator coerces on the way back out.
+            default=str(UNSETTLED_MINUTES_DEFAULT),
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=[str(m) for m in UNSETTLED_MINUTES_CHOICES],
+                translation_key="unsettled_minutes",
+                mode=SelectSelectorMode.DROPDOWN,
+            )
         ),
     }
 )
@@ -384,6 +400,9 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
                 ),
                 OPT_PRESSURE_UNIT: options.get(
                     OPT_PRESSURE_UNIT, PRESSURE_UNIT_DEFAULT
+                ),
+                OPT_UNSETTLED_MINUTES: str(
+                    options.get(OPT_UNSETTLED_MINUTES, UNSETTLED_MINUTES_DEFAULT)
                 ),
             },
         )

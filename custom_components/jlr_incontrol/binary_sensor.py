@@ -34,6 +34,11 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # Only create on vehicles with a charge port; ICE cars report EV_* keys
     # with UNKNOWN sentinels, so key presence alone is not enough.
     requires_ev: bool = False
+    # Whether this reading stops being assertable once the snapshot holding it
+    # was caught mid-use and has gone quiet. True for the "is the car shut and
+    # secure" family, which is what somebody walks back out to the drive over;
+    # false for the readings that do not decay, like the odometer.
+    volatile: bool = False
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -43,6 +48,7 @@ def _door(key: str, status_key: str) -> JlrBinaryDescription:
         status_key=status_key,
         device_class=BinarySensorDeviceClass.DOOR,
         is_on=lambda v: v == "OPEN",
+        volatile=True,
     )
 
 
@@ -53,6 +59,7 @@ def _window(key: str, status_key: str) -> JlrBinaryDescription:
         status_key=status_key,
         device_class=BinarySensorDeviceClass.WINDOW,
         is_on=lambda v: v != "CLOSED",
+        volatile=True,
     )
 
 
@@ -84,6 +91,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         translation_key="sunroof",
         status_key="IS_SUNROOF_OPEN",
         device_class=BinarySensorDeviceClass.WINDOW,
+        volatile=True,
         is_on=lambda v: v == "TRUE",
     ),
     # Security. LOCK device_class: on == unlocked, so the "all doors locked"
@@ -93,6 +101,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         translation_key="doors_locked",
         status_key="DOOR_IS_ALL_DOORS_LOCKED",
         device_class=BinarySensorDeviceClass.LOCK,
+        volatile=True,
         is_on=lambda v: v != "TRUE",
     ),
     # No SAFETY device class here: that renders on/off as Unsafe/Safe, which
@@ -103,6 +112,10 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         key="alarm",
         translation_key="alarm",
         status_key="THEFT_ALARM_STATUS",
+        # Volatile with the locks it travels with. Both cars caught mid-use
+        # reported ALARM_OFF while sitting armed on a drive, because arming
+        # happens after the snapshot was taken and no later one arrived.
+        volatile=True,
         is_on=lambda v: v == "ALARM_ARMED",
     ),
     # The app's own enum has three going-off variants.
@@ -234,6 +247,15 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
+        if self.entity_description.volatile and self._vehicle.get(
+            "readings_provisional"
+        ):
+            # Unknown rather than the last thing the car said. It was caught
+            # with the key still in it and has said nothing since, so this
+            # answer is a guess about a car somebody has walked away from —
+            # and a confident wrong answer about whether a window is open is
+            # worse than admitting we cannot say.
+            return None
         raw = self._status_value(self.entity_description.status_key)
         if raw is None:
             return None

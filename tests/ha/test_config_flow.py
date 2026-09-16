@@ -20,6 +20,7 @@ from doubles import KEPT  # noqa: E402
 from homeassistant import config_entries  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
+from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
@@ -489,3 +490,82 @@ class TestTheJourneyFallingOverInWaysNobodyPlanned:
         result = await flow.async_step_reconfigure()
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "unknown_entry"
+
+
+class TestHowTheSignInPromptIsActuallyRaised:
+    """Through the entry, which is the one path the tests above skip.
+
+    Every reauth test here builds the flow context by hand. Home Assistant
+    never does: it goes through ``ConfigEntry.async_start_reauth``, which adds
+    the unique id to the context and then — separately, after the flow has
+    already been created — raises the repair that puts the prompt in front of
+    somebody. Both halves matter, and neither was covered. A user reported a
+    sign-in dialog with no fields in it, and nothing here could have caught
+    that because nothing here used the door they came through.
+    """
+
+    def issue_id(self, entry: MockConfigEntry) -> tuple[str, str]:
+        return ("homeassistant", f"config_entry_reauth_{DOMAIN}_{entry.entry_id}")
+
+    async def test_it_reaches_a_form_somebody_can_fill_in(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Any
+    ) -> None:
+        entry.async_start_reauth(hass)
+        await hass.async_block_till_done()
+
+        (flow,) = hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        current = await hass.config_entries.flow.async_configure(flow["flow_id"], None)
+
+        assert current["step_id"] == "reauth_confirm"
+        schema = current["data_schema"]
+        assert schema is not None, "a dialog with no schema is a dialog with no fields"
+        assert "password" in schema.schema
+
+    async def test_it_raises_the_repair_that_opens_that_form(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Any
+    ) -> None:
+        # The repair carries the flow id, and the frontend opens it by that id.
+        # An issue pointing at a flow that no longer exists is exactly how you
+        # get an empty dialog.
+        entry.async_start_reauth(hass)
+        await hass.async_block_till_done()
+
+        issue = ir.async_get(hass).async_get_issue(*self.issue_id(entry))
+        assert issue is not None
+        flow_id = (issue.data or {})["flow_id"]
+        assert [
+            f
+            for f in hass.config_entries.flow.async_progress()
+            if f["flow_id"] == flow_id
+        ], "the repair points at no live flow"
+
+    async def test_a_session_that_comes_back_withdraws_the_prompt(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Any
+    ) -> None:
+        # Asserted rather than inferred. Home Assistant deletes the repair when
+        # the flow is removed, which is a claim about core's behaviour in our
+        # arrangement, and reading core's source is how this integration has
+        # been wrong before.
+        coordinator = entry.runtime_data
+        coordinator._async_raise_signed_out_issue()
+        await hass.async_block_till_done()
+        assert ir.async_get(hass).async_get_issue(*self.issue_id(entry)) is not None
+
+        coordinator._async_clear_signed_out_issue()
+        await hass.async_block_till_done()
+
+        assert not hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        assert ir.async_get(hass).async_get_issue(*self.issue_id(entry)) is None, (
+            "the prompt outlived the problem, and would cost somebody an "
+            "emailed code to answer"
+        )
+
+    async def test_asking_twice_does_not_stack_two_prompts(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Any
+    ) -> None:
+        coordinator = entry.runtime_data
+        coordinator._async_raise_signed_out_issue()
+        coordinator._async_raise_signed_out_issue()
+        await hass.async_block_till_done()
+
+        assert len(hass.config_entries.flow.async_progress_by_handler(DOMAIN)) == 1

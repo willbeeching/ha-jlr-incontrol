@@ -137,9 +137,12 @@ class TestAChangeIsSavedWhenItHappens:
     async def test_a_push_survives_a_reload(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "1"})
+        # Above the fixture's own reading: a snapshot whose odometer counts
+        # down is rejected as having arrived out of order, which is a
+        # different behaviour and has its own tests.
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76712"})
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "2"})
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76713"})
         await hass.async_block_till_done()
         changed = entry.runtime_data._last_changed[KEPT]
         assert changed, "a changed status did not register as a change"
@@ -157,9 +160,12 @@ class TestAChangeIsSavedWhenItHappens:
         # The same thing said without a reload: the point is that the write
         # happens when the change does, so a crash or a power cut between
         # housekeeping polls does not cost the timestamp either.
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "1"})
+        # Above the fixture's own reading: a snapshot whose odometer counts
+        # down is rejected as having arrived out of order, which is a
+        # different behaviour and has its own tests.
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76712"})
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "2"})
+        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76713"})
         await hass.async_block_till_done()
 
         assert (

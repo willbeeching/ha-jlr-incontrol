@@ -53,7 +53,11 @@
         "title": "Jaguar Land Rover InControl options",
         "data": {
           "distance_unit": "Distance unit",
-          "pressure_unit": "Pressure unit"
+          "pressure_unit": "Pressure unit",
+          "unsettled_minutes": "Withhold door, window and lock readings after"
+        },
+        "data_description": {
+          "unsettled_minutes": "When a car is caught mid-use — the key still in it, the alarm not yet armed — the doors and windows in that snapshot are where they were at that moment, not where the car was left. If no newer reading arrives within this long, those sensors report unknown instead of a figure that is probably wrong. Everything else keeps its last value."
         }
       }
     }
@@ -72,6 +76,15 @@
         "kpa": "kPa",
         "bar": "bar",
         "psi": "psi"
+      }
+    },
+    "unsettled_minutes": {
+      "options": {
+        "0": "Always trust the last reading",
+        "15": "15 minutes",
+        "30": "30 minutes (recommended)",
+        "60": "1 hour",
+        "120": "2 hours"
       }
     }
   },

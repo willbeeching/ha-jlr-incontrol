@@ -98,6 +98,46 @@ Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "win
 | `device_tracker` — Location | Where the last completed journey ended, not a live position. Carries `timestamp` for the fix, `trusted` for whether it is recent enough to act on, and `stale` once over a day old. |
 | `button` — Refresh | Re-reads what JLR already hold, including location. It does not wake the car. |
 
+## Readings from a car caught mid-use
+
+Doors, windows, the bonnet and boot, central locking, the sunroof and the alarm
+stop being asserted — they report **unknown** — when the last thing Jaguar Land
+Rover sent was taken while somebody still had the key in the car, and nothing
+newer has arrived for half an hour.
+
+That combination is the one that has actually misled people. A snapshot carrying
+`VEHICLE_STATE_TYPE` of `KEY_ON_ENGINE_OFF` is a photograph of a car somebody is
+still getting out of: the windows in it are where they were at that instant, not
+where they were left. Twice a car has been reported with its windows down for
+hours afterwards, because the next snapshot never came — the delay is in JLR's
+copy, and nothing this integration can do reaches past it.
+
+Two conditions, both required, because either alone is ordinary:
+
+- **Caught mid-use.** Only states actually observed count. A car reporting
+  something unrecognised is treated as settled, so it behaves exactly as it did
+  before rather than having readings withheld on a guess.
+- **Gone quiet for long enough.** A car mid-shutdown thirty seconds ago is simply
+  current. The threshold is **30 minutes** by default and configurable in the
+  integration's options, including off.
+
+A car that is properly parked keeps its readings indefinitely, however old they
+are: a window genuinely left open a week ago still reads open. And the readings
+that do not decay — odometer, fuel, tyre pressures, service intervals — are never
+withheld, because the last figure is still the best answer available.
+
+This does not make the data fresher. It stops a guess being displayed as a fact.
+
+## Out-of-order snapshots
+
+A snapshot whose odometer reads lower than the one already held is discarded.
+JLR deliver late and out of order, and a week-old snapshot has overwritten a
+current one before now. The odometer is the only ordering key these cars give
+us: they send no timestamp of their own, and the message envelope's is when the
+broker sent it rather than when the car recorded it. Equal readings are still
+adopted, which is the common case — a parked car redelivers the same snapshot
+every four minutes.
+
 ## Degraded behaviour
 
 | What is wrong | What you see |

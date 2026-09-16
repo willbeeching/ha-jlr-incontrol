@@ -441,6 +441,62 @@ class TestPushedData:
         assert coord._last_changed.get(KEPT)
 
 
+class TestASnapshotThatArrivesLate:
+    """The only ordering key these cars give us.
+
+    They send no timestamp of their own, and the envelope's is when the broker
+    sent the message rather than when the car recorded it — measured to the
+    millisecond against a payload three hours old. An odometer is different:
+    it never counts down, so a lower one is proof the snapshot predates what
+    is already held. JLR deliver late and out of order, and a week-old
+    snapshot has overwritten a current one before now.
+    """
+
+    def test_a_lower_odometer_is_not_adopted(self) -> None:
+        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546"}})
+        coord._push = lambda: None
+        coord._persist = lambda: None
+
+        coord._handle_status(KEPT, {"ODOMETER_MILES": "18540"}, None)
+
+        assert coord._status[KEPT]["ODOMETER_MILES"] == "18546"
+
+    def test_a_higher_one_is(self) -> None:
+        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546"}})
+        coord._push = lambda: None
+        coord._persist = lambda: None
+
+        coord._handle_status(KEPT, {"ODOMETER_MILES": "18549"}, None)
+
+        assert coord._status[KEPT]["ODOMETER_MILES"] == "18549"
+
+    def test_an_equal_one_is_too(self) -> None:
+        # The common case by a long way: a parked car redelivering the same
+        # snapshot every four minutes. Rejecting those would freeze every
+        # other field in them.
+        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546", "A": "1"}})
+        coord._push = lambda: None
+        coord._persist = lambda: None
+
+        coord._handle_status(KEPT, {"ODOMETER_MILES": "18546", "A": "2"}, None)
+
+        assert coord._status[KEPT]["A"] == "2"
+
+    @pytest.mark.parametrize("held,arriving", [(None, "1"), ("1", None), ("x", "1")])
+    def test_an_unreadable_odometer_never_rejects(
+        self, held: Any, arriving: Any
+    ) -> None:
+        # A car that does not report one, or reports something that is not a
+        # number, must not have every snapshot thrown away.
+        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": held} if held else {}})
+        coord._push = lambda: None
+        coord._persist = lambda: None
+
+        coord._handle_status(KEPT, {"ODOMETER_MILES": arriving, "SEEN": "yes"}, None)
+
+        assert coord._status[KEPT]["SEEN"] == "yes"
+
+
 class TestForcingAPortalRead:
     """What the Refresh button clears, and the floor under it.
 

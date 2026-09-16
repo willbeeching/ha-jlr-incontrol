@@ -251,6 +251,26 @@ PRESSURE_UNIT_DEFAULT = "default"
 PRESSURE_UNIT_KPA = "kpa"
 PRESSURE_UNIT_BAR = "bar"
 PRESSURE_UNIT_PSI = "psi"
+OPT_UNSETTLED_MINUTES = "unsettled_minutes"
+UNSETTLED_MINUTES_DEFAULT = 30
+UNSETTLED_MINUTES_CHOICES = (0, 15, 30, 60, 120)
+
+# ---- Snapshots caught mid-use ----
+# A snapshot taken while somebody still has the key in the car is a photograph
+# of something in progress: the doors and windows in it are where they were at
+# that instant, not where they were left. Twice now a car has been reported
+# with its windows down for hours after being parked, and both times the held
+# snapshot carried one of these states with an alarm that had not yet armed.
+#
+# Only states we have actually seen, and only used to *withhold* a reading.
+# A state nobody has observed is treated as settled, so an unrecognised car
+# behaves exactly as it does today rather than having its readings hidden on
+# the strength of a guess.
+UNSETTLED_VEHICLE_STATES = ("KEY_ON_ENGINE_OFF",)
+# The one value seen on a car that has genuinely been left. Kept separate and
+# unused by the predicate below on purpose: this is documentation of what the
+# settled end looks like, not a second list to fall through to.
+SETTLED_VEHICLE_STATES = ("KEY_REMOVED",)
 
 # ---- Refresh cadence ----
 # Vehicle data arrives over the telemetry socket as it happens, so there is no

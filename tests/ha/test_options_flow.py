@@ -63,7 +63,15 @@ class TestTheDialog:
             result["flow_id"], {"distance_unit": "miles", "pressure_unit": "psi"}
         )
         await hass.async_block_till_done()
-        assert entry.options == {"distance_unit": "miles", "pressure_unit": "psi"}
+        # Exact, not a subset: this is the test that would catch a key being
+        # renamed. unsettled_minutes arrives at its default because the form
+        # carries it whether or not the submission mentioned it, and it is
+        # stored as the string the selector validates.
+        assert entry.options == {
+            "distance_unit": "miles",
+            "pressure_unit": "psi",
+            "unsettled_minutes": "30",
+        }
 
     async def test_it_reopens_showing_what_was_chosen(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles

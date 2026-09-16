@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
@@ -47,6 +47,7 @@ from .const import (
     CONF_USERNAME,
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
+    OPT_UNSETTLED_MINUTES,
     PORTAL_FORCE_FLOOR,
     PORTAL_INTERVAL,
     PORTAL_KEEPALIVE_INTERVAL,
@@ -56,6 +57,8 @@ from .const import (
     SCAN_INTERVAL_HOUSEKEEPING,
     STALE_AFTER,
     TELEMETRY_GRACE,
+    UNSETTLED_MINUTES_DEFAULT,
+    UNSETTLED_VEHICLE_STATES,
 )
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .redact import vehicle_label
@@ -67,6 +70,16 @@ _LOGGER = logging.getLogger(__name__)
 # Generous: it covers the token refresh, the device registration, the websocket
 # handshake and the broker's first push.
 FIRST_SNAPSHOT_TIMEOUT = 60
+
+
+def _to_miles(value: Any) -> float | None:
+    """The odometer as a number, or None if it is not one."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -629,6 +642,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self, vin: str, status: dict[str, Any], sent: str | None
     ) -> None:
         """Adopt a pushed VHS snapshot."""
+        if self._is_older_by_odometer(vin, status):
+            return
         self._status[vin] = status
         if sent:
             self._pushed_at[vin] = sent
@@ -660,6 +675,34 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         if self.data is not None:
             self._push()
+
+    def _is_older_by_odometer(self, vin: str, status: dict[str, Any]) -> bool:
+        """Whether this snapshot predates the one already held.
+
+        The only ordering key these cars give us. They send no timestamp, and
+        the envelope's ``t`` is when the broker sent the message rather than
+        when the car recorded it — measured to the millisecond against a
+        payload three hours old — so nothing in a message says how old it is.
+        An odometer does: it never goes backwards.
+
+        Worth having because JLR deliver late and out of order. A snapshot from
+        the previous week once overwrote a current one, and adopting it cost a
+        correct set of readings. Equal readings still pass, so this does
+        nothing for two snapshots taken in the same burst on a parked car,
+        which is the common case and needs the separate freshness test.
+        """
+        held = _to_miles(self._status.get(vin, {}).get("ODOMETER_MILES"))
+        arriving = _to_miles(status.get("ODOMETER_MILES"))
+        if held is None or arriving is None or arriving >= held:
+            return False
+        _LOGGER.debug(
+            "%s: ignoring a snapshot reading %s miles against the %s already "
+            "held; an odometer does not count down",
+            vehicle_label(vin),
+            arriving,
+            held,
+        )
+        return True
 
     def _note_status_change(self, vin: str) -> None:
         """Record when the car's reported state last actually changed.
@@ -745,6 +788,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # is old. A car that phones in hourly from a spot it parked in
                 # on Friday is fresh by one measure and not the other.
                 "status_stale": self._is_stale(status_ts),
+                # Whether the volatile readings in this snapshot can still be
+                # asserted. Separate from status_stale, which is about age
+                # alone: a car parked for a week has an old snapshot and a
+                # perfectly good set of door positions in it.
+                "readings_provisional": self._readings_provisional(status, status_ts),
                 "position_stale": self._is_stale(position_ts),
                 "position_trusted": self.position_trusted,
             }
@@ -807,6 +855,39 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if best_dt is None or parsed > best_dt:
                 best, best_dt = ts, parsed
         return best
+
+    def _readings_provisional(self, status: dict[str, Any], ts: Any) -> bool:
+        """Whether doors, windows and locks in this snapshot are still claims.
+
+        Two conditions, and both have to hold. The snapshot has to have been
+        taken while somebody still had the key in the car — which is a photo of
+        something in progress, not of how the car was left — and it has to have
+        stopped changing for long enough that the car is plainly not still
+        reporting. Either alone is ordinary: a car mid-shutdown thirty seconds
+        ago is simply current, and a settled car untouched for a week is simply
+        parked.
+
+        Conservative by construction. An unrecognised state is treated as
+        settled, so a car nobody has observed keeps behaving exactly as it does
+        now rather than having its readings withheld on a guess.
+        """
+        # int() because the options selector hands back strings, and "0" is
+        # perfectly truthy — which would leave the off switch quietly on.
+        try:
+            minutes = int(
+                self.entry.options.get(OPT_UNSETTLED_MINUTES, UNSETTLED_MINUTES_DEFAULT)
+            )
+        except (TypeError, ValueError):
+            minutes = UNSETTLED_MINUTES_DEFAULT
+        if minutes <= 0:
+            return False
+        state = str(status.get("VEHICLE_STATE_TYPE", "")).upper()
+        if state not in UNSETTLED_VEHICLE_STATES:
+            return False
+        parsed = dt_util.parse_datetime(str(ts)) if ts else None
+        if parsed is None:
+            return False
+        return dt_util.utcnow() - parsed > timedelta(minutes=minutes)
 
     @staticmethod
     def _is_stale(timestamp: str | None) -> bool:
