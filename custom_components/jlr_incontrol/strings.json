@@ -101,6 +101,9 @@
       "engine_coolant_temp": {
         "name": "Engine coolant temperature"
       },
+      "vehicle_state": {
+        "name": "Vehicle state"
+      },
       "tyre_pressure_fl": {
         "name": "Tyre pressure front left"
       },

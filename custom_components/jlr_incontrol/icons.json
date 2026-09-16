@@ -60,6 +60,9 @@
       },
       "odometer": {
         "default": "mdi:counter"
+      },
+      "vehicle_state": {
+        "default": "mdi:car-key"
       }
     }
   }

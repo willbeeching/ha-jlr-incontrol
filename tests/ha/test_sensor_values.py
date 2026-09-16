@@ -27,6 +27,8 @@ from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     JlrVehicleSensor,
     _combined_range,
     _coolant_temp,
+    _coolant_temp_live,
+    _engine_running,
     _odometer_attrs,
     _to_float,
     _tyre_kpa,
@@ -114,6 +116,85 @@ class TestTyrePressure:
 
     def test_no_bar_attribute_without_a_pressure(self) -> None:
         assert description("tyre_pressure_fl").attr_fn({}) == {}
+
+
+class TestCoolantGoesStaleWhileParked:
+    """The reading that cannot be told from a live one by looking at it.
+
+    A parked car keeps pushing whatever the gauge read when the engine was
+    switched off. Measured on an F-Pace across twelve parked hours: the 12V
+    voltage moved, the coolant sat at 89 the whole time, and 89 is exactly
+    what a warm engine reads. Nothing in the value itself gives it away.
+    """
+
+    @pytest.mark.parametrize(
+        "state", ["KEY_ON_ENGINE_ON", "ENGINE_ON", "ENGINE_RUNNING", "DRIVING"]
+    )
+    def test_the_engine_is_running(self, state: str) -> None:
+        assert _engine_running({"VEHICLE_STATE_TYPE": state}) is True
+
+    @pytest.mark.parametrize("state", ["KEY_REMOVED", "KEY_ON_ENGINE_OFF", "UNKNOWN"])
+    def test_the_engine_is_not(self, state: str) -> None:
+        assert _engine_running({"VEHICLE_STATE_TYPE": state}) is False
+
+    def test_key_on_engine_off_does_not_match_on(self) -> None:
+        # The substring test is the whole risk here: KEY_ON_ENGINE_OFF has
+        # both words in it, and reading it as "on" would defeat the exercise.
+        assert _engine_running({"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF"}) is False
+
+    def test_a_car_that_reports_no_state_is_not_assumed_to_be_running(self) -> None:
+        assert _engine_running({}) is False
+
+    def test_a_parked_car_reports_no_temperature(self) -> None:
+        assert (
+            _coolant_temp_live(
+                {"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF", "ENGINE_COOLANT_TEMP": "89"}
+            )
+            is None
+        )
+
+    def test_a_running_engine_reports_its_temperature(self) -> None:
+        assert (
+            _coolant_temp_live(
+                {"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_ON", "ENGINE_COOLANT_TEMP": "89"}
+            )
+            == 89.0
+        )
+
+    def test_the_sentinel_still_wins_over_a_running_engine(self) -> None:
+        # Running or not, -40 is the unfitted-sensor value.
+        assert (
+            _coolant_temp_live(
+                {"VEHICLE_STATE_TYPE": "ENGINE_ON", "ENGINE_COOLANT_TEMP": "-40"}
+            )
+            is None
+        )
+
+    def test_a_running_car_that_reports_no_temperature_is_unknown(self) -> None:
+        assert _coolant_temp_live({"VEHICLE_STATE_TYPE": "ENGINE_ON"}) is None
+
+    def test_the_sensor_wires_the_whole_status_in(self) -> None:
+        # value_fn sees one key, and one key cannot answer this question.
+        sensor = build(
+            JlrVehicleSensor,
+            status={"VEHICLE_STATE_TYPE": "KEY_REMOVED", "ENGINE_COOLANT_TEMP": "89"},
+        )
+        sensor.entity_description = description("engine_coolant_temp")
+        assert sensor.native_value is None
+
+
+class TestVehicleState:
+    """The raw enum, so an automation can tell parked from being driven."""
+
+    def test_it_reports_what_the_car_said(self) -> None:
+        sensor = build(JlrVehicleSensor, status={"VEHICLE_STATE_TYPE": "KEY_REMOVED"})
+        sensor.entity_description = description("vehicle_state")
+        assert sensor.native_value == "KEY_REMOVED"
+
+    def test_it_is_not_an_enum_device_class(self) -> None:
+        # JLR's state enum is open-ended, and an ENUM sensor that meets a
+        # value outside its option list goes unavailable on that car.
+        assert description("vehicle_state").device_class is None
 
 
 class TestOdometer:
