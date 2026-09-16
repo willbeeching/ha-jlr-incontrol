@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import Doubles  # noqa: E402
+from doubles import KEPT, Doubles  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.exceptions import HomeAssistantError  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -23,6 +23,9 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
 
 from custom_components.jlr_incontrol import coordinator  # noqa: E402
 from custom_components.jlr_incontrol.api import JlrApiError  # noqa: E402
+from custom_components.jlr_incontrol.coordinator import (  # noqa: E402
+    Resubscription,
+)
 
 
 async def press(hass: HomeAssistant, entity_id: str) -> None:
@@ -201,3 +204,84 @@ class TestRefreshReachesTheCar:
         with pytest.raises(HomeAssistantError) as raised:
             await press(hass, refresh_button(hass))
         assert raised.value.translation_key == "refresh_failed"
+
+
+class TestAPressThatOutlivesTheEntry:
+    """A press in flight when the integration goes away.
+
+    Stopping the old socket yields while the supervisor unwinds and says
+    goodbye to the broker — properly, which is the point, but it is a wide
+    gap and an unload fits inside it. Resuming afterwards into a start left a
+    supervisor running on an entry that no longer existed, and the reload that
+    usually follows built a second one beside it: two connections to somebody
+    else's broker from one integration.
+    """
+
+    async def test_a_press_after_unload_starts_nothing(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        coordinator = entry.runtime_data
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+        loaded.telemetry.stopped = False
+
+        result = await coordinator.async_resubscribe_telemetry(KEPT)
+
+        assert result is Resubscription.FAILED
+        assert loaded.telemetry.connected is False
+        assert loaded.telemetry.stopped is False, "it restarted the socket"
+
+    async def test_the_flag_outranks_a_press_already_inside(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # The race itself: the press is past its first check and waiting on
+        # the old socket to unwind when the entry starts going down.
+        coordinator = entry.runtime_data
+        original = loaded.telemetry.async_stop
+
+        async def unload_lands_here() -> None:
+            coordinator._stopping = True
+            await original()
+
+        loaded.telemetry.async_stop = unload_lands_here
+
+        result = await coordinator.async_resubscribe_telemetry(KEPT)
+
+        assert result is Resubscription.FAILED
+        assert loaded.telemetry.connected is False
+
+
+class TestAPressThatGetsNoData:
+    """Connected is not the same as answered.
+
+    The broker sets the connection up, accepts the subscriptions, and only
+    then pushes. Returning on the first of those reports success while every
+    reading on the dashboard is still the one the press was meant to replace.
+    """
+
+    async def test_a_socket_that_sends_nothing_is_not_a_success(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        monkeypatch: Any,
+    ) -> None:
+        monkeypatch.setattr(coordinator, "RESUBSCRIBE_TIMEOUT", 0.05)
+
+        async def connects_but_says_nothing() -> None:
+            loaded.telemetry.connected = True
+            loaded.telemetry.on_connected(True)
+
+        monkeypatch.setattr(loaded.telemetry, "async_start", connects_but_says_nothing)
+
+        result = await entry.runtime_data.async_resubscribe_telemetry(KEPT)
+
+        assert (
+            result is Resubscription.FAILED
+        ), "the press reported success having changed nothing"
+
+    async def test_a_snapshot_is_what_makes_it_a_success(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        result = await entry.runtime_data.async_resubscribe_telemetry(KEPT)
+        assert result is Resubscription.DONE

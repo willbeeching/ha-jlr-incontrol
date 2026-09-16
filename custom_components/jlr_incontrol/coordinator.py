@@ -165,6 +165,18 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # Mirrors the socket's state as an awaitable, for the one caller that
         # needs to know the moment it comes back rather than on the next poll.
         self._connected = asyncio.Event()
+        # The socket's lifecycle is held by one owner at a time. Without it a
+        # press that is part-way through stopping the old socket can be
+        # overtaken by an unload, finish, and start a fresh supervisor on an
+        # entry that has gone — leaving a connection nobody owns, and a second
+        # one as soon as the reload builds its replacement.
+        self._socket_lock = asyncio.Lock()
+        # One way. Once the entry is going down nothing may start it again,
+        # including a press already waiting on the lock.
+        self._stopping = False
+        # Set when a vehicle's snapshot arrives, so a caller can wait for the
+        # data rather than for the handshake that precedes it.
+        self._snapshot_seen: dict[str, asyncio.Event] = {}
         self.client = JlrClient(
             async_get_clientsession(hass),
             entry.data[CONF_USERNAME],
@@ -241,7 +253,33 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 FIRST_SNAPSHOT_TIMEOUT,
             )
 
-    async def async_resubscribe_telemetry(self) -> Resubscription:
+    def _stop_requested(self) -> bool:
+        """Whether the entry has started going down.
+
+        A method rather than the attribute, so it is genuinely re-read either
+        side of the await below. Read straight, a type checker narrows it to
+        False after the first test and calls the second unreachable — which is
+        precisely the check that matters, because the await in between is
+        where the unload happens.
+        """
+        return self._stopping
+
+    def _snapshot_event(self, vin: str) -> asyncio.Event:
+        """The signal for "this vehicle has pushed something"."""
+        return self._snapshot_seen.setdefault(vin, asyncio.Event())
+
+    async def async_stop_telemetry(self) -> None:
+        """Stop the socket for good, and make sure nothing restarts it.
+
+        The one way the socket is taken down on the way out. Setting the flag
+        before taking the lock matters: a press already inside it will find the
+        flag set the moment it gets there and decline to start anything.
+        """
+        self._stopping = True
+        async with self._socket_lock:
+            await self.telemetry.async_stop()
+
+    async def async_resubscribe_telemetry(self, vin: str) -> Resubscription:
         """Cycle the telemetry socket so the broker re-delivers a snapshot.
 
         The broker sends one on every subscription, and that is the only thing
@@ -249,7 +287,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         walled, and the car pushes when it wakes rather than when asked.
 
         Three outcomes rather than two, because a press that quietly did
-        nothing is the failure this button is still living down.
+        nothing is the failure this button is still living down. DONE means a
+        snapshot for this vehicle actually arrived — not that the handshake
+        finished, which happens a fraction of a second earlier and says
+        nothing about whether any data followed.
         """
         now = dt_util.utcnow()
         if (
@@ -262,15 +303,32 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return Resubscription.TOO_SOON
         self._resubscribed_at = now
-        self._connected.clear()
-        await self.telemetry.async_stop()
-        await self.telemetry.async_start()
-        # Waiting on the socket's own signal rather than polling it: the
-        # supervisor task does the reconnecting and the handshake, and the
-        # snapshot that is the point of this arrives after it.
+        arrived = self._snapshot_event(vin)
+        # Under the lock, and only the lifecycle: the wait below does not
+        # touch the socket, and holding it across fifteen seconds would make
+        # an unload queue behind a press that is only listening.
+        async with self._socket_lock:
+            if self._stop_requested():
+                return Resubscription.FAILED
+            self._connected.clear()
+            arrived.clear()
+            await self.telemetry.async_stop()
+            # Checked again on the far side: stopping the old socket yields
+            # while the supervisor unwinds, which is exactly where an unload
+            # fits, and starting one afterwards is how a connection outlives
+            # the entry that owned it.
+            if self._stop_requested():
+                return Resubscription.FAILED
+            await self.telemetry.async_start()
+        # The handshake, and then the thing the press was for. Waiting only on
+        # the first reports success while every reading is still the old one:
+        # the snapshot follows the subscription rather than arriving with it,
+        # and a broker that accepts the subscription and then sends nothing
+        # would look identical to one that answered.
         try:
             async with asyncio.timeout(RESUBSCRIBE_TIMEOUT):
                 await self._connected.wait()
+                await arrived.wait()
         except TimeoutError:
             return Resubscription.FAILED
         return Resubscription.DONE
@@ -352,7 +410,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         and Home Assistant stopping is exactly when that poll never comes.
         """
         self._persist()
-        await self.telemetry.async_stop()
+        await self.async_stop_telemetry()
         await self.portal.async_close()
         await super().async_shutdown()
 
@@ -424,6 +482,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._last_status_seen.pop(vin, None)
             self._unsettled_since.pop(vin, None)
             self._volatile_seen.pop(vin, None)
+            self._snapshot_seen.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -730,6 +789,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._pushed_at[vin] = sent
         self._note_status_change(vin)
         self._note_unsettled(vin, status)
+        self._snapshot_event(vin).set()
         if vin in self._awaiting:
             # A car whose snapshot arrives after setup no longer needs the
             # integration reloaded to get entities: the platforms watch for

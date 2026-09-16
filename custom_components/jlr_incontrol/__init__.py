@@ -94,6 +94,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool
         # coordinator from what the entry holds: anything gathered since the
         # last poll is only in memory until this runs.
         coordinator.async_save()
-        await coordinator.telemetry.async_stop()
+        # Through the coordinator, which takes the socket's lifecycle lock and
+        # latches "stopping" first — so a Refresh press in flight cannot start
+        # a fresh supervisor on an entry that has already gone.
+        await coordinator.async_stop_telemetry()
         await coordinator.portal.async_close()
     return unloaded

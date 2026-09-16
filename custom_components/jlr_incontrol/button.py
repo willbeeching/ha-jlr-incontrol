@@ -101,7 +101,7 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
         # Both failures are raised rather than logged. Being told the press was
         # too soon is information; a press that silently skipped the half
         # somebody pressed it for is the original complaint wearing a new coat.
-        outcome = await self.coordinator.async_resubscribe_telemetry()
+        outcome = await self.coordinator.async_resubscribe_telemetry(self._vin)
         if outcome is Resubscription.TOO_SOON:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
