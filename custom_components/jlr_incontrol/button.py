@@ -19,7 +19,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import JlrConfigEntry
 from .const import DOMAIN
-from .coordinator import JlrCoordinator
+from .coordinator import JlrCoordinator, Resubscription
 from .entity import JlrVehicleEntity, async_add_vehicle_entities
 
 # Coordinator-backed and read-only: there is nothing to serialise, and
@@ -97,7 +97,17 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
         # sends those when a subscription is made. Without this the button
         # moved the map pin and nothing else, which is precisely what "refresh
         # does not work" meant.
-        if not await self.coordinator.async_resubscribe_telemetry():
+        #
+        # Both failures are raised rather than logged. Being told the press was
+        # too soon is information; a press that silently skipped the half
+        # somebody pressed it for is the original complaint wearing a new coat.
+        outcome = await self.coordinator.async_resubscribe_telemetry()
+        if outcome is Resubscription.TOO_SOON:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="refresh_too_soon",
+            )
+        if outcome is Resubscription.FAILED:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="refresh_failed",

@@ -154,8 +154,20 @@ class TestRefreshReachesTheCar:
         await press(hass, refresh_button(hass))
         loaded.telemetry.stopped = False
 
-        await press(hass, refresh_button(hass))
+        with pytest.raises(HomeAssistantError):
+            await press(hass, refresh_button(hass))
         assert loaded.telemetry.stopped is False
+
+    async def test_a_press_inside_the_floor_says_so_rather_than_nothing(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # Skipping the half of the press somebody pressed it for, and
+        # reporting success, is the fault this button spent two releases
+        # living down. It does not get to come back as a rate limit.
+        await press(hass, refresh_button(hass))
+        with pytest.raises(HomeAssistantError) as raised:
+            await press(hass, refresh_button(hass))
+        assert raised.value.translation_key == "refresh_too_soon"
 
     async def test_the_floor_lifts(
         self,

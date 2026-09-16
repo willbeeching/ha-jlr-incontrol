@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
@@ -57,6 +57,7 @@ from .const import (
     PORTAL_RETRY_AFTER,
     PORTAL_VEHICLES_TTL,
     POSITION_TRUST_WINDOW,
+    RESUBSCRIBE_FLOOR,
     SCAN_INTERVAL_HOUSEKEEPING,
     STALE_AFTER,
     TELEMETRY_GRACE,
@@ -89,6 +90,14 @@ def _to_miles(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+class Resubscription(StrEnum):
+    """What a forced resubscription did, for a caller that has to say so."""
+
+    DONE = "done"
+    TOO_SOON = "too_soon"
+    FAILED = "failed"
 
 
 class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -150,10 +159,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # one of them is still silent.
         self._awaiting: set[str] = set()
         self._snapshots_ready = asyncio.Event()
-        # None rather than 0.0 for "never": time.monotonic() counts from an
-        # arbitrary origin, and on a host where that origin is recent the
-        # sentinel would sit inside the floor and swallow the first press.
-        self._resubscribed_at: float | None = None
+        # None for "never", and the wall clock rather than a monotonic one,
+        # so this floor reads exactly like the portal's a few lines down.
+        self._resubscribed_at: datetime | None = None
         # Mirrors the socket's state as an awaitable, for the one caller that
         # needs to know the moment it comes back rather than on the next poll.
         self._connected = asyncio.Event()
@@ -233,27 +241,26 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 FIRST_SNAPSHOT_TIMEOUT,
             )
 
-    # The broker re-delivers a snapshot on every subscription, which is the
-    # only thing that produces new vehicle data on demand: the REST status
-    # endpoint is walled and the car itself pushes only when it wakes. Floored
-    # so a leant-on button cannot turn into a reconnect loop against JLR.
-    RESUBSCRIBE_FLOOR = 60.0
+    async def async_resubscribe_telemetry(self) -> Resubscription:
+        """Cycle the telemetry socket so the broker re-delivers a snapshot.
 
-    async def async_resubscribe_telemetry(self) -> bool:
-        """Cycle the telemetry socket so the broker pushes a fresh snapshot.
+        The broker sends one on every subscription, and that is the only thing
+        that produces vehicle status on demand: the REST status endpoint is
+        walled, and the car pushes when it wakes rather than when asked.
 
-        Returns True once the socket is back up, False if it did not come back
-        within the wait -- the caller is a button press, and somebody standing
-        there deserves to be told that nothing arrived.
+        Three outcomes rather than two, because a press that quietly did
+        nothing is the failure this button is still living down.
         """
-        now = time.monotonic()
-        if self._resubscribed_at is not None:
-            since = now - self._resubscribed_at
-            if since < self.RESUBSCRIBE_FLOOR:
-                _LOGGER.debug(
-                    "telemetry resubscribed %.0fs ago; too soon to ask again", since
-                )
-                return self.telemetry.connected
+        now = dt_util.utcnow()
+        if (
+            self._resubscribed_at is not None
+            and now - self._resubscribed_at < RESUBSCRIBE_FLOOR
+        ):
+            _LOGGER.debug(
+                "telemetry resubscribed %s ago; too soon to ask again",
+                now - self._resubscribed_at,
+            )
+            return Resubscription.TOO_SOON
         self._resubscribed_at = now
         self._connected.clear()
         await self.telemetry.async_stop()
@@ -265,8 +272,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             async with asyncio.timeout(RESUBSCRIBE_TIMEOUT):
                 await self._connected.wait()
         except TimeoutError:
-            return False
-        return True
+            return Resubscription.FAILED
+        return Resubscription.DONE
 
     def async_start_keepalive(self) -> None:
         """Put the portal keep-alive on its own short clock."""

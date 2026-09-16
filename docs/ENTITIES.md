@@ -104,7 +104,7 @@ Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "win
 | Entity | Notes |
 | --- | --- |
 | `device_tracker` — Location | Where the last completed journey ended, not a live position. Carries `timestamp` for the fix, `trusted` for whether it is recent enough to act on, and `stale` once over a day old. |
-| `button` — Refresh | Re-reads what JLR already hold: the vehicle list and location, and a fresh telemetry snapshot by resubscribing to the socket. It does not wake the car, and it does nothing more than the reconnect that happens on its own every few minutes — it just does it now. Rate-limited to one resubscription a minute. |
+| `button` — Refresh | Re-reads what JLR already hold: the vehicle list and location, and a fresh telemetry snapshot by resubscribing to the socket. It does not wake the car, and it does nothing more than the reconnect that happens on its own every few minutes — it just does it now. Rate-limited to one resubscription a minute, and says so rather than quietly skipping it. |
 
 ## Readings from a car caught mid-use
 

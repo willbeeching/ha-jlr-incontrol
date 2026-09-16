@@ -82,6 +82,11 @@ PORTAL_INTERVAL = timedelta(minutes=30)
 # business gating a deliberate act, but somebody leaning on the button should
 # not turn into a request per press either — this is somebody else's server.
 PORTAL_FORCE_FLOOR = timedelta(minutes=1)
+# The same floor over the telemetry resubscription a Refresh press forces.
+# Reconnecting is cheap for us and a handshake for the broker, and pressing
+# twice inside a minute cannot produce anything the first press did not: the
+# socket redelivers whatever JLR hold, and JLR do not change it that fast.
+RESUBSCRIBE_FLOOR = timedelta(minutes=1)
 # How often to touch the portal so its session does not idle out. Its own
 # clock, not the housekeeping one: the session has been watched die inside
 # fifteen minutes of a fresh sign-in, and once it has, the identity session
