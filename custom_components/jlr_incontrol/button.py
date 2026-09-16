@@ -91,3 +91,14 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
                 translation_domain=DOMAIN,
                 translation_key="refresh_failed",
             )
+        # And the vehicle status, which is the half of it people actually mean.
+        # Housekeeping above re-reads the vehicle list and the parked location;
+        # doors, windows and fuel come over the socket, and the broker only
+        # sends those when a subscription is made. Without this the button
+        # moved the map pin and nothing else, which is precisely what "refresh
+        # does not work" meant.
+        if not await self.coordinator.async_resubscribe_telemetry():
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="refresh_failed",
+            )
