@@ -52,6 +52,7 @@ that is.
 | 12V battery voltage | `BATTERY_VOLTAGE` | any | diagnostic | on |
 | 12V battery charge | `BATTERY_STATUS_12V_SOC` | any | diagnostic | **off** |
 | Engine coolant temperature | `ENGINE_COOLANT_TEMP` | non-EV | — | on |
+| Vehicle state | `VEHICLE_STATE_TYPE` | any | diagnostic | on |
 | Tyre pressure ×4 | `TYRE_PRESSURE_*` | any | — | on |
 | Battery | `EV_STATE_OF_CHARGE` | EV/PHEV | — | on |
 | Electric range | `EV_RANGE_ON_BATTERY_MILES` | EV/PHEV | — | on |
@@ -63,6 +64,13 @@ that is.
 | Charge-now override | `EV_CHARGE_NOW_SETTING` | EV/PHEV | — | **off** |
 | Last updated | — | any | diagnostic | on |
 | All info | — | any | diagnostic | **off** |
+
+**Engine coolant temperature** reads unknown unless **Vehicle state** says the engine is
+running. The car latches the gauge at shutdown and keeps reporting that figure for as long
+as it is parked — a plausible 89 °C sitting on a dashboard hours after the bonnet went cold,
+measured across twelve parked hours in which the 12V voltage moved and this did not. Its
+companion, **Vehicle state**, is the raw enum (`KEY_REMOVED`, `KEY_ON_ENGINE_OFF`, ...) and is
+what an automation should test before treating any of this as live.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC
