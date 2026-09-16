@@ -21,6 +21,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
+import doubles  # noqa: E402
 from doubles import KEPT, STATUS, Doubles  # noqa: E402
 from homeassistant.const import STATE_UNKNOWN  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
@@ -28,14 +29,18 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
 
+# No LAST_UPDATED_TIME: neither of the cars this was built for sends one,
+# which is the whole reason freshness has to be observed rather than read.
+NO_TIMESTAMP = {k: v for k, v in STATUS.items() if k != "LAST_UPDATED_TIME"}
+
 CAUGHT_MID_USE = {
-    **STATUS,
+    **NO_TIMESTAMP,
     "VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF",
     "THEFT_ALARM_STATUS": "ALARM_OFF",
     "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
 }
 SETTLED = {
-    **STATUS,
+    **NO_TIMESTAMP,
     "VEHICLE_STATE_TYPE": "KEY_REMOVED",
     "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
 }
@@ -162,3 +167,115 @@ class TestACarCaughtMidUse:
         await age(hass, entry, freezer, hours=3)
 
         assert locking(hass).state == "on"
+
+
+class TestTheClockItRunsOn:
+    """Two ways the threshold never arrives."""
+
+    async def test_a_car_that_has_never_changed_still_expires(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        # A fresh install. The first snapshot is not a change — we have
+        # nothing to compare it with — so nothing records when it arrived,
+        # and a car that then repeats it forever has no age at all.
+        coord = entry.runtime_data
+        coord._last_changed.pop(KEPT, None)
+        coord._last_status_seen.pop(KEPT, None)
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+
+        await age(hass, entry, freezer, minutes=45)
+
+        assert locking(hass).state == STATE_UNKNOWN
+
+    async def test_battery_drift_does_not_renew_a_door_reading(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        # The 12V voltage moves on a parked car. If any field moving counts
+        # as the car reporting, a battery slowly discharging keeps a door
+        # reading from last night looking current indefinitely.
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+
+        for volts in ("12.5", "12.4", "12.3", "12.2"):
+            freezer.tick(timedelta(minutes=12))
+            loaded.telemetry.push(KEPT, {**CAUGHT_MID_USE, "BATTERY_VOLTAGE": volts})
+            await hass.async_block_till_done()
+
+        assert (
+            locking(hass).state == STATE_UNKNOWN
+        ), "a discharging battery kept a stale lock reading trusted"
+
+
+class TestTheTwoListsAgree:
+    """The key set and the sensors it governs, kept in step.
+
+    The coordinator cannot import the platform, so the keys are written out in
+    const.py as well as implied by the descriptions. Two lists over one idea
+    drift, and this is the cheap thing that stops it: a sensor marked volatile
+    whose key nobody watches would simply never expire.
+    """
+
+    def test_every_volatile_sensor_has_its_key_watched(self) -> None:
+        from custom_components.jlr_incontrol.binary_sensor import (
+            VEHICLE_BINARY_SENSORS,
+        )
+        from custom_components.jlr_incontrol.const import VOLATILE_STATUS_KEYS
+
+        missing = {
+            d.status_key
+            for d in VEHICLE_BINARY_SENSORS
+            if d.volatile and d.status_key not in VOLATILE_STATUS_KEYS
+        }
+        assert not missing, f"marked volatile but unwatched: {sorted(missing)}"
+
+    def test_nothing_is_watched_that_no_sensor_uses(self) -> None:
+        from custom_components.jlr_incontrol.binary_sensor import (
+            VEHICLE_BINARY_SENSORS,
+        )
+        from custom_components.jlr_incontrol.const import VOLATILE_STATUS_KEYS
+
+        used = {d.status_key for d in VEHICLE_BINARY_SENSORS if d.volatile}
+        # VEHICLE_STATE_TYPE is watched without being a binary sensor: it is
+        # what decides the car is mid-use in the first place.
+        assert set(VOLATILE_STATUS_KEYS) - used == {"VEHICLE_STATE_TYPE"}
+
+
+class TestTheClockSurvivesARestart:
+    async def test_a_reload_does_not_hand_back_the_threshold(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Restarts are not rare, and one that reset this would trust a
+        # mid-shutdown snapshot for another half hour every time.
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+        entry.runtime_data._persist()
+        freezer.tick(timedelta(minutes=45))
+
+        # The car is still sitting there, so every snapshot after the reload
+        # is the same one — including the one the new socket is handed the
+        # moment it subscribes. A settled snapshot would rightly clear the
+        # clock; this is the case where nothing has settled.
+        monkeypatch.setattr(doubles, "STATUS", CAUGHT_MID_USE)
+        await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        # What the broker actually does on a resubscription: hands back the
+        # same snapshot it was already holding. The clock must not treat that
+        # as the car having just reported.
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == STATE_UNKNOWN

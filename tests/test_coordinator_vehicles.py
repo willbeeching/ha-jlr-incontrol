@@ -64,6 +64,8 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_portal_ids": {},
         "_last_status_seen": {},
         "_last_changed": {},
+        "_unsettled_since": {},
+        "_volatile_seen": {},
         "_awaiting": set(),
         "_snapshots_ready": asyncio.Event(),
         "_portal_signed_out": None,
@@ -92,6 +94,8 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_portal_ids": {KEPT: "id-kept", SOLD: "id-sold"},
         "_last_status_seen": {KEPT: {}, SOLD: {}},
         "_last_changed": {KEPT: "t1", SOLD: "t2"},
+        "_unsettled_since": {KEPT: "t1", SOLD: "t2"},
+        "_volatile_seen": {KEPT: (), SOLD: ()},
     }
     return coordinator(**{**both, **state})
 
@@ -105,6 +109,8 @@ CACHES = (
     "_portal_ids",
     "_last_status_seen",
     "_last_changed",
+    "_unsettled_since",
+    "_volatile_seen",
 )
 
 

@@ -43,6 +43,7 @@ from .const import (
     CONF_PORTAL_MINTED,
     CONF_REFRESH_TOKEN,
     CONF_SSO_COOKIES,
+    CONF_UNSETTLED_SINCE,
     CONF_USER_ID,
     CONF_USERNAME,
     DOMAIN,
@@ -59,6 +60,7 @@ from .const import (
     TELEMETRY_GRACE,
     UNSETTLED_MINUTES_DEFAULT,
     UNSETTLED_VEHICLE_STATES,
+    VOLATILE_STATUS_KEYS,
 )
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .redact import vehicle_label
@@ -120,6 +122,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_changed: dict[str, str] = dict(
             entry.data.get(CONF_LAST_CHANGED) or {}
         )
+        # When each car was first seen in the state it is still sitting in,
+        # and the volatile readings as they were then. Deliberately not
+        # _last_changed: that moves when anything in the document moves, and a
+        # parked car's battery voltage drifts on its own.
+        self._unsettled_since: dict[str, str] = dict(
+            entry.data.get(CONF_UNSETTLED_SINCE) or {}
+        )
+        self._volatile_seen: dict[str, tuple[Any, ...]] = {}
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
         self._disconnected_since: datetime | None = dt_util.utcnow()
@@ -351,6 +361,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._position.pop(vin, None)
             self._portal_ids.pop(vin, None)
             self._last_status_seen.pop(vin, None)
+            self._unsettled_since.pop(vin, None)
+            self._volatile_seen.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -632,6 +644,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
         if (self.entry.data.get(CONF_LAST_CHANGED) or {}) != self._last_changed:
             updates[CONF_LAST_CHANGED] = dict(self._last_changed)
+        if (self.entry.data.get(CONF_UNSETTLED_SINCE) or {}) != self._unsettled_since:
+            updates[CONF_UNSETTLED_SINCE] = dict(self._unsettled_since)
         if updates:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, **updates}
@@ -648,6 +662,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if sent:
             self._pushed_at[vin] = sent
         self._note_status_change(vin)
+        self._note_unsettled(vin, status)
         if vin in self._awaiting:
             # A car whose snapshot arrives after setup no longer needs the
             # integration reloaded to get entities: the platforms watch for
@@ -703,6 +718,35 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             held,
         )
         return True
+
+    def _note_unsettled(self, vin: str, status: dict[str, Any]) -> None:
+        """Track how long this car has been sitting in the state it is in.
+
+        Its own clock, started the first time a car is seen mid-use and
+        restarted whenever one of the readings it governs actually moves.
+
+        Not ``_last_changed``, which was the first thing this used and wrong
+        twice over. That is set only when a snapshot *differs* from the one
+        before it, so a car whose very first snapshot is mid-use has no time at
+        all and never expires; and it moves when anything in the document
+        moves, so a parked car's 12V voltage drifting down over an evening kept
+        a door reading from before dark looking current.
+        """
+        state = str(status.get("VEHICLE_STATE_TYPE", "")).upper()
+        if state not in UNSETTLED_VEHICLE_STATES:
+            self._unsettled_since.pop(vin, None)
+            self._volatile_seen.pop(vin, None)
+            return
+        fingerprint = tuple(status.get(key) for key in VOLATILE_STATUS_KEYS)
+        previous = self._volatile_seen.get(vin)
+        # A restored clock with nothing seen yet is the first snapshot after a
+        # restart, and restarting the clock there would hand back the half hour
+        # persisting it was meant to preserve.
+        if vin not in self._unsettled_since or (
+            previous is not None and previous != fingerprint
+        ):
+            self._unsettled_since[vin] = dt_util.utcnow().isoformat()
+        self._volatile_seen[vin] = fingerprint
 
     def _note_status_change(self, vin: str) -> None:
         """Record when the car's reported state last actually changed.
@@ -792,7 +836,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # asserted. Separate from status_stale, which is about age
                 # alone: a car parked for a week has an old snapshot and a
                 # perfectly good set of door positions in it.
-                "readings_provisional": self._readings_provisional(status, status_ts),
+                "readings_provisional": self._readings_provisional(vin),
                 "position_stale": self._is_stale(position_ts),
                 "position_trusted": self.position_trusted,
             }
@@ -856,19 +900,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 best, best_dt = ts, parsed
         return best
 
-    def _readings_provisional(self, status: dict[str, Any], ts: Any) -> bool:
-        """Whether doors, windows and locks in this snapshot are still claims.
+    def _readings_provisional(self, vin: str) -> bool:
+        """Whether doors, windows and locks for this car are still claims.
 
         Two conditions, and both have to hold. The snapshot has to have been
-        taken while somebody still had the key in the car — which is a photo of
-        something in progress, not of how the car was left — and it has to have
-        stopped changing for long enough that the car is plainly not still
-        reporting. Either alone is ordinary: a car mid-shutdown thirty seconds
-        ago is simply current, and a settled car untouched for a week is simply
-        parked.
+        taken while somebody still had the key in the car — a photo of
+        something in progress, not of how the car was left — and the readings
+        it governs have to have stopped moving for long enough that the car is
+        plainly not still reporting. Either alone is ordinary: a car
+        mid-shutdown thirty seconds ago is simply current, and a settled car
+        untouched for a week is simply parked.
 
-        Conservative by construction. An unrecognised state is treated as
-        settled, so a car nobody has observed keeps behaving exactly as it does
+        Conservative by construction. An unrecognised state never starts the
+        clock, so a car nobody has observed keeps behaving exactly as it does
         now rather than having its readings withheld on a guess.
         """
         # int() because the options selector hands back strings, and "0" is
@@ -881,10 +925,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             minutes = UNSETTLED_MINUTES_DEFAULT
         if minutes <= 0:
             return False
-        state = str(status.get("VEHICLE_STATE_TYPE", "")).upper()
-        if state not in UNSETTLED_VEHICLE_STATES:
-            return False
-        parsed = dt_util.parse_datetime(str(ts)) if ts else None
+        since = self._unsettled_since.get(vin)
+        parsed = dt_util.parse_datetime(since) if since else None
         if parsed is None:
             return False
         return dt_util.utcnow() - parsed > timedelta(minutes=minutes)

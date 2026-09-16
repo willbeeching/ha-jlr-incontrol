@@ -119,7 +119,10 @@ Two conditions, both required, because either alone is ordinary:
   before rather than having readings withheld on a guess.
 - **Gone quiet for long enough.** A car mid-shutdown thirty seconds ago is simply
   current. The threshold is **30 minutes** by default and configurable in the
-  integration's options, including off.
+  integration's options, including off. The clock runs on these readings alone,
+  and on nothing else in the document: a parked car's 12V voltage drifts down on
+  its own, and a discharging battery must not count as the car reporting in. It
+  survives a restart, so a reload does not hand back the half hour.
 
 A car that is properly parked keeps its readings indefinitely, however old they
 are: a window genuinely left open a week ago still reads open. And the readings

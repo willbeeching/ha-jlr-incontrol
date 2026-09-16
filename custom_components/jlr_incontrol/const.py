@@ -223,6 +223,10 @@ CONF_ATTRIBUTES = "attributes"
 # because it is the only honest answer to "when did this car last tell us
 # something", and losing it on a reload sent that sensor backwards.
 CONF_LAST_CHANGED = "last_changed"
+# When each car was first seen in the state it is still in. Persisted for the
+# same reason as the above: a restart that reset it would trust a mid-shutdown
+# snapshot for another half hour, and restarts are not rare.
+CONF_UNSETTLED_SINCE = "unsettled_since"
 # The ForgeRock session cookies captured at sign-in. The owner web portal has
 # no token-based entry point — it authenticates by handing its own OAuth dance
 # to the AM session in the browser — so reading location means keeping that
@@ -271,6 +275,32 @@ UNSETTLED_VEHICLE_STATES = ("KEY_ON_ENGINE_OFF",)
 # unused by the predicate below on purpose: this is documentation of what the
 # settled end looks like, not a second list to fall through to.
 SETTLED_VEHICLE_STATES = ("KEY_REMOVED",)
+
+# The keys behind the readings that stop being assertable, and the state key
+# that decides whether they are. The clock for withholding them runs on these
+# and nothing else: a parked car's 12V voltage drifts between snapshots, and a
+# discharging battery counting as "the car reported" would keep a door reading
+# from last night looking current for as long as the battery lasted.
+#
+# Kept here rather than derived from the sensor descriptions so the coordinator
+# does not have to import the platform. A test asserts the two agree, because
+# two lists over one idea drift.
+VOLATILE_STATUS_KEYS = (
+    "DOOR_BOOT_POSITION",
+    "DOOR_ENGINE_HOOD_POSITION",
+    "DOOR_FRONT_LEFT_POSITION",
+    "DOOR_FRONT_RIGHT_POSITION",
+    "DOOR_IS_ALL_DOORS_LOCKED",
+    "DOOR_REAR_LEFT_POSITION",
+    "DOOR_REAR_RIGHT_POSITION",
+    "IS_SUNROOF_OPEN",
+    "THEFT_ALARM_STATUS",
+    "VEHICLE_STATE_TYPE",
+    "WINDOW_FRONT_LEFT_STATUS",
+    "WINDOW_FRONT_RIGHT_STATUS",
+    "WINDOW_REAR_LEFT_STATUS",
+    "WINDOW_REAR_RIGHT_STATUS",
+)
 
 # ---- Refresh cadence ----
 # Vehicle data arrives over the telemetry socket as it happens, so there is no
