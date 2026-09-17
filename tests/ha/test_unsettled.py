@@ -336,3 +336,81 @@ class TestARestartThatMissesAChange:
         await hass.async_block_till_done()
 
         assert locking(hass).state == STATE_UNKNOWN
+
+
+class TestOnlyTheUnsecureSideIsWithheld:
+    """The asymmetry, and the car that forced it.
+
+    Withholding both directions assumed every car passes briefly through the
+    mid-use state on its way to a settled one. One of the two this was built
+    on does: it reports KEY_REMOVED within minutes. The other sits in
+    KEY_ON_ENGINE_OFF for fifteen hours at a stretch, so on that car every
+    door, window and lock went unknown overnight — all of them shut, all of
+    them correct, all of them hidden.
+
+    A car somebody is walking away from moves towards shut, locked and armed.
+    So a stale mid-use snapshot claiming a door is open is the one worth
+    doubting, and the one that sends somebody back out to the drive. One
+    saying it is shut is where the car was heading anyway.
+    """
+
+    SHUT = {
+        **NO_TIMESTAMP,
+        "VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF",
+        "DOOR_IS_ALL_DOORS_LOCKED": "TRUE",
+    }
+
+    async def test_a_shut_car_keeps_reading_shut(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        loaded.telemetry.push(KEPT, self.SHUT)
+        await hass.async_block_till_done()
+
+        await age(hass, entry, freezer, hours=15)
+
+        assert (
+            locking(hass).state == "off"
+        ), "a locked car went unknown overnight on a reading that was right"
+
+    async def test_an_open_one_is_still_doubted(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+
+        await age(hass, entry, freezer, hours=15)
+
+        assert locking(hass).state == STATE_UNKNOWN
+
+    def test_the_alarm_reads_the_other_way_round(self) -> None:
+        # On means armed, which is the secure side, so it is the off reading
+        # that gets withheld. Asserted on the descriptions rather than through
+        # an entity: the fixture's status document carries no alarm key, so
+        # no alarm entity exists to poke, and this is the invariant anyway.
+        from custom_components.jlr_incontrol.binary_sensor import (
+            VEHICLE_BINARY_SENSORS,
+        )
+
+        backwards = {
+            d.key
+            for d in VEHICLE_BINARY_SENSORS
+            if d.volatile and not d.insecure_when_on
+        }
+        assert backwards == {"alarm"}
+
+    def test_every_other_volatile_reading_hides_the_open_side(self) -> None:
+        from custom_components.jlr_incontrol.binary_sensor import (
+            VEHICLE_BINARY_SENSORS,
+        )
+
+        for description in VEHICLE_BINARY_SENSORS:
+            if description.volatile and description.key != "alarm":
+                assert description.insecure_when_on, description.key

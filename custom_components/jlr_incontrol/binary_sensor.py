@@ -39,6 +39,10 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # secure" family, which is what somebody walks back out to the drive over;
     # false for the readings that do not decay, like the odometer.
     volatile: bool = False
+    # Which way round "not secure" reads. On for a door, a window or an
+    # unlocked car; off for an alarm, where on means armed. Only the
+    # not-secure side is ever withheld — see _withheld below.
+    insecure_when_on: bool = True
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -116,6 +120,8 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         # reported ALARM_OFF while sitting armed on a drive, because arming
         # happens after the snapshot was taken and no later one arrived.
         volatile=True,
+        # The odd one out: on means armed, which is the secure side.
+        insecure_when_on=False,
         is_on=lambda v: v == "ALARM_ARMED",
     ),
     # The app's own enum has three going-off variants.
@@ -247,19 +253,36 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool | None:
-        if self.entity_description.volatile and self._vehicle.get(
-            "readings_provisional"
-        ):
-            # Unknown rather than the last thing the car said. It was caught
-            # with the key still in it and has said nothing since, so this
-            # answer is a guess about a car somebody has walked away from —
-            # and a confident wrong answer about whether a window is open is
-            # worse than admitting we cannot say.
-            return None
         raw = self._status_value(self.entity_description.status_key)
         if raw is None:
             return None
         value = str(raw).upper()
         if self.entity_description.unknown_is_none and value in ("UNKNOWN", ""):
             return None
-        return self.entity_description.is_on(value)
+        state = self.entity_description.is_on(value)
+        if self._withheld(state):
+            return None
+        return state
+
+    def _withheld(self, state: bool) -> bool:
+        """Whether to say nothing rather than assert this reading.
+
+        Only one direction is withheld, and the asymmetry is the point. A car
+        somebody is walking away from moves towards shut, locked and armed, so
+        a stale mid-use snapshot saying a door is *open* is the one likely to
+        have been overtaken — and it is also the reading that sends somebody
+        back out to the drive. One saying the door is shut is both the state
+        the car is heading for and harmless if it is a moment behind.
+
+        Withholding both directions was the first attempt and it was wrong in
+        practice. It assumed a car passes through the mid-use state on its way
+        to a settled one; one of the two cars this was built on sits in it for
+        fifteen hours at a time, so every reading it had — all of them correct,
+        all of them shut — disappeared behind an unknown.
+        """
+        description = self.entity_description
+        if not description.volatile:
+            return False
+        if not self._vehicle.get("readings_provisional"):
+            return False
+        return state is description.insecure_when_on

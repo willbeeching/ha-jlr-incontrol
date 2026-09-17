@@ -108,36 +108,37 @@ Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "win
 
 ## Readings from a car caught mid-use
 
-Doors, windows, the bonnet and boot, central locking, the sunroof and the alarm
-stop being asserted — they report **unknown** — when the last thing Jaguar Land
-Rover sent was taken while somebody still had the key in the car, and nothing
-newer has arrived for half an hour.
+Doors, windows, the bonnet and boot, central locking, the sunroof and the alarm report
+**unknown** — rather than the last thing the car said — when all three of these hold:
 
-That combination is the one that has actually misled people. A snapshot carrying
-`VEHICLE_STATE_TYPE` of `KEY_ON_ENGINE_OFF` is a photograph of a car somebody is
-still getting out of: the windows in it are where they were at that instant, not
-where they were left. Twice a car has been reported with its windows down for
-hours afterwards, because the next snapshot never came — the delay is in JLR's
-copy, and nothing this integration can do reaches past it.
+- **The snapshot was caught mid-use.** `VEHICLE_STATE_TYPE` says somebody still had the key
+  in the car, which makes the snapshot a photograph of something in progress rather than of
+  how the car was left. Only states actually observed count; anything unrecognised is treated
+  as settled.
+- **It has gone quiet.** The readings above have not moved for longer than the threshold —
+  **30 minutes** by default, configurable in the integration's options, including off. The
+  clock runs on those readings alone, so a parked car's 12V voltage drifting down does not
+  count as the car reporting in. It survives a restart.
+- **The reading claims the car is not secure.** A door or window open, the car unlocked, the
+  alarm not armed.
 
-Two conditions, both required, because either alone is ordinary:
+That last condition is the important one, and it is asymmetric on purpose. A car somebody is
+walking away from moves towards shut, locked and armed — so a stale mid-use snapshot claiming
+a door is *open* is the one likely to have been overtaken, and it is also the reading that
+sends somebody back out to the drive at midnight. One saying the door is shut is where the car
+was heading anyway, and is harmless if it is a few minutes behind.
 
-- **Caught mid-use.** Only states actually observed count. A car reporting
-  something unrecognised is treated as settled, so it behaves exactly as it did
-  before rather than having readings withheld on a guess.
-- **Gone quiet for long enough.** A car mid-shutdown thirty seconds ago is simply
-  current. The threshold is **30 minutes** by default and configurable in the
-  integration's options, including off. The clock runs on these readings alone,
-  and on nothing else in the document: a parked car's 12V voltage drifts down on
-  its own, and a discharging battery must not count as the car reporting in. It
-  survives a restart, so a reload does not hand back the half hour.
+Withholding both directions was the first attempt and it was wrong. It assumed every car
+passes briefly through the mid-use state on its way to a settled one. Of the two cars this was
+built on, one does — it reports `KEY_REMOVED` within minutes — and the other sits in
+`KEY_ON_ENGINE_OFF` for fifteen hours at a stretch. On that car every reading went unknown
+overnight, all of them shut and all of them correct.
 
-A car that is properly parked keeps its readings indefinitely, however old they
-are: a window genuinely left open a week ago still reads open. And the readings
-that do not decay — odometer, fuel, tyre pressures, service intervals — are never
-withheld, because the last figure is still the best answer available.
+Readings that do not decay — odometer, fuel, tyre pressures, service intervals — are never
+withheld: the last figure is still the best answer available.
 
-This does not make the data fresher. It stops a guess being displayed as a fact.
+None of this makes the data fresher. The delay is in Jaguar Land Rover's copy and nothing here
+reaches past it. It stops a guess being displayed as a fact.
 
 ## Out-of-order snapshots
 
