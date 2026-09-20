@@ -65,12 +65,21 @@ that is.
 | Last updated | — | any | diagnostic | on |
 | All info | — | any | diagnostic | **off** |
 
-**Engine coolant temperature** reads unknown unless **Vehicle state** says the engine is
-running. The car latches the gauge at shutdown and keeps reporting that figure for as long
-as it is parked — a plausible 89 °C sitting on a dashboard hours after the bonnet went cold,
-measured across twelve parked hours in which the 12V voltage moved and this did not. Its
-companion, **Vehicle state**, is the raw enum (`KEY_REMOVED`, `KEY_ON_ENGINE_OFF`, ...) and is
-what an automation should test before treating any of this as live.
+**Engine coolant temperature** reads unknown once the figure has stood unchanged for longer
+than the withholding threshold. The car latches the gauge when the engine stops and keeps
+pushing that number for as long as it sits there, so 89 °C is both a perfectly ordinary warm
+engine and a perfectly ordinary car that went cold overnight — nothing in the value gives it
+away. Showing it briefly after a drive and then admitting we no longer know is about how the
+real thing behaves.
+
+It was first gated on **Vehicle state** reporting a running engine. No car does: across four
+days and several drives on two vehicles, that key was only ever `KEY_REMOVED` or
+`KEY_ON_ENGINE_OFF`, because the telematics unit does not push while the engine is turning.
+The sensor therefore read unknown permanently, including twenty-five minutes after a drive
+with the figure sitting in the snapshot. Age judges it now, measured on the reading itself
+rather than on when the car last said anything — a parked car's 12V voltage drifts down on its
+own, and counting that as the car reporting in would keep a coolant figure looking current all
+night.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC

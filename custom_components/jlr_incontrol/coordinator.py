@@ -36,6 +36,8 @@ from .const import (
     ATTRIBUTES_RETRY,
     ATTRIBUTES_TTL,
     CONF_ATTRIBUTES,
+    CONF_DECAYED_SEEN,
+    CONF_DECAYED_SINCE,
     CONF_DEVICE_ID,
     CONF_LAST_CHANGED,
     CONF_PASSWORD,
@@ -48,6 +50,7 @@ from .const import (
     CONF_USER_ID,
     CONF_USERNAME,
     CONF_VOLATILE_SEEN,
+    DECAYING_STATUS_KEYS,
     DOMAIN,
     ISSUE_PORTAL_SIGNED_OUT,
     OPT_UNSETTLED_MINUTES,
@@ -150,6 +153,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._volatile_seen: dict[str, tuple[Any, ...]] = {
             vin: tuple(seen)
             for vin, seen in (entry.data.get(CONF_VOLATILE_SEEN) or {}).items()
+        }
+        # The same pair again, for readings that go stale on their own clock
+        # rather than because of what the car is doing.
+        self._decayed_since: dict[str, str] = dict(
+            entry.data.get(CONF_DECAYED_SINCE) or {}
+        )
+        self._decayed_seen: dict[str, tuple[Any, ...]] = {
+            vin: tuple(seen)
+            for vin, seen in (entry.data.get(CONF_DECAYED_SEEN) or {}).items()
         }
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
@@ -483,6 +495,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._unsettled_since.pop(vin, None)
             self._volatile_seen.pop(vin, None)
             self._snapshot_seen.pop(vin, None)
+            self._decayed_since.pop(vin, None)
+            self._decayed_seen.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -772,6 +786,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stored = {vin: list(seen) for vin, seen in self._volatile_seen.items()}
         if (self.entry.data.get(CONF_VOLATILE_SEEN) or {}) != stored:
             updates[CONF_VOLATILE_SEEN] = stored
+        if (self.entry.data.get(CONF_DECAYED_SINCE) or {}) != self._decayed_since:
+            updates[CONF_DECAYED_SINCE] = dict(self._decayed_since)
+        decayed = {vin: list(seen) for vin, seen in self._decayed_seen.items()}
+        if (self.entry.data.get(CONF_DECAYED_SEEN) or {}) != decayed:
+            updates[CONF_DECAYED_SEEN] = decayed
         if updates:
             self.hass.config_entries.async_update_entry(
                 self.entry, data={**self.entry.data, **updates}
@@ -789,6 +808,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._pushed_at[vin] = sent
         self._note_status_change(vin)
         self._note_unsettled(vin, status)
+        self._note_decay(vin, status)
         self._snapshot_event(vin).set()
         if vin in self._awaiting:
             # A car whose snapshot arrives after setup no longer needs the
@@ -868,18 +888,50 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._unsettled_since.pop(vin, None)
             self._volatile_seen.pop(vin, None)
             return
-        fingerprint = tuple(status.get(key) for key in VOLATILE_STATUS_KEYS)
-        previous = self._volatile_seen.get(vin)
-        # Both halves survive a restart, so the first snapshot back is judged
-        # on what it says rather than on there being nothing to compare it
-        # with. Identical means the broker handed back what it already held and
-        # the clock keeps running; different means the car has actually
-        # reported something new, whether or not we were watching at the time.
-        if vin not in self._unsettled_since or (
-            previous is not None and previous != fingerprint
-        ):
-            self._unsettled_since[vin] = dt_util.utcnow().isoformat()
-        self._volatile_seen[vin] = fingerprint
+        self._note_subset(
+            vin,
+            status,
+            VOLATILE_STATUS_KEYS,
+            self._volatile_seen,
+            self._unsettled_since,
+        )
+
+    def _note_decay(self, vin: str, status: dict[str, Any]) -> None:
+        """Track how long the readings that go off on their own have stood.
+
+        No condition about the car attached: coolant temperature is latched
+        when the engine stops, whatever the car then reports about itself, so
+        the only question is how long the figure has sat unchanged.
+        """
+        self._note_subset(
+            vin,
+            status,
+            DECAYING_STATUS_KEYS,
+            self._decayed_seen,
+            self._decayed_since,
+        )
+
+    def _note_subset(
+        self,
+        vin: str,
+        status: dict[str, Any],
+        keys: tuple[str, ...],
+        seen: dict[str, tuple[Any, ...]],
+        since: dict[str, str],
+    ) -> None:
+        """Record when this group of readings last actually moved.
+
+        Both halves survive a restart, so the first snapshot back is judged on
+        what it says rather than on there being nothing to compare it with.
+        Identical means the broker handed back what it already held and the
+        clock keeps running; different means the car reported something new,
+        whether or not anybody was watching at the time.
+        """
+        fingerprint = tuple(status.get(key) for key in keys)
+        previous = seen.get(vin)
+        if vin not in since or (previous is not None and previous != fingerprint):
+            since[vin] = dt_util.utcnow().isoformat()
+        seen[vin] = fingerprint
 
     def _note_status_change(self, vin: str) -> None:
         """Record when the car's reported state last actually changed.
@@ -970,6 +1022,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # alone: a car parked for a week has an old snapshot and a
                 # perfectly good set of door positions in it.
                 "readings_provisional": self._readings_provisional(vin),
+                # Separately: a reading that goes off on its own clock, with
+                # no condition about the car attached.
+                "readings_decayed": self._readings_decayed(vin),
                 "position_stale": self._is_stale(position_ts),
                 "position_trusted": self.position_trusted,
             }
@@ -1033,6 +1088,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 best, best_dt = ts, parsed
         return best
 
+    def _readings_decayed(self, vin: str) -> bool:
+        """Whether the self-staling readings have stood still too long.
+
+        No condition about what the car is doing, unlike the withholding
+        below. A coolant figure is true when it is taken and less true every
+        minute after, so its age is the whole question.
+        """
+        return self._stood_too_long(self._decayed_since.get(vin))
+
     def _readings_provisional(self, vin: str) -> bool:
         """Whether doors, windows and locks for this car are still claims.
 
@@ -1048,6 +1112,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         clock, so a car nobody has observed keeps behaving exactly as it does
         now rather than having its readings withheld on a guess.
         """
+        return self._stood_too_long(self._unsettled_since.get(vin))
+
+    def _stood_too_long(self, since: str | None) -> bool:
+        """Whether a recorded moment is further back than the option allows."""
         # int() because the options selector hands back strings, and "0" is
         # perfectly truthy — which would leave the off switch quietly on.
         try:
@@ -1058,7 +1126,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             minutes = UNSETTLED_MINUTES_DEFAULT
         if minutes <= 0:
             return False
-        since = self._unsettled_since.get(vin)
         parsed = dt_util.parse_datetime(since) if since else None
         if parsed is None:
             return False

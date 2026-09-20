@@ -414,3 +414,91 @@ class TestOnlyTheUnsecureSideIsWithheld:
         for description in VEHICLE_BINARY_SENSORS:
             if description.volatile and description.key != "alarm":
                 assert description.insecure_when_on, description.key
+
+
+class TestCoolantAfterADrive:
+    """The reading that disappeared for good.
+
+    It was gated on the car reporting a running engine. No car does: across
+    four days and several drives on two vehicles, VEHICLE_STATE_TYPE was only
+    ever KEY_REMOVED or KEY_ON_ENGINE_OFF, because the telematics unit does
+    not push while the engine is turning. So the sensor read unknown always,
+    including twenty-five minutes after a drive with the figure sitting right
+    there in the snapshot.
+
+    Age is the honest test instead. The figure is true when it is taken and
+    less true every minute after, which is also how an engine behaves.
+    """
+
+    WARM = {
+        **NO_TIMESTAMP,
+        "VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF",
+        "ENGINE_COOLANT_TEMP": "89",
+    }
+
+    def coolant(self, hass: HomeAssistant) -> Any:
+        (entity_id,) = [
+            item
+            for item in hass.states.async_entity_ids("sensor")
+            if item.endswith("_engine_coolant_temperature")
+        ]
+        return hass.states.get(entity_id)
+
+    async def test_it_shows_just_after_the_car_was_used(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        loaded.telemetry.push(KEPT, self.WARM)
+        await hass.async_block_till_done()
+
+        assert self.coolant(hass).state == "89.0"
+
+    async def test_it_fades_once_the_figure_has_stood_still(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        loaded.telemetry.push(KEPT, self.WARM)
+        await hass.async_block_till_done()
+
+        await age(hass, entry, freezer, minutes=45)
+
+        assert self.coolant(hass).state == STATE_UNKNOWN
+
+    async def test_a_drifting_battery_does_not_keep_it_alive(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        # The trap the other clock fell into. A parked car's voltage moves on
+        # its own, and if that counted as the car reporting, a coolant figure
+        # from before dark would look current all night.
+        loaded.telemetry.push(KEPT, self.WARM)
+        await hass.async_block_till_done()
+
+        for volts in ("12.5", "12.4", "12.3", "12.2"):
+            freezer.tick(timedelta(minutes=12))
+            loaded.telemetry.push(KEPT, {**self.WARM, "BATTERY_VOLTAGE": volts})
+            await hass.async_block_till_done()
+
+        assert self.coolant(hass).state == STATE_UNKNOWN
+
+    async def test_a_car_driven_again_gets_its_reading_back(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+    ) -> None:
+        loaded.telemetry.push(KEPT, self.WARM)
+        await hass.async_block_till_done()
+        await age(hass, entry, freezer, minutes=45)
+        assert self.coolant(hass).state == STATE_UNKNOWN
+
+        loaded.telemetry.push(KEPT, {**self.WARM, "ENGINE_COOLANT_TEMP": "91"})
+        await hass.async_block_till_done()
+
+        assert self.coolant(hass).state == "91.0"

@@ -74,37 +74,6 @@ def _coolant_temp(value: str) -> float | None:
     return temp
 
 
-def _engine_running(status: dict[str, Any]) -> bool:
-    """Whether VEHICLE_STATE_TYPE says the engine is turning.
-
-    Substring rather than an enum: the only two values observed live are
-    KEY_REMOVED and KEY_ON_ENGINE_OFF, so the running token is inferred, not
-    confirmed. ENGINE_OFF is excluded first so KEY_ON_ENGINE_OFF cannot match.
-    """
-    state = str(status.get("VEHICLE_STATE_TYPE", "")).upper()
-    if not state or "ENGINE_OFF" in state:
-        return False
-    return "ENGINE_ON" in state or state in ("ENGINE_RUNNING", "RUNNING", "DRIVING")
-
-
-def _coolant_temp_live(status: dict[str, Any]) -> float | None:
-    """Coolant temp, but only while the engine is running.
-
-    The car does not refresh this field once it is parked: it keeps pushing
-    whatever the gauge read when the engine was switched off, which is a
-    plausible 89 C sitting on the dashboard hours after the bonnet went cold.
-    Measured here across twelve parked hours -- battery voltage moved, this
-    did not. A number that cannot go stale-looking is worse than no number,
-    so it reads unknown unless something is actually generating the heat.
-    """
-    if not _engine_running(status):
-        return None
-    raw = status.get("ENGINE_COOLANT_TEMP")
-    if raw is None or raw == "":
-        return None
-    return _coolant_temp(str(raw))
-
-
 def _combined_range(value: str) -> float | None:
     """Return combined range, treating negative sentinel as unknown."""
     val = _to_float(value)
@@ -128,10 +97,10 @@ class JlrSensorDescription(SensorEntityDescription):
     status_key: str
     value_fn: Callable[[str], Any] = _to_float
     attr_fn: Callable[[dict[str, Any]], dict[str, Any]] = field(default=_no_attrs)
-    # Reads the whole status document instead of one key. For values that only
-    # mean anything in the context of another key -- coolant temperature, which
-    # the car latches at shutdown and keeps reporting for hours afterwards.
-    status_fn: Callable[[dict[str, Any]], Any] | None = None
+    # Whether this reading is true at the moment it is taken and less true
+    # every minute after. Coolant temperature is the whole of it so far: the
+    # car latches the gauge at shutdown and keeps pushing that figure.
+    decays: bool = False
     suppress_for_ev: bool = False
     # Only create on vehicles with a charge port; ICE cars report EV_* keys
     # with UNKNOWN sentinels, so key presence alone is not enough.
@@ -313,7 +282,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
         value_fn=_coolant_temp,
-        status_fn=_coolant_temp_live,
+        decays=True,
         suppress_for_ev=True,
     ),
 )
@@ -619,8 +588,13 @@ class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
 
     @property
     def native_value(self) -> Any:
-        if self.entity_description.status_fn is not None:
-            return self.entity_description.status_fn(self._vehicle.get("status", {}))
+        if self.entity_description.decays and self._vehicle.get("readings_decayed"):
+            # It was true when the car said it and it is not any more. These
+            # cars latch the coolant gauge at shutdown and keep pushing that
+            # figure, so an engine that went cold overnight still reports a
+            # perfectly ordinary 89 °C — and nothing in the number gives it
+            # away.
+            return None
         raw = self._status_value(self.entity_description.status_key)
         if raw is None or raw == "":
             return None

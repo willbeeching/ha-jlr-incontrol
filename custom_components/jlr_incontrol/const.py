@@ -238,6 +238,10 @@ CONF_UNSETTLED_SINCE = "unsettled_since"
 # treated as the broker handing back what it already held — and a reading that
 # has just become true stays hidden.
 CONF_VOLATILE_SEEN = "volatile_seen"
+# And the same pair for readings that go out of date on their own, without
+# anything about the car having to be in a particular state.
+CONF_DECAYED_SINCE = "decayed_since"
+CONF_DECAYED_SEEN = "decayed_seen"
 # The ForgeRock session cookies captured at sign-in. The owner web portal has
 # no token-based entry point — it authenticates by handing its own OAuth dance
 # to the AM session in the browser — so reading location means keeping that
@@ -296,6 +300,19 @@ SETTLED_VEHICLE_STATES = ("KEY_REMOVED",)
 # Kept here rather than derived from the sensor descriptions so the coordinator
 # does not have to import the platform. A test asserts the two agree, because
 # two lists over one idea drift.
+# Readings that are true at the moment they are taken and become less true on
+# their own. Coolant temperature is the whole of it so far: these cars latch it
+# when the engine stops and keep pushing that figure for as long as they sit
+# there, so 89 °C is a perfectly ordinary reading and also a perfectly ordinary
+# thing to find on a car that went cold hours ago.
+#
+# Judged on how long the reading itself has stood still, not on how long ago
+# the car said anything. A parked car's 12V voltage drifts down between
+# snapshots, and treating that as the car reporting in would keep a coolant
+# figure looking current all night — the same trap the withholding clock fell
+# into.
+DECAYING_STATUS_KEYS = ("ENGINE_COOLANT_TEMP",)
+
 VOLATILE_STATUS_KEYS = (
     "DOOR_BOOT_POSITION",
     "DOOR_ENGINE_HOOD_POSITION",

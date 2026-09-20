@@ -47,6 +47,13 @@ STATUS = {
     "TYRE_PRESSURE_FRONT_LEFT": "240",
     "FUEL_LEVEL_PERC": "42",
     "DOOR_IS_ALL_DOORS_LOCKED": "TRUE",
+    # Enough of the openings and the engine for the entities that depend on
+    # them to exist. Three separate tests have had to be written around this
+    # document being thinner than a real one — a window, an alarm and a
+    # coolant reading, each of which simply had no entity to assert against.
+    "WINDOW_FRONT_LEFT_STATUS": "CLOSED",
+    "THEFT_ALARM_STATUS": "ALARM_ARMED",
+    "ENGINE_COOLANT_TEMP": "89",
     "LAST_UPDATED_TIME": "2026-08-26T08:00:00.000Z",
     # The telematics unit's permanent hardware identifiers. Real payloads
     # carry these, and they are what a field-name allow-list kept missing.

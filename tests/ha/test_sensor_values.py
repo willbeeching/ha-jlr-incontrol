@@ -27,8 +27,6 @@ from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     JlrVehicleSensor,
     _combined_range,
     _coolant_temp,
-    _coolant_temp_live,
-    _engine_running,
     _odometer_attrs,
     _to_float,
     _tyre_kpa,
@@ -122,65 +120,50 @@ class TestCoolantGoesStaleWhileParked:
     """The reading that cannot be told from a live one by looking at it.
 
     A parked car keeps pushing whatever the gauge read when the engine was
-    switched off. Measured on an F-Pace across twelve parked hours: the 12V
-    voltage moved, the coolant sat at 89 the whole time, and 89 is exactly
-    what a warm engine reads. Nothing in the value itself gives it away.
+    switched off: 89 °C is exactly what a warm engine reads, and also exactly
+    what one that went cold overnight reports. Nothing in the value gives it
+    away.
+
+    It used to be gated on the car saying the engine was running. No car does.
+    Across four days and several drives on two vehicles, VEHICLE_STATE_TYPE
+    was only ever KEY_REMOVED or KEY_ON_ENGINE_OFF — the telematics unit does
+    not push while the engine is turning — so the reading was never shown at
+    all, including twenty-five minutes after a drive. Age is the honest test:
+    the figure is true when it is taken and less true every minute after.
     """
 
-    @pytest.mark.parametrize(
-        "state", ["KEY_ON_ENGINE_ON", "ENGINE_ON", "ENGINE_RUNNING", "DRIVING"]
-    )
-    def test_the_engine_is_running(self, state: str) -> None:
-        assert _engine_running({"VEHICLE_STATE_TYPE": state}) is True
-
-    @pytest.mark.parametrize("state", ["KEY_REMOVED", "KEY_ON_ENGINE_OFF", "UNKNOWN"])
-    def test_the_engine_is_not(self, state: str) -> None:
-        assert _engine_running({"VEHICLE_STATE_TYPE": state}) is False
-
-    def test_key_on_engine_off_does_not_match_on(self) -> None:
-        # The substring test is the whole risk here: KEY_ON_ENGINE_OFF has
-        # both words in it, and reading it as "on" would defeat the exercise.
-        assert _engine_running({"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF"}) is False
-
-    def test_a_car_that_reports_no_state_is_not_assumed_to_be_running(self) -> None:
-        assert _engine_running({}) is False
-
-    def test_a_parked_car_reports_no_temperature(self) -> None:
-        assert (
-            _coolant_temp_live(
-                {"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_OFF", "ENGINE_COOLANT_TEMP": "89"}
-            )
-            is None
-        )
-
-    def test_a_running_engine_reports_its_temperature(self) -> None:
-        assert (
-            _coolant_temp_live(
-                {"VEHICLE_STATE_TYPE": "KEY_ON_ENGINE_ON", "ENGINE_COOLANT_TEMP": "89"}
-            )
-            == 89.0
-        )
-
-    def test_the_sentinel_still_wins_over_a_running_engine(self) -> None:
-        # Running or not, -40 is the unfitted-sensor value.
-        assert (
-            _coolant_temp_live(
-                {"VEHICLE_STATE_TYPE": "ENGINE_ON", "ENGINE_COOLANT_TEMP": "-40"}
-            )
-            is None
-        )
-
-    def test_a_running_car_that_reports_no_temperature_is_unknown(self) -> None:
-        assert _coolant_temp_live({"VEHICLE_STATE_TYPE": "ENGINE_ON"}) is None
-
-    def test_the_sensor_wires_the_whole_status_in(self) -> None:
-        # value_fn sees one key, and one key cannot answer this question.
+    def test_a_fresh_reading_is_shown(self) -> None:
         sensor = build(
             JlrVehicleSensor,
-            status={"VEHICLE_STATE_TYPE": "KEY_REMOVED", "ENGINE_COOLANT_TEMP": "89"},
+            status={"ENGINE_COOLANT_TEMP": "89"},
+            readings_decayed=False,
+        )
+        sensor.entity_description = description("engine_coolant_temp")
+        assert sensor.native_value == 89.0
+
+    def test_one_that_has_stood_too_long_is_not(self) -> None:
+        sensor = build(
+            JlrVehicleSensor,
+            status={"ENGINE_COOLANT_TEMP": "89"},
+            readings_decayed=True,
         )
         sensor.entity_description = description("engine_coolant_temp")
         assert sensor.native_value is None
+
+    def test_the_sentinel_still_wins(self) -> None:
+        # -40 is the unfitted-sensor value, fresh or not.
+        sensor = build(
+            JlrVehicleSensor,
+            status={"ENGINE_COOLANT_TEMP": "-40"},
+            readings_decayed=False,
+        )
+        sensor.entity_description = description("engine_coolant_temp")
+        assert sensor.native_value is None
+
+    def test_nothing_else_decays(self) -> None:
+        # One reading has this property today. If a second gains it, it should
+        # be a deliberate act rather than a copied keyword.
+        assert {d.key for d in VEHICLE_SENSORS if d.decays} == {"engine_coolant_temp"}
 
 
 class TestVehicleState:
