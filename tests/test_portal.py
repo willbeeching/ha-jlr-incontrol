@@ -153,11 +153,17 @@ class TestResumingASavedSession:
         assert await client._async_ensure_session() == LR
         assert len(session.urls) == 1
 
-    async def test_a_probe_that_cannot_complete_re_mints(self, hass) -> None:
+    async def test_a_probe_that_cannot_complete_does_not_re_mint(self, hass) -> None:
+        # This asserted the opposite until a review pointed out what it cost.
+        # Re-minting spends the identity session, which expires within two
+        # hours and only the user can replace, so a probe that merely could
+        # not reach the portal must not trigger one. It raises now, and the
+        # saved session lives to be tried again.
         client, _ = build(
             hass, [Raises(TimeoutError()), Resp(LR, garage(1))], {LR: True}, **self.kept
         )
-        assert await client._async_ensure_session() == LR
+        with pytest.raises(JlrPortalError):
+            await client._async_ensure_session()
 
 
 class TestSessionAge:
@@ -221,6 +227,53 @@ class TestLoginPageDetection:
 
     def test_the_identity_host_is(self) -> None:
         assert _is_login_page("https://identity.jaguarlandrover.com/auth", "")
+
+
+class TestAProbeThatCannotReachThePortal:
+    """Not being able to ask is not an answer.
+
+    The session probe returned "no good" for a timeout, a transport error and
+    any non-200 alike. That sends the caller off to mint a new session, which
+    spends the identity session — the one that expires within two hours and
+    only the user can replace. A network blip during startup therefore cost an
+    emailed code, on no evidence that the saved session was bad at all.
+    """
+
+    kept = {"portal_cookies": {"JSESSIONID": "x"}, "portal_base": LR}
+
+    async def test_a_timeout_does_not_condemn_the_session(self, hass) -> None:
+        client, _ = build(hass, [Raises(TimeoutError())], {LR: True}, **self.kept)
+        with pytest.raises(JlrPortalError) as raised:
+            await client.async_get_vehicles()
+        assert not isinstance(
+            raised.value, JlrPortalAuthError
+        ), "a blip asked somebody to go and find an emailed code"
+
+    async def test_neither_does_a_server_error(self, hass) -> None:
+        client, _ = build(
+            hass,
+            [Resp(LR, "<html>Service Unavailable</html>", status=503)],
+            {LR: True},
+            **self.kept,
+        )
+        with pytest.raises(JlrPortalError) as raised:
+            await client.async_get_vehicles()
+        assert not isinstance(raised.value, JlrPortalAuthError)
+
+    async def test_a_refused_session_still_signs_in_again(self, hass) -> None:
+        # The other side: a login page is evidence, and falling through to a
+        # sign-in is exactly right there.
+        client, _ = build(
+            hass,
+            [
+                Resp(LR, LOGIN_HTML),  # probe: the session really has lapsed
+                Resp(LR, garage(1)),  # garage check while minting a new one
+                Resp(LR, garage(1)),  # and the listing that follows
+            ],
+            {LR: True},
+            **self.kept,
+        )
+        assert await client.async_get_vehicles()
 
 
 class TestAnUnsuccessfulResponseIsNotAPage:

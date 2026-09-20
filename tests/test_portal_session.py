@@ -332,9 +332,21 @@ class TestResumingTheRememberedSession:
         portal = bare(_session=Routed(("pollvehiclestatus", [Reply(200, "<html>")])))
         assert await portal._async_can_resume(JAGUAR)
 
-    async def test_a_failed_probe_is_not_a_resume(self) -> None:
+    async def test_a_probe_that_could_not_ask_says_so_rather_than_no(self) -> None:
+        # The same benefit of the doubt as the test above, which this one used
+        # to contradict: it returned "no good", and the caller reads that as
+        # licence to mint a new session — spending the identity session on the
+        # strength of a network blip.
         portal = bare(_session=Routed(("pollvehiclestatus", [TimeoutError()])))
-        assert not await portal._async_can_resume(JAGUAR)
+        with pytest.raises(JlrPortalError):
+            await portal._async_can_resume(JAGUAR)
+
+    async def test_a_server_error_is_not_a_no_either(self) -> None:
+        portal = bare(
+            _session=Routed(("pollvehiclestatus", [Reply(503, "<html>down")]))
+        )
+        with pytest.raises(JlrPortalError):
+            await portal._async_can_resume(JAGUAR)
 
 
 class TestSigningIn:

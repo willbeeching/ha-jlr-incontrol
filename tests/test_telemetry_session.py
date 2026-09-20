@@ -1014,7 +1014,9 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
         await supervise(client, 4, waits)
 
         assert len(self.warnings(caplog)) == 1, self.warnings(caplog)
-        assert any("still down" in r.message for r in caplog.records)
+        # The rest are still reported, just not at a level that buries the log.
+        retries = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert len(retries) >= 3
 
     async def test_coming_back_is_reported(
         self, caplog: pytest.LogCaptureFixture
@@ -1026,8 +1028,50 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
 
         client._set_connected(True)
 
-        assert any("back" in m for m in self.warnings(caplog))
+        # Info, not warning: recovery is good news and the rule asks for it
+        # there. A warning would also mean an outage that ended still left two
+        # warnings in the log.
+        back = [
+            r.message
+            for r in caplog.records
+            if r.levelname == "INFO" and "back" in r.message
+        ]
+        assert back, [r.levelname for r in caplog.records]
+        assert not self.warnings(caplog)
         assert client._outage_logged is False
+
+    async def test_being_rate_limited_is_reported_the_same_way(
+        self, caplog: pytest.LogCaptureFixture, waits
+    ) -> None:
+        # It had its own warning that fired on every attempt and never set the
+        # flag, so being throttled filed one a minute and never announced
+        # recovering — the one branch the guard did not cover.
+        caplog.set_level(logging.DEBUG)
+        client = telemetry()
+
+        async def throttled() -> None:
+            raise JlrRateLimitError("slow down", retry_after=30)
+
+        client._async_session = throttled
+        await supervise(client, 3, waits)
+
+        assert len(self.warnings(caplog)) == 1, self.warnings(caplog)
+        assert client._outage_logged is True
+
+    async def test_the_wait_the_broker_asked_for_is_still_honoured(
+        self, caplog: pytest.LogCaptureFixture, waits
+    ) -> None:
+        # Quieter logging must not quietly drop the Retry-After.
+        caplog.set_level(logging.DEBUG)
+        client = telemetry()
+
+        async def throttled() -> None:
+            raise JlrRateLimitError("slow down", retry_after=30)
+
+        client._async_session = throttled
+        await supervise(client, 2, waits)
+
+        assert 30 in [int(w) for w in waits]
 
     async def test_a_recovery_nobody_was_told_about_is_not_announced(
         self, caplog: pytest.LogCaptureFixture

@@ -186,7 +186,7 @@ class JlrTelemetry:
                 # instruction is how a client stops being throttled and starts
                 # being blocked.
                 wait = backoff if err.retry_after is None else err.retry_after
-                _LOGGER.warning(
+                self._report_outage(
                     "telemetry rate limited: %s; waiting %ss as asked",
                     err,
                     int(wait),
@@ -197,19 +197,11 @@ class JlrTelemetry:
                 # comes back, with the retries in between at debug — an outage
                 # that files a warning every few seconds buries whatever else
                 # somebody is reading the log for.
-                if self._outage_logged:
-                    _LOGGER.debug(
-                        "telemetry still down: %s; retrying in %ss",
-                        err,
-                        int(backoff),
-                    )
-                else:
-                    self._outage_logged = True
-                    _LOGGER.warning(
-                        "telemetry socket dropped: %s; retrying in %ss",
-                        err,
-                        int(backoff),
-                    )
+                self._report_outage(
+                    "telemetry socket dropped: %s; retrying in %ss",
+                    err,
+                    int(backoff),
+                )
             except Exception:  # noqa: BLE001 - the supervisor must never die
                 _LOGGER.exception(
                     "unexpected telemetry failure; retrying in %ss", int(backoff)
@@ -489,15 +481,32 @@ class JlrTelemetry:
             )
         )
 
+    def _report_outage(self, message: str, *args: Any) -> None:
+        """Say a connection has failed, loudly the first time and then not.
+
+        Home Assistant's rule is one message when a thing becomes unavailable
+        and one when it comes back, with the retries in between at debug. Every
+        branch that fails to get a socket goes through here, including the
+        rate-limited one — it had its own warning that fired on every attempt
+        and never set the flag, so being throttled filed a warning a minute
+        and never announced recovering.
+        """
+        if self._outage_logged:
+            _LOGGER.debug(message, *args)
+            return
+        self._outage_logged = True
+        _LOGGER.warning(message, *args)
+
     def _set_connected(self, connected: bool) -> None:
         if connected != self._connected:
             self._connected = connected
             if connected and self._outage_logged:
                 # The other half of the rule: say so when it comes back. This
                 # was only ever a debug line, so an outage announced at warning
-                # level appeared never to end.
+                # level appeared never to end. Info rather than warning —
+                # recovery is good news, and the rule asks for it at info.
                 self._outage_logged = False
-                _LOGGER.warning("telemetry socket back")
+                _LOGGER.info("telemetry socket back")
             self._on_connected(connected)
 
 

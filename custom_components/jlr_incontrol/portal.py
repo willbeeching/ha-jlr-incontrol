@@ -181,9 +181,24 @@ class JlrPortal:
             ) as resp:
                 landed, body, status = str(resp.url), await resp.text(), resp.status
         except (TimeoutError, aiohttp.ClientError) as err:
-            _LOGGER.debug("portal session probe failed: %s", err)
-            return False
+            # Not an answer about the session. Returning False here said "this
+            # session is no good", which sends the caller off to mint a new
+            # one — and minting spends the identity session, which expires
+            # within two hours and only the user can replace. A network blip
+            # during startup then cost an emailed code. Raising instead leaves
+            # the saved session alone to be tried again later.
+            raise JlrPortalError(
+                f"could not reach the owner portal to check the session: {err}"
+            ) from err
+        if status >= 500:
+            # Their end, not our session. Same reasoning as above.
+            raise JlrPortalError(
+                f"the owner portal returned {status} checking the session"
+            )
         if status != 200 or _is_login_page(landed, body):
+            # A refusal, or a base that does not serve this account: both are
+            # evidence about the session rather than about the network, so
+            # falling through to a sign-in is right.
             _LOGGER.debug("remembered portal session has lapsed")
             return False
         try:
