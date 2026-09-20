@@ -66,6 +66,11 @@ _DASHBOARD_ID = re.compile(r'href="[^"]*/dashboard/vehicle/([^"/?]+)"')
 _VEHICLE_FIELDS = ("nickname", "vehicleBrand", "vehicleType", "registrationNumber")
 
 
+# Answers that mean "not now" rather than "not you". A session is only
+# replaced on evidence that it was refused, and none of these are that.
+_TRY_AGAIN_STATUSES = frozenset({408, 425, 429})
+
+
 class JlrPortalError(Exception):
     """Raised when the owner portal cannot be read."""
 
@@ -190,8 +195,10 @@ class JlrPortal:
             raise JlrPortalError(
                 f"could not reach the owner portal to check the session: {err}"
             ) from err
-        if status >= 500:
-            # Their end, not our session. Same reasoning as above.
+        if status >= 500 or status in _TRY_AGAIN_STATUSES:
+            # Their end, not our session. Same reasoning as above — and 429 in
+            # particular is the portal saying "not now", which is the opposite
+            # of a reason to go and ask it for a brand new session.
             raise JlrPortalError(
                 f"the owner portal returned {status} checking the session"
             )

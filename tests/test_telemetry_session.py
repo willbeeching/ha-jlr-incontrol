@@ -998,6 +998,15 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
     else somebody had opened the log to read.
     """
 
+    def announced(self, caplog: pytest.LogCaptureFixture) -> list[str]:
+        """The messages a person is meant to see.
+
+        Info, per the rule: "Logging should happen at info level", and its
+        example logs the outage and the recovery both there. A socket that
+        drops and comes back is ordinary for a car parked underground.
+        """
+        return [r.message for r in caplog.records if r.levelname == "INFO"]
+
     def warnings(self, caplog: pytest.LogCaptureFixture) -> list[str]:
         return [r.message for r in caplog.records if r.levelname == "WARNING"]
 
@@ -1013,7 +1022,8 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
         client._async_session = refused
         await supervise(client, 4, waits)
 
-        assert len(self.warnings(caplog)) == 1, self.warnings(caplog)
+        assert len(self.announced(caplog)) == 1, self.announced(caplog)
+        assert not self.warnings(caplog), "an outage is not a warning"
         # The rest are still reported, just not at a level that buries the log.
         retries = [r for r in caplog.records if r.levelname == "DEBUG"]
         assert len(retries) >= 3
@@ -1031,12 +1041,9 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
         # Info, not warning: recovery is good news and the rule asks for it
         # there. A warning would also mean an outage that ended still left two
         # warnings in the log.
-        back = [
-            r.message
-            for r in caplog.records
-            if r.levelname == "INFO" and "back" in r.message
+        assert [m for m in self.announced(caplog) if "back" in m], [
+            r.levelname for r in caplog.records
         ]
-        assert back, [r.levelname for r in caplog.records]
         assert not self.warnings(caplog)
         assert client._outage_logged is False
 
@@ -1055,7 +1062,8 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
         client._async_session = throttled
         await supervise(client, 3, waits)
 
-        assert len(self.warnings(caplog)) == 1, self.warnings(caplog)
+        assert len(self.announced(caplog)) == 1, self.announced(caplog)
+        assert not self.warnings(caplog)
         assert client._outage_logged is True
 
     async def test_the_wait_the_broker_asked_for_is_still_honoured(
@@ -1084,4 +1092,5 @@ class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
 
         client._set_connected(True)
 
+        assert not self.announced(caplog)
         assert not self.warnings(caplog)

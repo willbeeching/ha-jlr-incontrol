@@ -495,7 +495,12 @@ class JlrTelemetry:
             _LOGGER.debug(message, *args)
             return
         self._outage_logged = True
-        _LOGGER.warning(message, *args)
+        # Info, not warning. Home Assistant's rule says so in as many words —
+        # "Logging should happen at info level" — and its example logs both
+        # the outage and the recovery there. A socket that drops and comes
+        # back is ordinary for a car that parks underground; it is not
+        # something somebody needs to be warned about.
+        _LOGGER.info(message, *args)
 
     def _set_connected(self, connected: bool) -> None:
         if connected != self._connected:

@@ -69,10 +69,12 @@ rules:
   log-when-unavailable:
     status: done
     comment: >-
-      Once on the way down and once on the way back, with the retries in
-      between at debug. It was marked done while every failed connection
-      attempt filed its own warning and recovery was logged at debug only —
-      an outage announced loudly that appeared never to end.
+      Once on the way down and once on the way back, both at info as the rule
+      asks, with the retries in between at debug. It was marked done while
+      every failed connection attempt filed its own warning and recovery was
+      logged at debug only — an outage announced loudly that appeared never to
+      end. The rate-limited branch kept its own warning for a round after
+      that, so throttling still filed one a minute.
   parallel-updates: done
   reauthentication-flow: done
   test-coverage:

@@ -341,6 +341,16 @@ class TestResumingTheRememberedSession:
         with pytest.raises(JlrPortalError):
             await portal._async_can_resume(JAGUAR)
 
+    @pytest.mark.parametrize("status", [408, 425, 429])
+    async def test_being_told_to_wait_is_not_a_no_either(self, status: int) -> None:
+        # 429 especially: the portal saying "not now" is the opposite of a
+        # reason to go and ask it for a brand new session.
+        portal = bare(
+            _session=Routed(("pollvehiclestatus", [Reply(status, "slow down")]))
+        )
+        with pytest.raises(JlrPortalError):
+            await portal._async_can_resume(JAGUAR)
+
     async def test_a_server_error_is_not_a_no_either(self) -> None:
         portal = bare(
             _session=Routed(("pollvehiclestatus", [Reply(503, "<html>down")]))
