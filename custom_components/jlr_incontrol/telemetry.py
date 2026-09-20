@@ -144,6 +144,9 @@ class JlrTelemetry:
         self._vins: list[str] = []
         self._task: asyncio.Task[None] | None = None
         self._connected = False
+        # Whether an outage has already been announced, so it is said once on
+        # the way down and once on the way back rather than on every retry.
+        self._outage_logged = False
 
     @property
     def connected(self) -> bool:
@@ -189,9 +192,24 @@ class JlrTelemetry:
                     int(wait),
                 )
             except (JlrTelemetryError, JlrApiError, aiohttp.ClientError) as err:
-                _LOGGER.warning(
-                    "telemetry socket dropped: %s; retrying in %ss", err, int(backoff)
-                )
+                # Once on the way down, then quietly. Home Assistant's rule is
+                # one message when a thing becomes unavailable and one when it
+                # comes back, with the retries in between at debug — an outage
+                # that files a warning every few seconds buries whatever else
+                # somebody is reading the log for.
+                if self._outage_logged:
+                    _LOGGER.debug(
+                        "telemetry still down: %s; retrying in %ss",
+                        err,
+                        int(backoff),
+                    )
+                else:
+                    self._outage_logged = True
+                    _LOGGER.warning(
+                        "telemetry socket dropped: %s; retrying in %ss",
+                        err,
+                        int(backoff),
+                    )
             except Exception:  # noqa: BLE001 - the supervisor must never die
                 _LOGGER.exception(
                     "unexpected telemetry failure; retrying in %ss", int(backoff)
@@ -474,6 +492,12 @@ class JlrTelemetry:
     def _set_connected(self, connected: bool) -> None:
         if connected != self._connected:
             self._connected = connected
+            if connected and self._outage_logged:
+                # The other half of the rule: say so when it comes back. This
+                # was only ever a debug line, so an outage announced at warning
+                # level appeared never to end.
+                self._outage_logged = False
+                _LOGGER.warning("telemetry socket back")
             self._on_connected(connected)
 
 

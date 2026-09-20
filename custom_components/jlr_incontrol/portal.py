@@ -311,7 +311,12 @@ class JlrPortal:
             self._base = None
         if self._base is not None:
             return self._base
-        saved = self._portal_base if fresh and self._portal_cookies else None
+        # Not conditional on the aiohttp session being new. It used to be, so
+        # a base cleared mid-life skipped the resume path entirely and went
+        # straight to minting — the expensive thing this exists to avoid.
+        # async_can_resume is what decides whether the stored session is any
+        # good; a refused one falls through to the sign-in below anyway.
+        saved = self._portal_base if self._portal_cookies else None
         if saved is not None and await self._async_can_resume(saved):
             self._base = saved
             return saved
@@ -367,8 +372,13 @@ class JlrPortal:
                     landed, body = str(resp.url), await resp.text()
                     status = resp.status
             except TimeoutError as err:
+                # Deliberately not clearing _base. A timeout says nothing about
+                # whether the session is still good, and throwing it away sends
+                # the next attempt off to mint a new one — which needs the
+                # identity session, which expires within two hours of the
+                # user's last sign-in. One slow response then costs an emailed
+                # code. Only evidence of a refused session may replace it.
                 timed_out = err
-                self._base = None
                 if attempt == 1:
                     continue
                 raise JlrPortalError(
@@ -384,6 +394,14 @@ class JlrPortal:
                 if attempt == 1:
                     continue
                 raise JlrPortalAuthError("the owner portal session has expired")
+            if status >= 400:
+                # Anything else unsuccessful has to raise rather than hand back
+                # a body. An error page parses as a page with no vehicles and
+                # no waypoints in it, which is indistinguishable from a car
+                # that has never been located — so a portal outage would read
+                # as a successful location refresh and leave the last known
+                # position looking freshly confirmed.
+                raise JlrPortalError(f"the owner portal returned {status} for {path}")
             return landed, body
         if timed_out is not None:
             raise JlrPortalError(f"the owner portal timed out reading {path}")

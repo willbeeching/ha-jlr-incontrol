@@ -10,6 +10,7 @@ fetched successfully minutes earlier.
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
@@ -151,3 +152,48 @@ class TestDeletingASoldVehicle:
         await hass.async_block_till_done()
 
         assert not await async_remove_config_entry_device(hass, entry, device)
+
+
+class TestTheTrackerWithholdsWhatItCannotVouchFor:
+    """No coordinates at all, rather than old ones.
+
+    Home Assistant derives the zone from the coordinates, so handing back a
+    fix nobody can vouch for does not produce a cautious answer — it produces
+    a confident wrong one, and a car miles away reads as "home".
+    """
+
+    def tracker(self, **vehicle: Any) -> Any:
+        from custom_components.jlr_incontrol.device_tracker import (
+            JlrDeviceTracker,
+        )
+
+        made = JlrDeviceTracker.__new__(JlrDeviceTracker)
+        made._vin = KEPT
+        made.coordinator = type("C", (), {"data": {"vehicles": {KEPT: vehicle}}})()
+        return made
+
+    def test_an_untrusted_fix_gives_neither_coordinate(self) -> None:
+        made = self.tracker(
+            position={"latitude": 51.5, "longitude": -0.1},
+            position_trusted=False,
+        )
+        assert made.latitude is None
+        assert made.longitude is None
+
+    def test_a_trusted_one_gives_both(self) -> None:
+        made = self.tracker(
+            position={"latitude": 51.5, "longitude": -0.1},
+            position_trusted=True,
+        )
+        assert made.latitude == 51.5
+        assert made.longitude == -0.1
+
+    def test_a_coordinate_that_is_not_a_number_is_not_reported(self) -> None:
+        # A portal that answers with something unexpected must not put the
+        # car at zero degrees north.
+        made = self.tracker(
+            position={"latitude": "somewhere", "longitude": None},
+            position_trusted=True,
+        )
+        assert made.latitude is None
+        assert made.longitude is None

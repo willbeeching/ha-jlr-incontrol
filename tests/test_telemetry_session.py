@@ -57,6 +57,7 @@ def telemetry(**handlers: Any) -> JlrTelemetry:
     made._vins = [VIN]
     made._task = None
     made._connected = False
+    made._outage_logged = False
     made.status: list[tuple] = []
     made.positions: list[tuple] = []
     made.connections: list[bool] = []
@@ -985,3 +986,58 @@ class TestTheSnapshotAgeDiagnostic:
         await client._async_handle(ws, vhs(t="...", _headers=BROKER_HEADERS), DEVICE)
         assert DEVICE not in caplog.text
         assert VIN not in caplog.text
+
+
+class TestAnOutageIsAnnouncedOnceAndSoIsItsEnd:
+    """Home Assistant's rule, which the quality scale claimed we met.
+
+    One message when a thing becomes unavailable and one when it comes back,
+    with the retries in between at debug. Every failed attempt used to file
+    its own warning while recovery was logged at debug only — so an outage
+    announced loudly appeared never to end, and a long one buried whatever
+    else somebody had opened the log to read.
+    """
+
+    def warnings(self, caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [r.message for r in caplog.records if r.levelname == "WARNING"]
+
+    async def test_a_long_outage_says_so_once(
+        self, caplog: pytest.LogCaptureFixture, waits
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client = telemetry()
+
+        async def refused() -> None:
+            raise JlrApiError("Jaguar Land Rover returned 503")
+
+        client._async_session = refused
+        await supervise(client, 4, waits)
+
+        assert len(self.warnings(caplog)) == 1, self.warnings(caplog)
+        assert any("still down" in r.message for r in caplog.records)
+
+    async def test_coming_back_is_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = telemetry()
+        client._outage_logged = True
+        client._connected = False
+        caplog.set_level(logging.DEBUG)
+
+        client._set_connected(True)
+
+        assert any("back" in m for m in self.warnings(caplog))
+        assert client._outage_logged is False
+
+    async def test_a_recovery_nobody_was_told_about_is_not_announced(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Connecting for the first time is not a recovery.
+        client = telemetry()
+        client._outage_logged = False
+        client._connected = False
+        caplog.set_level(logging.DEBUG)
+
+        client._set_connected(True)
+
+        assert not self.warnings(caplog)

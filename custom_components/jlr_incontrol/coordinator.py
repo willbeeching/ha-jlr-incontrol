@@ -219,6 +219,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # When a portal read last succeeded. Position is only as trustworthy as
         # this is recent — see position_trusted.
         self._portal_read_at: datetime | None = None
+        # And when each vehicle was last actually located. Separate from the
+        # above on purpose: the portal answering is not the same as this car
+        # having a position in the answer.
+        self._position_read_at: dict[str, datetime] = {}
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
             self.client,
@@ -453,7 +457,13 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # showing cached state, and undeletable — the removal hook still saw it
         # as current. A reply we cannot parse raises in async_get_vehicles
         # rather than arriving here as an empty list.
-        removed = set(self._vehicles) - set(found)
+        # Everything we hold something about, not just what the last listing
+        # said. _vehicles starts empty on every startup, so a car sold while
+        # Home Assistant was stopped was never compared against anything: its
+        # nickname, registration and freshness caches were restored from the
+        # entry and then sat there for good, because the first listing after a
+        # restart had nothing to find them missing from.
+        removed = self._known_vins() - set(found)
         self._vehicles = found
         if removed:
             self._forget(removed)
@@ -469,6 +479,22 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._async_read_portal()
         self._persist()
         return self._build()
+
+    def _known_vins(self) -> set[str]:
+        """Every VIN this integration is holding anything about.
+
+        The persisted caches included, which is the point: they outlive a
+        restart and the vehicle list does not.
+        """
+        return (
+            set(self._vehicles)
+            | set(self._attributes)
+            | set(self._last_changed)
+            | set(self._unsettled_since)
+            | set(self._volatile_seen)
+            | set(self._decayed_since)
+            | set(self._decayed_seen)
+        )
 
     def _forget(self, removed: set[str]) -> None:
         """Drop everything held about vehicles the account no longer has.
@@ -497,6 +523,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._snapshot_seen.pop(vin, None)
             self._decayed_since.pop(vin, None)
             self._decayed_seen.pop(vin, None)
+            self._position_read_at.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -616,6 +643,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 position = await self.portal.async_get_position(portal_id)
                 if position:
                     self._position[vin] = position
+                    # Per vehicle, and only on one that was actually located.
+                    # Stamping this account-wide meant a car with no portal id,
+                    # or one the portal had nothing to say about, had its old
+                    # coordinates quietly re-trusted on the strength of another
+                    # car being found.
+                    self._position_read_at[vin] = dt_util.utcnow()
             self._portal_read_at = dt_util.utcnow()
             _LOGGER.debug("owner portal read ok, session %s", self.portal.session_age)
             # Whatever was wrong is no longer wrong. Clearing this only when
@@ -1026,7 +1059,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # no condition about the car attached.
                 "readings_decayed": self._readings_decayed(vin),
                 "position_stale": self._is_stale(position_ts),
-                "position_trusted": self.position_trusted,
+                "position_trusted": self._position_trusted(vin),
             }
         return data
 
@@ -1041,9 +1074,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         how a tracker ends up confidently reporting "home" for a car that is
         seven kilometres away. Better to admit we do not know.
         """
-        if self._portal_read_at is None:
+        return any(self._position_trusted(vin) for vin in self._vehicles)
+
+    def _position_trusted(self, vin: str) -> bool:
+        """The same question, asked about one car."""
+        last = self._position_read_at.get(vin)
+        if last is None:
             return False
-        return dt_util.utcnow() - self._portal_read_at < POSITION_TRUST_WINDOW
+        return dt_util.utcnow() - last < POSITION_TRUST_WINDOW
 
     @property
     def telemetry_ok(self) -> bool:

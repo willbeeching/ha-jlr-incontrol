@@ -223,6 +223,50 @@ class TestLoginPageDetection:
         assert _is_login_page("https://identity.jaguarlandrover.com/auth", "")
 
 
+class TestAnUnsuccessfulResponseIsNotAPage:
+    """A 503 is not a garage with no cars in it.
+
+    Only 401 and a bounce to the login page used to count as failure, so
+    anything else came back as a body — and an error page parses as a page
+    with no vehicles and no waypoints. A portal outage therefore read as a
+    successful location refresh, and the last known position went on looking
+    freshly confirmed for as long as the outage lasted.
+    """
+
+    kept = {"portal_cookies": {"JSESSIONID": "x"}, "portal_base": LR}
+
+    @pytest.mark.parametrize("status", [500, 502, 503])
+    async def test_a_server_error_raises(self, hass, status: int) -> None:
+        client, _ = build(
+            hass,
+            [
+                Resp(LR, garage(1)),  # resume probe: session is good
+                Resp(LR, "<html>Service Unavailable</html>", status=status),
+            ],
+            {LR: True},
+            **self.kept,
+        )
+        with pytest.raises(JlrPortalError) as raised:
+            await client.async_get_vehicles()
+        assert str(status) in str(raised.value)
+
+    async def test_it_is_not_mistaken_for_a_lapsed_session(self, hass) -> None:
+        # JlrPortalError degrades location. JlrPortalAuthError asks somebody
+        # to go and find an emailed code, which a 503 does not justify.
+        client, _ = build(
+            hass,
+            [
+                Resp(LR, garage(1)),
+                Resp(LR, "<html>nope</html>", status=503),
+            ],
+            {LR: True},
+            **self.kept,
+        )
+        with pytest.raises(JlrPortalError) as raised:
+            await client.async_get_vehicles()
+        assert not isinstance(raised.value, JlrPortalAuthError)
+
+
 class TestFailuresAreReportedHonestly:
     kept = {"portal_cookies": {"JSESSIONID": "x"}, "portal_base": LR}
 
@@ -234,7 +278,6 @@ class TestFailuresAreReportedHonestly:
             [
                 Resp(LR, garage(1)),  # resume probe: session is good
                 Raises(TimeoutError()),  # the read itself
-                Resp(LR, garage(1)),  # garage check while re-minting
                 Raises(TimeoutError()),  # and again on the retry
             ],
             {LR: True},
@@ -250,8 +293,7 @@ class TestFailuresAreReportedHonestly:
             [
                 Resp(LR, garage(1)),  # resume probe
                 Raises(TimeoutError()),  # the read times out once
-                Resp(LR, garage(1)),  # garage check while re-minting
-                Resp(LR, garage(1)),  # the retry succeeds
+                Resp(LR, garage(1)),  # the retry succeeds, same session
             ],
             {LR: True},
             **self.kept,

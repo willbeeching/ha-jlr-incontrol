@@ -66,7 +66,13 @@ rules:
       Availability follows the source each entity actually reads from, rather
       than every entity depending on the telemetry socket.
   integration-owner: done
-  log-when-unavailable: done
+  log-when-unavailable:
+    status: done
+    comment: >-
+      Once on the way down and once on the way back, with the retries in
+      between at debug. It was marked done while every failed connection
+      attempt filed its own warning and recovery was logged at debug only —
+      an outage announced loudly that appeared never to end.
   parallel-updates: done
   reauthentication-flow: done
   test-coverage:

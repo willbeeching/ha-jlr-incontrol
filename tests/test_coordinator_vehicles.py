@@ -69,6 +69,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_snapshot_seen": {},
         "_decayed_since": {},
         "_decayed_seen": {},
+        "_position_read_at": {},
         "_awaiting": set(),
         "_snapshots_ready": asyncio.Event(),
         "_portal_signed_out": None,
@@ -102,6 +103,7 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_snapshot_seen": {KEPT: asyncio.Event(), SOLD: asyncio.Event()},
         "_decayed_since": {KEPT: "t1", SOLD: "t2"},
         "_decayed_seen": {KEPT: (), SOLD: ()},
+        "_position_read_at": {},
     }
     return coordinator(**{**both, **state})
 
@@ -510,6 +512,55 @@ class TestASnapshotThatArrivesLate:
         coord._handle_status(KEPT, {"ODOMETER_MILES": arriving, "SEEN": "yes"}, None)
 
         assert coord._status[KEPT]["SEEN"] == "yes"
+
+
+class TestPositionTrustIsPerVehicle:
+    """One car being found does not vouch for another.
+
+    The freshness stamp was account-wide, so a car with no portal id — or one
+    the portal had nothing to say about — had its old coordinates re-trusted
+    on the strength of a different car being located. A location nobody can
+    vouch for still resolves to a zone, which is how a tracker ends up
+    confidently reporting "home" for a car that is miles away.
+    """
+
+    def test_a_car_that_was_not_located_is_not_trusted(self) -> None:
+        coord = coordinator(
+            _vehicles={KEPT: {}, SOLD: {}},
+            _position_read_at={KEPT: dt_util.utcnow()},
+        )
+        assert coord._position_trusted(KEPT) is True
+        assert coord._position_trusted(SOLD) is False
+
+    def test_an_old_fix_stops_being_trusted(self) -> None:
+        coord = coordinator(
+            _vehicles={KEPT: {}},
+            _position_read_at={KEPT: dt_util.utcnow() - timedelta(days=1)},
+        )
+        assert coord._position_trusted(KEPT) is False
+
+    def test_a_car_never_located_is_not_trusted(self) -> None:
+        coord = coordinator(_vehicles={KEPT: {}}, _position_read_at={})
+        assert coord._position_trusted(KEPT) is False
+
+
+class TestVehiclesSoldWhileTheLightsWereOff:
+    """A car removed while Home Assistant was stopped.
+
+    Removal was detected by comparing the account's listing against the
+    vehicles seen this run, and that starts empty — so the first listing after
+    a restart had nothing to find a sold car missing from. Its nickname,
+    registration and freshness caches were restored from the config entry and
+    then stayed there for good.
+    """
+
+    def test_restored_caches_count_as_known(self) -> None:
+        coord = coordinator(
+            _vehicles={},
+            _attributes={SOLD: {"nickname": "Gone"}},
+            _last_changed={SOLD: "t"},
+        )
+        assert SOLD in coord._known_vins()
 
 
 class TestForcingAPortalRead:

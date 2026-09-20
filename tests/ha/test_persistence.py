@@ -188,3 +188,40 @@ class TestAChangeIsSavedWhenItHappens:
         assert entry.data[CONF_ATTRIBUTES][KEPT]["nickname"] == (
             "Written on the way out"
         )
+
+
+class TestACarSoldWhileHomeAssistantWasStopped:
+    """The one case the removal hook could not see.
+
+    Removal was detected by comparing the account's listing against the
+    vehicles seen this run, and that starts empty on every startup. So the
+    first listing after a restart had nothing to find a sold car missing
+    from, and its nickname and registration — restored from the config entry
+    moments earlier — stayed there for good.
+    """
+
+    async def test_its_details_do_not_outlive_it(
+        self, hass: HomeAssistant, entry: MockConfigEntry, doubles: Doubles
+    ) -> None:
+        gone = "SALZZ0000000000ZZ"
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_ATTRIBUTES: {
+                    KEPT: {"nickname": "Still here"},
+                    gone: {"nickname": "Sold last week", "registration": "AB12 CDE"},
+                },
+                CONF_LAST_CHANGED: {KEPT: FIRST, gone: FIRST},
+            },
+        )
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        # The account lists only the car that is still owned, and that listing
+        # is what decides. A registration for a car somebody no longer has is
+        # exactly what should not sit in storage indefinitely.
+        assert gone not in (entry.data.get(CONF_ATTRIBUTES) or {})
+        assert gone not in (entry.data.get(CONF_LAST_CHANGED) or {})
+        assert KEPT in entry.data[CONF_ATTRIBUTES]
