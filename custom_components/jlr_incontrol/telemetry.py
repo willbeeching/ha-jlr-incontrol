@@ -17,7 +17,7 @@ The protocol is STOMP 1.2 carried in websocket text frames:
     CONNECT                         -> CONNECTED
     SUBSCRIBE /user/topic/DEVICE.x  -> SubscriptionAccepted, one per vehicle
     SUBSCRIBE /user/topic/VIN.y     -> MESSAGE (current VHS), then live updates
-    SEND /app/messageReceived       <- acknowledge, or the broker redelivers
+    SEND /app/messageReceived       <- acknowledge each VIN-topic MESSAGE
 
 One connection covers every vehicle on the account.
 """
@@ -142,6 +142,11 @@ class JlrTelemetry:
         self._on_position = on_position
         self._on_connected = on_connected
         self._vins: list[str] = []
+        # Subscription id to VIN, as of the connection that made them. Not
+        # derived from _vins at read time: async_set_vehicles can reorder that
+        # list mid-connection, and an index into it would then name the wrong
+        # car in an acknowledgement.
+        self._subscribed: dict[str, str] = {}
         self._task: asyncio.Task[None] | None = None
         self._connected = False
         # Whether an outage has already been announced, so it is said once on
@@ -295,12 +300,15 @@ class JlrTelemetry:
                 },
             )
         )
+        self._subscribed = {}
         for index, vin in enumerate(self._vins):
+            subscription = f"sub-vin-{index}"
+            self._subscribed[subscription] = vin
             await ws.send_str(
                 _encode(
                     "SUBSCRIBE",
                     {
-                        "id": f"sub-vin-{index}",
+                        "id": subscription,
                         "destination": WS_VIN_TOPIC.format(vin=vin),
                         "ack": "auto",
                     },
@@ -384,6 +392,8 @@ class JlrTelemetry:
         if frame.command != "MESSAGE":
             return
 
+        await self._async_ack_if_ours(ws, frame, device_id)
+
         try:
             envelope = json.loads(frame.body)
         except ValueError:
@@ -393,10 +403,6 @@ class JlrTelemetry:
             return
         if not isinstance(envelope, dict):
             return
-
-        event_id = envelope.get("eid")
-        if event_id:
-            await self._async_ack(ws, device_id, [str(event_id)])
 
         message_type = str(envelope.get("st") or envelope.get("messageType") or "")
         vin = envelope.get("v") or envelope.get("vin")
@@ -469,15 +475,57 @@ class JlrTelemetry:
             json.dumps(scrub(payload)),
         )
 
-    async def _async_ack(
-        self, ws: aiohttp.ClientWebSocketResponse, device_id: str, event_ids: list[str]
+    async def _async_ack_if_ours(
+        self, ws: aiohttp.ClientWebSocketResponse, frame: Frame, device_id: str
     ) -> None:
-        """Acknowledge messages, or the broker keeps redelivering them."""
+        """Acknowledge a vehicle message exactly the way the app does.
+
+        Up to 1.7.4 this echoed the envelope's ``eid`` in a ``deviceId`` /
+        ``eventIds`` body, and acknowledged every frame that had one — the
+        device topic's subscription receipts included. A capture of the iOS
+        app (issue #30) shows it doing neither: it echoes the frame's STOMP
+        ``message-id`` header, names the vehicle and device in headers of
+        their own, and acknowledges VIN-topic frames only. With the old form
+        that reporter's broker kept redelivering and then tore the session
+        down. We could not reproduce that, but the app's form is the one this
+        broker is known to accept, which makes it the safer one to send.
+
+        Taken from the headers, before the body is read, so a payload we
+        cannot parse is still acknowledged rather than redelivered forever.
+        """
+        subscription = frame.headers.get("subscription", "")
+        vin = self._subscribed.get(subscription)
+        if vin is None:
+            # The device topic is expected here, and is left alone as the app
+            # leaves it. Anything else means the broker named a subscription
+            # we did not make, and acknowledging nothing is the visible way
+            # for that to fail. The id is ours, so it is safe to log.
+            if subscription != "sub-dev":
+                _LOGGER.debug(
+                    "telemetry frame on subscription %r, which is not one of "
+                    "ours; not acknowledged",
+                    subscription,
+                )
+            return
+        message_id = frame.headers.get("message-id")
+        if not message_id:
+            _LOGGER.debug(
+                "telemetry frame for %s has no message-id to acknowledge",
+                vehicle_label(vin),
+            )
+            return
+        # The message-id is not logged anywhere: the broker's ids can carry
+        # the VIN inside them.
         await ws.send_str(
             _encode(
                 "SEND",
-                {"destination": WS_ACK_DESTINATION, "content-type": "application/json"},
-                json.dumps({"deviceId": device_id, "eventIds": event_ids}),
+                {
+                    "destination": WS_ACK_DESTINATION,
+                    "vin": vin,
+                    "device": device_id,
+                    "content-type": "application/json;charset=UTF-8",
+                },
+                json.dumps({"message-id": message_id}),
             )
         )
 

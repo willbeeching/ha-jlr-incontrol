@@ -37,6 +37,16 @@ BROKER_HEADERS = {
     "timestamp": "2026-08-26T08:12:41.589Z",
 }
 
+# And the same for a frame on a vehicle topic, which is the only kind that is
+# acknowledged. The message-id is modelled as carrying the VIN, so the tests
+# that look for it in a log are looking for something that could be there.
+VIN_HEADERS = {
+    "destination": f"/user/topic/VIN.{VIN}",
+    "subscription": "sub-vin-0",
+    "message-id": f"msg-1@@{VIN}",
+    "content-length": "512",
+}
+
 START = WS_BACKOFF_START.total_seconds()
 MAX = WS_BACKOFF_MAX.total_seconds()
 
@@ -55,6 +65,7 @@ def telemetry(**handlers: Any) -> JlrTelemetry:
     """A telemetry client with no session and recording callbacks."""
     made = JlrTelemetry.__new__(JlrTelemetry)
     made._vins = [VIN]
+    made._subscribed = {}
     made._task = None
     made._connected = False
     made._outage_logged = False
@@ -346,13 +357,6 @@ class TestFramesWeCanUse:
         assert status["ODOMETER"] == "123456"
         assert sent == "2026-08-26T08:12:41.589Z"
 
-    async def test_a_message_is_acknowledged(self) -> None:
-        # The broker redelivers anything unacknowledged, forever.
-        client, ws = telemetry(), FakeWebSocket()
-        await client._async_handle(ws, vhs(), DEVICE)
-        assert any("messageReceived" in frame for frame in ws.sent)
-        assert any("e-1" in frame for frame in ws.sent)
-
     async def test_a_position_message_reaches_the_coordinator(self) -> None:
         client, ws = telemetry(), FakeWebSocket()
         body = json.dumps({"position": {"latitude": 51.5074, "longitude": -0.1278}})
@@ -411,22 +415,22 @@ class TestFramesWeCannot:
         assert client.positions == []
 
     async def test_an_unacknowledgeable_message_is_still_read(self) -> None:
-        # No eid means nothing to acknowledge, not nothing to do.
-        client, ws = telemetry(), FakeWebSocket()
-        frame = message(st=WS_TYPE_STATUS, v=VIN, a={"b": vhs().body})
-        await client._async_handle(ws, vhs(), DEVICE)
+        # No message-id means nothing to acknowledge, not nothing to do.
+        client, ws = await subscribed()
+        headers = {k: v for k, v in VIN_HEADERS.items() if k != "message-id"}
+        await client._async_handle(ws, vhs(_headers=headers), DEVICE)
         assert client.status
-        assert frame
+        assert acks(ws) == []
 
 
 class TestRepeatedAndReorderedFrames:
     """The broker redelivers until acknowledged, so both really happen."""
 
     async def test_a_redelivered_frame_is_acknowledged_again(self) -> None:
-        client, ws = telemetry(), FakeWebSocket()
-        await client._async_handle(ws, vhs(), DEVICE)
-        await client._async_handle(ws, vhs(), DEVICE)
-        assert sum("e-1" in frame for frame in ws.sent) == 2
+        client, ws = await subscribed()
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        assert len(acks(ws)) == 2
         assert len(client.status) == 2
 
     async def test_the_last_frame_delivered_wins(self) -> None:
@@ -453,6 +457,130 @@ class TestRepeatedAndReorderedFrames:
         )
         await client._async_handle(ws, vhs(), DEVICE)
         assert client.status[-1][1]["ODOMETER"] == "123456"
+
+
+async def subscribed(
+    vins: list[str] | None = None,
+) -> tuple[JlrTelemetry, FakeWebSocket]:
+    """A client that has subscribed the way a real connection does."""
+    client, ws = telemetry(), FakeWebSocket()
+    client._vins = vins or [VIN]
+    await client._async_subscribe(ws, DEVICE)
+    ws.sent.clear()
+    return client, ws
+
+
+def acks(ws: FakeWebSocket) -> list[Frame]:
+    """Every acknowledgement sent, decoded rather than substring-matched."""
+    frames = [frame for raw in ws.sent for frame in tel._decode(raw)]
+    return [
+        frame
+        for frame in frames
+        if frame.command == "SEND"
+        and frame.headers.get("destination") == "/app/messageReceived"
+    ]
+
+
+class TestAcknowledging:
+    """In the iOS app's exact form, which issue #30 captured.
+
+    The broker redelivers anything it does not consider acknowledged, and one
+    reporter's broker tore the session down over the form 1.7.4 used.
+    """
+
+    async def test_a_vehicle_message_is_acknowledged_as_the_app_does(self) -> None:
+        client, ws = await subscribed()
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        (ack,) = acks(ws)
+        assert ack.headers["vin"] == VIN
+        assert ack.headers["device"] == DEVICE
+        assert ack.headers["content-type"] == "application/json;charset=UTF-8"
+        assert json.loads(ack.body) == {"message-id": f"msg-1@@{VIN}"}
+
+    async def test_it_echoes_the_header_not_the_envelope_id(self) -> None:
+        # 1.7.4 sent the envelope's eid. The app never does.
+        client, ws = await subscribed()
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        (ack,) = acks(ws)
+        assert "e-1" not in ack.body
+        assert "eventIds" not in ack.body
+
+    async def test_the_device_topic_is_not_acknowledged(self) -> None:
+        # Its subscription receipts were acknowledged up to 1.7.4. The app
+        # leaves them alone.
+        client, ws = await subscribed()
+        frame = message(
+            {
+                "destination": f"/user/topic/DEVICE.{DEVICE}",
+                "subscription": "sub-dev",
+                "message-id": "msg-2",
+            },
+            eid="e-7",
+            st="SubscriptionAccepted",
+        )
+        await client._async_handle(ws, frame, DEVICE)
+        assert acks(ws) == []
+
+    async def test_a_subscription_we_did_not_make_is_not_acknowledged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Failing visibly: if the broker ever names subscriptions differently,
+        # the debug log says so instead of everything silently going unacked.
+        caplog.set_level(logging.DEBUG)
+        client, ws = await subscribed()
+        headers = {**VIN_HEADERS, "subscription": "sub-7"}
+        await client._async_handle(ws, vhs(_headers=headers), DEVICE)
+        assert acks(ws) == []
+        assert "'sub-7', which is not one of ours" in caplog.text
+        assert client.status, "the reading is still used"
+
+    async def test_an_unreadable_body_is_still_acknowledged(self) -> None:
+        # The acknowledgement comes from the headers. A payload we cannot
+        # parse is still a delivery, and leaving it unacked has the broker
+        # send it again for as long as the connection lasts.
+        client, ws = await subscribed()
+        await client._async_handle(ws, Frame("MESSAGE", VIN_HEADERS, "{{{"), DEVICE)
+        assert len(acks(ws)) == 1
+
+    async def test_each_vehicle_is_named_in_its_own_acknowledgement(self) -> None:
+        other = "SALBB9876543210CD"
+        client, ws = await subscribed([VIN, other])
+        headers = {**VIN_HEADERS, "subscription": "sub-vin-1", "message-id": "m-9"}
+        await client._async_handle(ws, vhs(vin=other, _headers=headers), DEVICE)
+        (ack,) = acks(ws)
+        assert ack.headers["vin"] == other
+
+    async def test_a_vehicle_list_change_mid_connection_names_the_right_car(
+        self,
+    ) -> None:
+        # The ids were handed out by the connection that is still open. A car
+        # added to the account reorders the list for the next one, and must
+        # not change which VIN sub-vin-0 stands for on this one.
+        client, ws = await subscribed([VIN])
+        client.async_set_vehicles({VIN, "SAAAA0000000000AA"})
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        (ack,) = acks(ws)
+        assert ack.headers["vin"] == VIN
+
+    async def test_the_message_id_never_reaches_the_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client, ws = await subscribed()
+        await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
+        assert acks(ws)
+        assert "msg-1@@" not in caplog.text
+        assert VIN not in caplog.text
+
+    async def test_a_missing_message_id_names_only_the_vehicle_label(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        client, ws = await subscribed()
+        headers = {k: v for k, v in VIN_HEADERS.items() if k != "message-id"}
+        await client._async_handle(ws, vhs(_headers=headers), DEVICE)
+        assert "no message-id to acknowledge" in caplog.text
+        assert VIN not in caplog.text
 
 
 class TestSubscribing:
@@ -489,6 +617,18 @@ class TestSubscribing:
         client.async_set_vehicles({VIN, "SALBB9876543210CD"})
         await client._async_subscribe(ws, DEVICE)
         assert sum("sub-vin-" in frame for frame in ws.sent) == 2
+
+    async def test_each_connection_hands_out_its_own_ids(self) -> None:
+        # A car removed from the account must not keep a subscription id that
+        # the next connection would still acknowledge in its name.
+        other = "SALBB9876543210CD"
+        client, ws = await subscribed([VIN, other])
+        client.async_set_vehicles({VIN})
+        await client._async_subscribe(ws, DEVICE)
+        ws.sent.clear()
+        headers = {**VIN_HEADERS, "subscription": "sub-vin-1"}
+        await client._async_handle(ws, vhs(vin=other, _headers=headers), DEVICE)
+        assert acks(ws) == []
 
     async def test_the_vehicle_list_is_ordered_so_ids_are_stable(self) -> None:
         client = telemetry()
