@@ -32,18 +32,19 @@ CONNECTED = "CONNECTED\nversion:1.2\nheart-beat:10000,10000\nuser-name:9f3c\n\n\
 BROKER_HEADERS = {
     "destination": f"/user/topic/DEVICE.{DEVICE}",
     "subscription": "sub-0",
-    "message-id": f"msg-1@@{VIN}",
+    "message-id": "3c9e1f20-7a41-4b8e-9d02-5f6a7b8c9d0e-101772409",
     "content-length": "512",
     "timestamp": "2026-08-26T08:12:41.589Z",
 }
 
 # And the same for a frame on a vehicle topic, which is the only kind that is
-# acknowledged. The message-id is modelled as carrying the VIN, so the tests
-# that look for it in a log are looking for something that could be there.
+# acknowledged. Shaped like the app capture on issue #30, where the device
+# topic's message-id is a uuid with a counter on the end and this one is a
+# bare uuid.
 VIN_HEADERS = {
     "destination": f"/user/topic/VIN.{VIN}",
     "subscription": "sub-vin-0",
-    "message-id": f"msg-1@@{VIN}",
+    "message-id": "8d2f4a61-3b7c-4e95-a0d8-1c6e9f2b5a73",
     "content-length": "512",
 }
 
@@ -484,8 +485,8 @@ def acks(ws: FakeWebSocket) -> list[Frame]:
 class TestAcknowledging:
     """In the iOS app's exact form, which issue #30 captured.
 
-    The broker redelivers anything it does not consider acknowledged, and one
-    reporter's broker tore the session down over the form 1.7.4 used.
+    A broker redelivers what it does not consider acknowledged, so the form
+    matters even though nobody has measured the old one failing.
     """
 
     async def test_a_vehicle_message_is_acknowledged_as_the_app_does(self) -> None:
@@ -495,7 +496,7 @@ class TestAcknowledging:
         assert ack.headers["vin"] == VIN
         assert ack.headers["device"] == DEVICE
         assert ack.headers["content-type"] == "application/json;charset=UTF-8"
-        assert json.loads(ack.body) == {"message-id": f"msg-1@@{VIN}"}
+        assert json.loads(ack.body) == {"message-id": VIN_HEADERS["message-id"]}
 
     async def test_it_echoes_the_header_not_the_envelope_id(self) -> None:
         # 1.7.4 sent the envelope's eid. The app never does.
@@ -506,17 +507,18 @@ class TestAcknowledging:
         assert "eventIds" not in ack.body
 
     async def test_the_device_topic_is_not_acknowledged(self) -> None:
-        # Its subscription receipts were acknowledged up to 1.7.4. The app
-        # leaves them alone.
+        # The app leaves its receipts alone. They carry a message-id like
+        # every other frame, so acknowledging from the headers would reach
+        # them without the subscription check. The body is the capture's.
         client, ws = await subscribed()
         frame = message(
             {
                 "destination": f"/user/topic/DEVICE.{DEVICE}",
                 "subscription": "sub-dev",
-                "message-id": "msg-2",
+                "message-id": "3c9e1f20-7a41-4b8e-9d02-5f6a7b8c9d0e-101772410",
             },
-            eid="e-7",
-            st="SubscriptionAccepted",
+            messageType="SubscriptionAccepted",
+            vin=VIN,
         )
         await client._async_handle(ws, frame, DEVICE)
         assert acks(ws) == []
@@ -569,7 +571,7 @@ class TestAcknowledging:
         client, ws = await subscribed()
         await client._async_handle(ws, vhs(_headers=VIN_HEADERS), DEVICE)
         assert acks(ws)
-        assert "msg-1@@" not in caplog.text
+        assert VIN_HEADERS["message-id"] not in caplog.text
         assert VIN not in caplog.text
 
     async def test_a_missing_message_id_names_only_the_vehicle_label(

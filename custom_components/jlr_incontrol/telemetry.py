@@ -481,14 +481,12 @@ class JlrTelemetry:
         """Acknowledge a vehicle message exactly the way the app does.
 
         Up to 1.7.4 this echoed the envelope's ``eid`` in a ``deviceId`` /
-        ``eventIds`` body, and acknowledged every frame that had one — the
-        device topic's subscription receipts included. A capture of the iOS
-        app (issue #30) shows it doing neither: it echoes the frame's STOMP
-        ``message-id`` header, names the vehicle and device in headers of
-        their own, and acknowledges VIN-topic frames only. With the old form
-        that reporter's broker kept redelivering and then tore the session
-        down. We could not reproduce that, but the app's form is the one this
-        broker is known to accept, which makes it the safer one to send.
+        ``eventIds`` body. A capture of the iOS app (issue #30) shows it
+        echoing the frame's STOMP ``message-id`` header instead, naming the
+        vehicle and device in headers of their own, and acknowledging
+        VIN-topic frames only. Nobody has measured the old form failing, but
+        the app's is the one this broker is known to accept, which makes it
+        the one to send.
 
         Taken from the headers, before the body is read, so a payload we
         cannot parse is still acknowledged rather than redelivered forever.
@@ -514,8 +512,8 @@ class JlrTelemetry:
                 vehicle_label(vin),
             )
             return
-        # The message-id is not logged anywhere: the broker's ids can carry
-        # the VIN inside them.
+        # The message-id is not logged: it is the broker's opaque id, and
+        # tells anyone reading a pasted log nothing.
         await ws.send_str(
             _encode(
                 "SEND",
