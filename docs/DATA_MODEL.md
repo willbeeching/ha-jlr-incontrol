@@ -24,6 +24,7 @@ list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 - **Climate (ICE)**: `CLIMATE_STATUS_OPERATING_STATUS`, `CLIMATE_STATUS_REMAINING_RUNTIME`,
   `VEHICLE_STATE_TYPE` (ENGINE_ON_REMOTE_START).
 - **Doors / windows / roof**: `DOOR_IS_ALL_DOORS_LOCKED`, `DOOR_{FRONT,REAR}_{LEFT,RIGHT}_POSITION`,
+  `DOOR_{FRONT,REAR}_{LEFT,RIGHT}_LOCK_STATUS`, `DOOR_BOOT_LOCK_STATUS` (LOCKED/UNLOCKED),
   `DOOR_ENGINE_HOOD_POSITION`, `DOOR_BOOT_POSITION`, `WINDOW_{FRONT,REAR}_{LEFT,RIGHT}_STATUS`,
   `IS_SUNROOF_OPEN`, `IS_CAB_OPEN`.
 - **Security**: `THEFT_ALARM_STATUS` (ALARM_TRIGGER/ALARM_ARMED/ALARM_OFF).
@@ -34,8 +35,8 @@ list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 > (Refresh) reads the same stale cache. Waking the car took the **VHS** remote command, which
 > JLR now gate behind the app's device attestation, so there is no way to force fresh values
 > from here at all. This is a JLR-side limitation, not a mapping bug — confirmed on an L405 and
-> an L460. Read both keys as "last known" and lean on `LAST_UPDATED_TIME` to say how old that
-> is.
+> an L460. Read both keys as "last known". The feed carries no timestamp of its own; the
+> **Last updated** sensor records when the readings last changed, as seen from here.
 - **Tyres / fluids (alert feed)**: `TYRE_PRESSURE_{FL,FR,RL,RR}`, `BRAKE_FLUID_STATUS`,
   `BRAKE_PAD_WEAR`, `COOLANT_LEVEL`, `WASHER_FLUID_LEVEL`, `OIL_LEVEL`, `ENGINE_MALFUNCTION`.
 - **Service / DEF**: `EXT_KILOMETERS_TO_SERVICE`, `EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM`,

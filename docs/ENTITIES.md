@@ -98,6 +98,7 @@ any of them on in the entity settings.
 | Front/rear left and right windows | `WINDOW_*_STATUS` | any |
 | Sunroof | `IS_SUNROOF_OPEN` | any |
 | Central locking | `DOOR_IS_ALL_DOORS_LOCKED` | any |
+| Front/rear left and right door locks, boot lock (off by default) | `DOOR_*_LOCK_STATUS` | cars that report them |
 | Alarm armed | `THEFT_ALARM_STATUS` | any |
 | Alarm triggered | `THEFT_ALARM_STATUS` | any |
 | Brake fluid / coolant / oil / washer fluid / AdBlue warnings | `*_WARN` | any |
@@ -107,6 +108,12 @@ any of them on in the entity settings.
 
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or
 "warning active". Those map to *unknown* rather than to a state.
+
+The per-door locks are for what central locking cannot say: single-point entry unlocks the
+driver's door alone, leaving one door unlocked and the rest locked. They come from the same
+snapshot as central locking, so they are exactly as stale as it is — switch them on for the
+detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
+whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
 
 ## Other platforms
 

@@ -390,6 +390,57 @@ class TestOnlyTheUnsecureSideIsWithheld:
 
         assert locking(hass).state == STATE_UNKNOWN
 
+    async def test_a_door_left_unlocked_is_doubted_and_a_locked_one_is_not(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        freezer: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Per-door locks (#31) travel with central locking, so they get the
+        # same one-sided treatment: the unlocked reading is the one a car
+        # walking away from is about to overtake.
+        from doubles import FakeTelemetry
+        from homeassistant.helpers import entity_registry as er
+
+        from custom_components.jlr_incontrol.const import DOMAIN
+
+        snapshot = {
+            **CAUGHT_MID_USE,
+            "DOOR_FRONT_LEFT_LOCK_STATUS": "LOCKED",
+            "DOOR_FRONT_RIGHT_LOCK_STATUS": "UNLOCKED",
+        }
+
+        # In the first snapshot, not a later one: entities are built from the
+        # keys a car reports, and anything not built is pruned from the
+        # registry, switched on or not.
+        async def start(self: FakeTelemetry) -> None:
+            self.connected = True
+            self.on_connected(True)
+            for vin in self.vins:
+                self.push(vin, snapshot)
+
+        monkeypatch.setattr(FakeTelemetry, "async_start", start)
+
+        registry = er.async_get(hass)
+        for key in ("door_front_left_lock", "door_front_right_lock"):
+            registry.async_get_or_create(
+                "binary_sensor", DOMAIN, f"{KEPT}_{key}", config_entry=entry
+            )
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        await age(hass, entry, freezer, hours=15)
+
+        def lock(key: str) -> str:
+            entity_id = registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, f"{KEPT}_{key}"
+            )
+            return hass.states.get(entity_id).state
+
+        assert lock("door_front_left_lock") == "off"
+        assert lock("door_front_right_lock") == STATE_UNKNOWN
+
     def test_the_alarm_reads_the_other_way_round(self) -> None:
         # On means armed, which is the secure side, so it is the off reading
         # that gets withheld. Asserted on the descriptions rather than through

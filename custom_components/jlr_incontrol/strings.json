@@ -216,6 +216,21 @@
       "doors_locked": {
         "name": "Central locking"
       },
+      "door_front_left_lock": {
+        "name": "Front left door lock"
+      },
+      "door_front_right_lock": {
+        "name": "Front right door lock"
+      },
+      "door_rear_left_lock": {
+        "name": "Rear left door lock"
+      },
+      "door_rear_right_lock": {
+        "name": "Rear right door lock"
+      },
+      "boot_lock": {
+        "name": "Boot lock"
+      },
       "alarm": {
         "name": "Alarm armed"
       },

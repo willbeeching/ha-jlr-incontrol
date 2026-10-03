@@ -43,6 +43,10 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # unlocked car; off for an alarm, where on means armed. Only the
     # not-secure side is ever withheld — see _withheld below.
     insecure_when_on: bool = True
+    # The values this sensor understands. Anything else reads unknown rather
+    # than being forced through is_on. Empty means the predicate copes with
+    # whatever arrives, which is true of the older open/closed readings.
+    known: frozenset[str] = frozenset()
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -64,6 +68,30 @@ def _window(key: str, status_key: str) -> JlrBinaryDescription:
         device_class=BinarySensorDeviceClass.WINDOW,
         is_on=lambda v: v != "CLOSED",
         volatile=True,
+    )
+
+
+def _lock(key: str, status_key: str) -> JlrBinaryDescription:
+    """One door's own lock, for the case central locking cannot describe.
+
+    JLR's single-point entry unlocks the driver's door alone on the first
+    press, which leaves the car in a state no all-doors flag can report.
+    Disabled by default: the central sensor answers the usual question, and
+    these come from the same snapshot, so they are exactly as stale as it is.
+
+    Only LOCKED and UNLOCKED are understood. JLR cars can double-lock, and the
+    spelling of that state has never been seen; guessing it as either side
+    would be wrong one way or the other, so it reads unknown instead.
+    """
+    return JlrBinaryDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        device_class=BinarySensorDeviceClass.LOCK,
+        entity_registry_enabled_default=False,
+        volatile=True,
+        known=frozenset({"LOCKED", "UNLOCKED"}),
+        is_on=lambda v: v == "UNLOCKED",
     )
 
 
@@ -108,6 +136,14 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         volatile=True,
         is_on=lambda v: v != "TRUE",
     ),
+    # Each door's own lock (#31). The bonnet has a lock key too, but it is a
+    # latch outside central locking that reads LOCKED with every door open.
+    # DOOR_IS_BOOT_LOCKED says the same as the boot's own key, so is left out.
+    _lock("door_front_left_lock", "DOOR_FRONT_LEFT_LOCK_STATUS"),
+    _lock("door_front_right_lock", "DOOR_FRONT_RIGHT_LOCK_STATUS"),
+    _lock("door_rear_left_lock", "DOOR_REAR_LEFT_LOCK_STATUS"),
+    _lock("door_rear_right_lock", "DOOR_REAR_RIGHT_LOCK_STATUS"),
+    _lock("boot_lock", "DOOR_BOOT_LOCK_STATUS"),
     # No SAFETY device class here: that renders on/off as Unsafe/Safe, which
     # reads backwards for an armed alarm (locked car showed "Unsafe", #4).
     # Armed is independent of locked — a car can be locked with the alarm off;
@@ -176,6 +212,8 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
 REAR_DOOR_KEYS = {
     "door_rear_left",
     "door_rear_right",
+    "door_rear_left_lock",
+    "door_rear_right_lock",
     "window_rear_left",
     "window_rear_right",
 }
@@ -258,6 +296,9 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
             return None
         value = str(raw).upper()
         if self.entity_description.unknown_is_none and value in ("UNKNOWN", ""):
+            return None
+        known = self.entity_description.known
+        if known and value not in known:
             return None
         state = self.entity_description.is_on(value)
         if self._withheld(state):

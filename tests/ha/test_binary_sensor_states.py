@@ -128,3 +128,136 @@ class TestValuesThatMeanNothing:
         loaded.telemetry.push(KEPT, dropped)
         await hass.async_block_till_done()
         assert state_of(hass, "doors_locked") == STATE_UNKNOWN
+
+
+LOCKS = {
+    "DOOR_FRONT_LEFT_LOCK_STATUS": "LOCKED",
+    "DOOR_FRONT_RIGHT_LOCK_STATUS": "UNLOCKED",
+    "DOOR_REAR_LEFT_LOCK_STATUS": "LOCKED",
+    "DOOR_REAR_RIGHT_LOCK_STATUS": "LOCKED",
+    "DOOR_BOOT_LOCK_STATUS": "LOCKED",
+}
+LOCK_KEYS = (
+    "door_front_left_lock",
+    "door_front_right_lock",
+    "door_rear_left_lock",
+    "door_rear_right_lock",
+    "boot_lock",
+)
+
+
+def switched_on(hass: HomeAssistant, entry: MockConfigEntry, *keys: str) -> None:
+    """Register these as enabled before setup, as a user switching them on would.
+
+    They are off by default, and an entity that is off has no state to read.
+    """
+    registry = er.async_get(hass)
+    for key in keys:
+        registry.async_get_or_create(
+            "binary_sensor", DOMAIN, f"{KEPT}_{key}", config_entry=entry
+        )
+
+
+def disabled(hass: HomeAssistant, entry: MockConfigEntry) -> set[str]:
+    return {
+        item.unique_id
+        for item in er.async_entries_for_config_entry(
+            er.async_get(hass), entry.entry_id
+        )
+        if item.disabled_by is not None
+    }
+
+
+class TestEachDoorsOwnLock:
+    """#31: per-door lock status, for what central locking cannot say.
+
+    Single-point entry unlocks the driver's door alone, which leaves the car
+    in a state no all-doors flag can describe.
+    """
+
+    async def test_they_exist_but_are_off_by_default(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The central sensor answers the usual question, and these are as
+        # stale as it is. Five more entities per car is a lot to switch on
+        # for everybody.
+        reporting(monkeypatch, LOCKS)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert {f"{KEPT}_{key}" for key in LOCK_KEYS} <= disabled(hass, entry)
+
+    async def test_a_car_that_does_not_report_them_gets_none(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        registered = {
+            item.unique_id
+            for item in er.async_entries_for_config_entry(
+                er.async_get(hass), entry.entry_id
+            )
+        }
+        assert not {f"{KEPT}_{key}" for key in LOCK_KEYS} & registered
+
+    async def test_each_reads_its_own_door(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The case the central flag cannot show: one door open to the world,
+        # the rest locked. LOCK device class, so on means unlocked.
+        switched_on(hass, entry, *LOCK_KEYS)
+        reporting(monkeypatch, LOCKS)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert state_of(hass, "door_front_right_lock") == "on"
+        for key in ("door_front_left_lock", "door_rear_left_lock", "boot_lock"):
+            assert state_of(hass, key) == "off"
+
+    async def test_a_value_nobody_has_seen_reads_unknown(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # JLR cars double-lock, and the spelling of that state has never been
+        # captured. Reading it as unlocked sends somebody out to a car that is
+        # more locked than usual; reading anything strange as locked is false
+        # comfort. Neither guess is safe.
+        switched_on(hass, entry, "door_front_left_lock")
+        reporting(monkeypatch, {"DOOR_FRONT_LEFT_LOCK_STATUS": "DOUBLE_LOCKED"})
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert state_of(hass, "door_front_left_lock") == STATE_UNKNOWN
+
+    async def test_a_two_door_body_gets_no_rear_door_locks(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Same rule, and the same reason, as the rear doors themselves.
+        async def two_door(self: FakeClient, vin: str) -> dict[str, Any]:
+            return {
+                "vehicleBrand": "Jaguar",
+                "fuelType": "Petrol",
+                "nickname": "Test Car",
+                "numberOfDoors": "2",
+            }
+
+        monkeypatch.setattr(FakeClient, "async_get_attributes", two_door)
+        reporting(monkeypatch, LOCKS)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        off = disabled(hass, entry)
+        assert f"{KEPT}_door_front_left_lock" in off
+        assert f"{KEPT}_door_rear_left_lock" not in off
+        assert f"{KEPT}_door_rear_right_lock" not in off
