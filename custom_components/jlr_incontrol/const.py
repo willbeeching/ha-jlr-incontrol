@@ -335,6 +335,27 @@ VOLATILE_STATUS_KEYS = (
     "WINDOW_REAR_RIGHT_STATUS",
 )
 
+# The list above as 1.7.x stored it. Up to then each car's volatile readings
+# were saved as a bare list in this order, with nothing to say which value was
+# which key; an upgraded install still holds one, and this is the only record
+# of how to read it. Never edit it: it describes data already on disk.
+VOLATILE_STATUS_KEYS_1_7 = (
+    "DOOR_BOOT_POSITION",
+    "DOOR_ENGINE_HOOD_POSITION",
+    "DOOR_FRONT_LEFT_POSITION",
+    "DOOR_FRONT_RIGHT_POSITION",
+    "DOOR_IS_ALL_DOORS_LOCKED",
+    "DOOR_REAR_LEFT_POSITION",
+    "DOOR_REAR_RIGHT_POSITION",
+    "IS_SUNROOF_OPEN",
+    "THEFT_ALARM_STATUS",
+    "VEHICLE_STATE_TYPE",
+    "WINDOW_FRONT_LEFT_STATUS",
+    "WINDOW_FRONT_RIGHT_STATUS",
+    "WINDOW_REAR_LEFT_STATUS",
+    "WINDOW_REAR_RIGHT_STATUS",
+)
+
 # ---- Refresh cadence ----
 # Vehicle data arrives over the telemetry socket as it happens, so there is no
 # status polling any more and nothing to make adaptive. What remains on a timer

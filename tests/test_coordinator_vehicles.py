@@ -99,10 +99,10 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_last_status_seen": {KEPT: {}, SOLD: {}},
         "_last_changed": {KEPT: "t1", SOLD: "t2"},
         "_unsettled_since": {KEPT: "t1", SOLD: "t2"},
-        "_volatile_seen": {KEPT: (), SOLD: ()},
+        "_volatile_seen": {KEPT: {}, SOLD: {}},
         "_snapshot_seen": {KEPT: asyncio.Event(), SOLD: asyncio.Event()},
         "_decayed_since": {KEPT: "t1", SOLD: "t2"},
-        "_decayed_seen": {KEPT: (), SOLD: ()},
+        "_decayed_seen": {KEPT: {}, SOLD: {}},
         "_position_read_at": {},
     }
     return coordinator(**{**both, **state})

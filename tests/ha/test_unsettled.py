@@ -22,11 +22,19 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 import doubles  # noqa: E402
+import doubles as doubles_module  # noqa: E402
 from doubles import KEPT, STATUS, Doubles  # noqa: E402
 from homeassistant.const import STATE_UNKNOWN  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
+)
+
+from custom_components.jlr_incontrol.const import (  # noqa: E402
+    CONF_UNSETTLED_SINCE,
+    CONF_VOLATILE_SEEN,
+    VOLATILE_STATUS_KEYS,
+    VOLATILE_STATUS_KEYS_1_7,
 )
 
 # No LAST_UPDATED_TIME: neither of the cars this was built for sends one,
@@ -276,6 +284,140 @@ class TestTheClockSurvivesARestart:
         # same snapshot it was already holding. The clock must not treat that
         # as the car having just reported.
         loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == STATE_UNKNOWN
+
+
+class TestAnUpgradeThatWatchesMoreKeys:
+    """1.8.0 watches five more keys than 1.7.x, and the clock must survive it.
+
+    The readings used to be stored as a bare list compared by position, so one
+    more key made every stored list differ from every fresh one. The first
+    snapshot after upgrading restarted the clock on every car, and central
+    locking that had been unknown for fifteen hours read unlocked again for
+    another window — on cars that report none of the new keys as well.
+    """
+
+    @staticmethod
+    def installed_by_1_7(
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        seen: Any,
+        hours_ago: int = 15,
+    ) -> None:
+        """Leave the entry as a 1.7.x install would, mid-use and long quiet."""
+        from homeassistant.util import dt as dt_util
+
+        since = dt_util.utcnow() - timedelta(hours=hours_ago)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_UNSETTLED_SINCE: {KEPT: since.isoformat()},
+                CONF_VOLATILE_SEEN: {KEPT: seen},
+            },
+        )
+
+    @staticmethod
+    def as_1_7_stored(status: dict[str, Any]) -> list[Any]:
+        return [status.get(key) for key in VOLATILE_STATUS_KEYS_1_7]
+
+    async def test_the_old_clock_is_kept(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self.installed_by_1_7(hass, entry, self.as_1_7_stored(CAUGHT_MID_USE))
+        monkeypatch.setattr(doubles_module, "STATUS", CAUGHT_MID_USE)
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == STATE_UNKNOWN, (
+            "a lock reading fifteen hours stale was believed again because "
+            "the upgrade watched more keys"
+        )
+        # And it is written back in the shape that can grow.
+        entry.runtime_data._persist()
+        stored = entry.data[CONF_VOLATILE_SEEN][KEPT]
+        assert isinstance(stored, dict)
+        assert set(stored) == set(VOLATILE_STATUS_KEYS)
+
+    async def test_a_genuine_change_across_the_upgrade_still_counts(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The other half: the old list is read by key, not thrown away. It was
+        # locked when 1.7 last looked and is unlocked now, which is news.
+        was_locked = {**CAUGHT_MID_USE, "DOOR_IS_ALL_DOORS_LOCKED": "TRUE"}
+        self.installed_by_1_7(hass, entry, self.as_1_7_stored(was_locked))
+        monkeypatch.setattr(doubles_module, "STATUS", CAUGHT_MID_USE)
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == "on"
+
+    async def test_a_key_watched_for_the_first_time_is_not_a_change(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A car that does report the new keys has a value for them where the
+        # stored copy has none. No earlier value means nothing to have moved.
+        stored = {key: CAUGHT_MID_USE.get(key) for key in VOLATILE_STATUS_KEYS_1_7}
+        self.installed_by_1_7(hass, entry, stored)
+        with_locks = {**CAUGHT_MID_USE, "DOOR_FRONT_LEFT_LOCK_STATUS": "UNLOCKED"}
+        monkeypatch.setattr(doubles_module, "STATUS", with_locks)
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == STATE_UNKNOWN
+
+    async def test_a_list_from_the_first_beta_is_read_too(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 1.8.0-beta.1 shipped watching the new keys but still storing a bare
+        # list, in the current order. Read by key, a change across that
+        # upgrade is still seen.
+        was_locked = {**CAUGHT_MID_USE, "DOOR_IS_ALL_DOORS_LOCKED": "TRUE"}
+        beta = [was_locked.get(key) for key in VOLATILE_STATUS_KEYS]
+        self.installed_by_1_7(hass, entry, beta)
+        monkeypatch.setattr(doubles_module, "STATUS", CAUGHT_MID_USE)
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        assert locking(hass).state == "on"
+
+    @pytest.mark.parametrize("seen", [["TRUE", "FALSE"], "not a list", 7])
+    async def test_a_shape_nothing_wrote_is_dropped_not_trusted(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+        seen: Any,
+    ) -> None:
+        # Nothing to compare against means nothing proved to have moved: the
+        # clock keeps running, as it does for a car with no stored copy.
+        self.installed_by_1_7(hass, entry, seen)
+        monkeypatch.setattr(doubles_module, "STATUS", CAUGHT_MID_USE)
+
+        assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
         assert locking(hass).state == STATE_UNKNOWN

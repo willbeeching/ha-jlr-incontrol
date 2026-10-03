@@ -67,6 +67,7 @@ from .const import (
     UNSETTLED_MINUTES_DEFAULT,
     UNSETTLED_VEHICLE_STATES,
     VOLATILE_STATUS_KEYS,
+    VOLATILE_STATUS_KEYS_1_7,
 )
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .redact import vehicle_label
@@ -93,6 +94,29 @@ def _to_miles(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _restore_seen(stored: Any, *orders: tuple[str, ...]) -> dict[str, dict[str, Any]]:
+    """Read saved readings back as key-to-value maps, whichever shape they are.
+
+    A dict is the current shape. A list is what earlier releases wrote: values
+    in the order of whichever key list was current then, and the length is the
+    only way to tell which. Anything else is a shape nothing here wrote, and is
+    dropped rather than guessed at; a car with nothing to compare against
+    keeps its clock running and starts comparing from the next snapshot.
+    """
+    restored: dict[str, dict[str, Any]] = {}
+    for vin, seen in (stored or {}).items():
+        if isinstance(seen, dict):
+            restored[vin] = dict(seen)
+            continue
+        if not isinstance(seen, list):
+            continue
+        for keys in orders:
+            if len(seen) == len(keys):
+                restored[vin] = dict(zip(keys, seen, strict=True))
+                break
+    return restored
 
 
 class Resubscription(StrEnum):
@@ -148,21 +172,23 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._unsettled_since: dict[str, str] = dict(
             entry.data.get(CONF_UNSETTLED_SINCE) or {}
         )
-        # Restored as tuples: this round-trips through JSON, which has no
-        # tuples, and a list would never compare equal to a fresh reading.
-        self._volatile_seen: dict[str, tuple[Any, ...]] = {
-            vin: tuple(seen)
-            for vin, seen in (entry.data.get(CONF_VOLATILE_SEEN) or {}).items()
-        }
+        # Keyed by status key, so a list that gains a key compares cleanly
+        # against one saved before it did. 1.7.x saved bare lists of fourteen,
+        # and 1.8.0-beta.1 lists of the current keys; both are read back
+        # through the key order that wrote them.
+        self._volatile_seen = _restore_seen(
+            entry.data.get(CONF_VOLATILE_SEEN),
+            VOLATILE_STATUS_KEYS_1_7,
+            VOLATILE_STATUS_KEYS,
+        )
         # The same pair again, for readings that go stale on their own clock
         # rather than because of what the car is doing.
         self._decayed_since: dict[str, str] = dict(
             entry.data.get(CONF_DECAYED_SINCE) or {}
         )
-        self._decayed_seen: dict[str, tuple[Any, ...]] = {
-            vin: tuple(seen)
-            for vin, seen in (entry.data.get(CONF_DECAYED_SEEN) or {}).items()
-        }
+        self._decayed_seen = _restore_seen(
+            entry.data.get(CONF_DECAYED_SEEN), DECAYING_STATUS_KEYS
+        )
         self._position: dict[str, dict[str, Any]] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
         self._disconnected_since: datetime | None = dt_util.utcnow()
@@ -813,15 +839,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updates[CONF_LAST_CHANGED] = dict(self._last_changed)
         if (self.entry.data.get(CONF_UNSETTLED_SINCE) or {}) != self._unsettled_since:
             updates[CONF_UNSETTLED_SINCE] = dict(self._unsettled_since)
-        # Compared as lists, because that is what comes back out of the entry;
-        # holding tuples here and lists there would make every poll look like
-        # a change and write the entry on each one.
-        stored = {vin: list(seen) for vin, seen in self._volatile_seen.items()}
+        # Copies, for the reason _attributes is copied above: the entry must
+        # not share a dict that the next snapshot will change in place.
+        stored = {vin: dict(seen) for vin, seen in self._volatile_seen.items()}
         if (self.entry.data.get(CONF_VOLATILE_SEEN) or {}) != stored:
             updates[CONF_VOLATILE_SEEN] = stored
         if (self.entry.data.get(CONF_DECAYED_SINCE) or {}) != self._decayed_since:
             updates[CONF_DECAYED_SINCE] = dict(self._decayed_since)
-        decayed = {vin: list(seen) for vin, seen in self._decayed_seen.items()}
+        decayed = {vin: dict(seen) for vin, seen in self._decayed_seen.items()}
         if (self.entry.data.get(CONF_DECAYED_SEEN) or {}) != decayed:
             updates[CONF_DECAYED_SEEN] = decayed
         if updates:
@@ -949,7 +974,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         vin: str,
         status: dict[str, Any],
         keys: tuple[str, ...],
-        seen: dict[str, tuple[Any, ...]],
+        seen: dict[str, dict[str, Any]],
         since: dict[str, str],
     ) -> None:
         """Record when this group of readings last actually moved.
@@ -959,10 +984,21 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         Identical means the broker handed back what it already held and the
         clock keeps running; different means the car reported something new,
         whether or not anybody was watching at the time.
+
+        Compared key by key, over the keys both sides know. Comparing whole
+        tuples by position meant that watching one more key made every stored
+        reading differ from every fresh one, so the first snapshot after an
+        upgrade restarted the clock on every car — and a lock reading already
+        hidden for being fifteen hours stale came back for another window. A
+        key newly watched has no earlier value, so it cannot have moved.
         """
-        fingerprint = tuple(status.get(key) for key in keys)
+        fingerprint = {key: status.get(key) for key in keys}
         previous = seen.get(vin)
-        if vin not in since or (previous is not None and previous != fingerprint):
+        moved = previous is not None and any(
+            previous[key] != fingerprint[key]
+            for key in previous.keys() & fingerprint.keys()
+        )
+        if vin not in since or moved:
             since[vin] = dt_util.utcnow().isoformat()
         seen[vin] = fingerprint
 
