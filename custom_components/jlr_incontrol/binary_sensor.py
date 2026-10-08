@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,9 @@ from . import JlrConfigEntry
 from .const import CLIMATE_ACTIVE_STATES
 from .coordinator import JlrCoordinator
 from .entity import JlrVehicleEntity, async_add_vehicle_entities, is_electrified
+from .redact import vehicle_label
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -288,22 +292,49 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         super().__init__(coordinator, vin)
         self.entity_description = description
         self._attr_unique_id = f"{vin}_{description.key}"
+        # Why this last read unknown, so it is logged once per episode rather
+        # than on every state write.
+        self._unknown_because: str | None = None
 
     @property
     def is_on(self) -> bool | None:
         raw = self._status_value(self.entity_description.status_key)
         if raw is None:
+            self._note_unknown("its key was not in the latest snapshot")
             return None
         value = str(raw).upper()
         if self.entity_description.unknown_is_none and value in ("UNKNOWN", ""):
+            self._note_unknown(f"the car reported {value or 'an empty value'}")
             return None
         known = self.entity_description.known
         if known and value not in known:
+            # Capped: these are status words, and a key that one day carried
+            # something longer has no business filling the log with it.
+            self._note_unknown(f"{value[:40]!r} is not a value it understands")
             return None
         state = self.entity_description.is_on(value)
         if self._withheld(state):
+            self._note_unknown("withheld: a mid-use snapshot that has gone quiet")
             return None
+        self._unknown_because = None
         return state
+
+    def _note_unknown(self, reason: str) -> None:
+        """Say why this reads unknown, the first time it does for this reason.
+
+        Three different things all show as the same Unknown on a dashboard,
+        and a reporter who saw one minutes ago cannot say which it was (#31).
+        The values logged are status words like LOCKED, never anything that
+        identifies the car; the vehicle is named by its label.
+        """
+        if reason != self._unknown_because:
+            self._unknown_because = reason
+            _LOGGER.debug(
+                "%s %s reads unknown: %s",
+                vehicle_label(self._vin),
+                self.entity_description.key,
+                reason,
+            )
 
     def _withheld(self, state: bool) -> bool:
         """Whether to say nothing rather than assert this reading.

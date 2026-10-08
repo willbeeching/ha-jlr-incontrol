@@ -58,6 +58,20 @@ wakes on its own. Waking it took a remote command, which JLR now gate behind the
 attestation. The official app can still do it. Gate anything that must not act on a stale lock
 state on the **Last updated** sensor.
 
+## "A door, window or lock shows Unknown for a while"
+
+Unknown is a deliberate answer, for one of two reasons:
+
+- **The car said nothing useful.** It reported `UNKNOWN`, sent a value the integration does not
+  understand, or left the key out of the snapshot altogether.
+- **The reading was held back.** A snapshot taken while somebody was still in the car, saying a
+  door is open or unlocked, stops being shown once it has gone quiet. The next snapshot clears it.
+  See **Readings from a car caught mid-use** in [ENTITIES.md](ENTITIES.md).
+
+With [debug logging](#turning-on-debug-logging) on, each sensor logs one line saying which, the
+moment it turns Unknown — for example `vehicle_1a2b3c door_front_left_lock reads unknown: 'X' is
+not a value it understands`. That line is what to paste into an issue.
+
 ## "Everything is unavailable"
 
 - **For under half an hour.** Give it time. The telemetry socket reconnects every few minutes by

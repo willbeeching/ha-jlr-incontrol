@@ -7,6 +7,7 @@ being sent by a car that was sending it a moment ago.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
@@ -261,3 +262,83 @@ class TestEachDoorsOwnLock:
         assert f"{KEPT}_door_front_left_lock" in off
         assert f"{KEPT}_door_rear_left_lock" not in off
         assert f"{KEPT}_door_rear_right_lock" not in off
+
+
+class TestSayingWhyItIsUnknown:
+    """Three causes, one Unknown on the dashboard (#31).
+
+    A reporter saw short-lived Unknowns on the new lock sensors and could not
+    say which it was: a value nobody has mapped, a snapshot without the key,
+    or a stale reading held back. The debug log now says, once per episode.
+    """
+
+    @staticmethod
+    def why(caplog: pytest.LogCaptureFixture, key: str) -> list[str]:
+        return [m for m in caplog.messages if f" {key} reads unknown: " in m]
+
+    async def test_a_value_nobody_has_mapped_is_named(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        switched_on(hass, entry, "door_front_left_lock")
+        reporting(monkeypatch, {"DOOR_FRONT_LEFT_LOCK_STATUS": "DOUBLE_LOCKED"})
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        (line,) = self.why(caplog, "door_front_left_lock")
+        assert "'DOUBLE_LOCKED' is not a value it understands" in line
+        assert KEPT not in caplog.text, "the VIN reached the log"
+
+    async def test_a_missing_key_says_so(
+        self,
+        hass: HomeAssistant,
+        loaded: Doubles,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        dropped = {k: v for k, v in STATUS.items() if k != "DOOR_IS_ALL_DOORS_LOCKED"}
+        loaded.telemetry.push(KEPT, dropped)
+        await hass.async_block_till_done()
+
+        (line,) = self.why(caplog, "doors_locked")
+        assert "its key was not in the latest snapshot" in line
+
+    async def test_the_cars_own_unknown_is_told_apart(
+        self,
+        hass: HomeAssistant,
+        loaded: Doubles,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        loaded.telemetry.push(KEPT, {**STATUS, "DOOR_IS_ALL_DOORS_LOCKED": "UNKNOWN"})
+        await hass.async_block_till_done()
+
+        (line,) = self.why(caplog, "doors_locked")
+        assert "the car reported UNKNOWN" in line
+
+    async def test_once_per_episode_not_once_per_write(
+        self,
+        hass: HomeAssistant,
+        loaded: Doubles,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # The broker hands the same snapshot back on every reconnect, every
+        # few minutes. One line per Unknown, not one per redelivery; and a
+        # fresh line when it comes back after a real reading.
+        caplog.set_level(logging.DEBUG)
+        dropped = {k: v for k, v in STATUS.items() if k != "DOOR_IS_ALL_DOORS_LOCKED"}
+        for snapshot in (dropped, dropped, dropped):
+            loaded.telemetry.push(KEPT, snapshot)
+            await hass.async_block_till_done()
+        assert len(self.why(caplog, "doors_locked")) == 1
+
+        loaded.telemetry.push(KEPT, STATUS)
+        await hass.async_block_till_done()
+        loaded.telemetry.push(KEPT, dropped)
+        await hass.async_block_till_done()
+        assert len(self.why(caplog, "doors_locked")) == 2

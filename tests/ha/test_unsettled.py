@@ -532,6 +532,27 @@ class TestOnlyTheUnsecureSideIsWithheld:
 
         assert locking(hass).state == STATE_UNKNOWN
 
+    async def test_the_log_says_it_was_held_back(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        freezer: Any,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # The third of the three causes of an Unknown, and the one that looks
+        # most like a fault from the outside (#31).
+        import logging
+
+        caplog.set_level(logging.DEBUG)
+        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        await hass.async_block_till_done()
+        await age(hass, entry, freezer, hours=15)
+
+        assert any(
+            " doors_locked reads unknown: withheld" in m for m in caplog.messages
+        )
+
     async def test_a_door_left_unlocked_is_doubted_and_a_locked_one_is_not(
         self,
         hass: HomeAssistant,
