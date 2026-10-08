@@ -139,6 +139,11 @@ Re-deriving these has cost days. They are documented at length in
   Match that density; do not add comments that restate the line below.
 - Line length 88, black and isort (black profile), ruff with `E F W I UP B SIM
   C4 RET PTH`.
+- Flow schemas come from `probatio` on core 2026.10+ and `voluptuous` before
+  it; `config_flow.py` imports whichever exists as `vol`. Don't add a bare
+  `import voluptuous` — 2026.10 no longer depends on it directly, and its
+  types reject voluptuous schemas. `tests/ha/test_forms_render.py` renders
+  every form through the running core's own serialiser.
 - Binary sensor polarity follows Home Assistant's device classes: for `LOCK`,
   on means unlocked; for `DOOR` and `WINDOW`, on means open. Note that the
   window helper tests `!= "CLOSED"`, not `== "OPEN"`.

@@ -65,3 +65,12 @@ exclude = "^tests/"
 [[tool.mypy.overrides]]
 module = "homeassistant.components.device_tracker"
 no_implicit_reexport = false
+
+# The same shape again from 2026.10: BinarySensorDeviceClass moved into
+# binary_sensor/const.py and is re-exported from the package with a noqa and no
+# __all__. Importing it from .const is not an option while 2025.8 is supported
+# — that module does not exist there — so the package import stays, and only
+# this package is read through.
+[[tool.mypy.overrides]]
+module = "homeassistant.components.binary_sensor"
+no_implicit_reexport = false

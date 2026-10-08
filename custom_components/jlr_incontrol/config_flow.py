@@ -6,7 +6,15 @@ import logging
 import uuid
 from typing import Any
 
-import voluptuous as vol
+# Core 2026.10 replaced voluptuous with probatio, and types every flow schema
+# as probatio's. Same API, so the schemas below are written once; voluptuous
+# is only reached on the older cores this still supports, where probatio does
+# not exist. It would import on 2026.10 as well, but only because two of
+# core's own dependencies still happen to pull it in.
+try:
+    import probatio as vol
+except ImportError:
+    import voluptuous as vol  # type: ignore[no-redef]
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
