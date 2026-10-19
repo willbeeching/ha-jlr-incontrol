@@ -140,17 +140,36 @@ class FakePortal:
         self.closed = False
         self.asked: list[str] = []
         self.touches = 0
+        # The dashboard's trail, as JLR embed it: coordinates on every point,
+        # and a timestamp on most.
+        self.waypoints: list[dict[str, Any]] = [
+            {
+                "position": {"latitude": 51.5, "longitude": -0.1},
+                "timestamp": 1756900000000,
+            },
+            {
+                "position": {"latitude": 51.5074, "longitude": -0.1278},
+                "timestamp": 1756901800000,
+            },
+            {"position": {"latitude": 51.5074, "longitude": -0.1278}},
+        ]
 
     async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
         if self.error is not None:
             raise self.error
         return {vin: dict(record) for vin, record in self.listing.items()}
 
-    async def async_get_position(self, portal_id: str) -> dict[str, Any]:
+    async def async_read_dashboard(self, portal_id: str) -> Any:
+        from custom_components.jlr_incontrol.portal import (
+            Dashboard,
+            _parked,
+            _trail_shape,
+        )
+
         if self.error is not None:
             raise self.error
         self.asked.append(portal_id)
-        return {"latitude": 51.5074, "longitude": -0.1278}
+        return Dashboard(_parked(self.waypoints), _trail_shape(self.waypoints, ""))
 
     async def async_touch(self) -> None:
         if self.error is not None:

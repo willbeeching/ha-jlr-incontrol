@@ -13,6 +13,7 @@ skipped where one is not installed and run in the CI lane that has one.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from typing import Any
 
@@ -22,6 +23,7 @@ pytest.importorskip("homeassistant", reason="coordinator behaviour needs a core"
 
 from homeassistant.util import dt as dt_util  # noqa: E402
 from jlr.coordinator import JlrCoordinator  # noqa: E402
+from jlr.portal import Dashboard  # noqa: E402
 
 KEPT = "SAJAA1234567890AB"
 SOLD = "SALBB9876543210CD"
@@ -36,14 +38,16 @@ class FakePortal:
     def __init__(self, listing: dict[str, dict[str, Any]] | None = None) -> None:
         self._listing = listing or {}
         self.asked: list[str] = []
+        self.position: dict[str, Any] = {"latitude": 51.5, "longitude": -0.1}
+        self.trail: dict[str, Any] = {"points": 3, "span": "0:30:00"}
 
     async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
         # Copies: the real caller pops "portal_id" out of each record.
         return {vin: dict(record) for vin, record in self._listing.items()}
 
-    async def async_get_position(self, portal_id: str) -> dict[str, Any]:
+    async def async_read_dashboard(self, portal_id: str) -> Dashboard:
         self.asked.append(portal_id)
-        return {"latitude": 51.5, "longitude": -0.1}
+        return Dashboard(dict(self.position), dict(self.trail))
 
 
 def coordinator(**state: Any) -> JlrCoordinator:
@@ -70,6 +74,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_decayed_since": {},
         "_decayed_seen": {},
         "_position_read_at": {},
+        "_trail": {},
         "_awaiting": set(),
         "_snapshots_ready": asyncio.Event(),
         "_portal_signed_out": None,
@@ -104,6 +109,7 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_decayed_since": {KEPT: "t1", SOLD: "t2"},
         "_decayed_seen": {KEPT: {}, SOLD: {}},
         "_position_read_at": {},
+        "_trail": {KEPT: {"points": 1}, SOLD: {"points": 2}},
     }
     return coordinator(**{**both, **state})
 
@@ -122,6 +128,7 @@ CACHES = (
     "_snapshot_seen",
     "_decayed_since",
     "_decayed_seen",
+    "_trail",
 )
 
 
@@ -182,6 +189,62 @@ class TestPositionRequests:
         await coord._async_read_portal()
 
         assert portal.asked == ["id-sold"]
+
+
+class TestTheTrailShape:
+    """Kept per car for diagnostics, and logged only when it moves (#36)."""
+
+    def reading(self, portal: FakePortal) -> JlrCoordinator:
+        coord = coordinator(
+            _vehicles={KEPT: {"vin": KEPT}},
+            _portal_ids={KEPT: "id-kept"},
+            _portal_vehicles_due=dt_util.utcnow() + timedelta(hours=1),
+        )
+        coord.portal = portal
+        coord._async_clear_signed_out_issue = lambda: None
+        return coord
+
+    async def read(self, coord: JlrCoordinator) -> None:
+        # Past the half-hour gate, as the next scheduled read would be.
+        coord._portal_due = None
+        await coord._async_read_portal()
+
+    async def test_it_is_kept_against_the_car(self) -> None:
+        coord = self.reading(FakePortal())
+        await self.read(coord)
+        assert coord._trail[KEPT] == {"points": 3, "span": "0:30:00"}
+
+    async def test_an_unchanged_trail_is_logged_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Read every half hour and unchanged until the car drives again. What
+        # is worth a line is the read where it moved.
+        portal = FakePortal()
+        coord = self.reading(portal)
+        caplog.set_level(logging.DEBUG, logger="jlr.coordinator")
+
+        await self.read(coord)
+        await self.read(coord)
+        portal.trail = {"points": 5, "span": "1:10:00"}
+        await self.read(coord)
+
+        lines = [r.getMessage() for r in caplog.records if "portal trail" in r.message]
+        assert len(lines) == 2
+        assert "'points': 5" in lines[-1]
+        assert KEPT not in caplog.text, "the car is named by its label"
+
+    async def test_a_car_with_no_trail_keeps_its_old_position(self) -> None:
+        # An empty trail still says something about the page, so it is kept;
+        # it just has no fix in it to replace the one already held.
+        portal = FakePortal()
+        portal.position, portal.trail = {}, {"points": 0}
+        coord = self.reading(portal)
+        coord._position[KEPT] = {"latitude": 1.0, "longitude": 2.0}
+
+        await self.read(coord)
+
+        assert coord._position[KEPT]["latitude"] == 1.0
+        assert coord._trail[KEPT] == {"points": 0}
 
 
 class TestPortalListing:

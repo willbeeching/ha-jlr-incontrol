@@ -19,6 +19,7 @@ from jlr.portal import (
     JlrPortalError,
     _iso,
     _parked,
+    _trail_shape,
 )
 
 LOGIN_PAGE = '<html><form><input name="j_username"></form></html>'
@@ -159,19 +160,21 @@ class TestReadingPosition:
     async def test_a_car_with_no_journeys_reports_nothing(self) -> None:
         # A real state, not a failure. Reporting a coordinate would be worse.
         client = portal(Reply(200, "<html>no trail here</html>"))
-        assert await client.async_get_position("id-1") == {}
+        assert (await client.async_read_dashboard("id-1")).position == {}
 
     async def test_the_parked_fix_is_read_off_the_dashboard(self) -> None:
         trail = [{"position": {"latitude": 51.5074, "longitude": -0.1278}}]
         body = f"<script>let waypoints = {json.dumps(trail)};</script>"
         client = portal(Reply(200, body))
-        assert (await client.async_get_position("id-1"))["latitude"] == 51.5074
+        assert (await client.async_read_dashboard("id-1")).position[
+            "latitude"
+        ] == 51.5074
 
     async def test_an_unreadable_trail_is_an_error(self) -> None:
         body = "let waypoints = [not json];"
         client = portal(Reply(200, body))
         with pytest.raises(JlrPortalError, match="journey trail"):
-            await client.async_get_position("id-1")
+            await client.async_read_dashboard("id-1")
 
 
 class TestFindingWhereItParked:
@@ -214,6 +217,95 @@ class TestFindingWhereItParked:
 
     def test_an_empty_trail_reports_nothing(self) -> None:
         assert _parked([]) == {}
+
+
+MINUTE = 60_000
+# Epoch milliseconds, as the trail carries them: 2025-09-03T11:46:40Z.
+START = 1756900000000
+
+
+def fix(minutes: float, **extra: object) -> dict[str, object]:
+    """One trail point, some minutes after START."""
+    return {
+        "position": {"latitude": 51.5074, "longitude": -0.1278},
+        "timestamp": START + int(minutes * MINUTE),
+        **extra,
+    }
+
+
+def page(trail: list[object], before: str = "") -> str:
+    """A dashboard page embedding a trail the way JLR's does."""
+    return f"<script>{before}let waypoints = {json.dumps(trail)};</script>"
+
+
+class TestTheTrailsShape:
+    """Whether the trail is one journey, without saying where it went (#36)."""
+
+    async def shape(self, body: str) -> dict[str, object]:
+        return (await portal(Reply(200, body)).async_read_dashboard("id-1")).trail
+
+    async def test_one_drive_reads_as_one_span(self) -> None:
+        trail = await self.shape(page([fix(0), fix(2), fix(5), fix(35)]))
+        assert trail["points"] == trail["located"] == trail["timed"] == 4
+        assert trail["earliest"] == "2025-09-03T11:46:40Z"
+        assert trail["latest"] == "2025-09-03T12:21:40Z"
+        assert trail["span"] == "0:35:00"
+        assert trail["longest_gaps"] == ["0:30:00", "0:03:00", "0:02:00"]
+        assert trail["in_order"] is True
+
+    async def test_two_drives_show_the_time_parked_between_them(self) -> None:
+        # The question a last-journey sensor turns on: a trail of several
+        # trips has a gap in it as long as the car stood still.
+        trail = await self.shape(page([fix(0), fix(20), fix(260), fix(290)]))
+        assert trail["longest_gaps"][0] == "4:00:00"
+        assert trail["span"] == "4:50:00"
+
+    async def test_where_it_went_is_not_in_it(self) -> None:
+        trail = await self.shape(page([fix(0), fix(30)]))
+        assert "51.5074" not in json.dumps(trail)
+        assert "-0.1278" not in json.dumps(trail)
+
+    async def test_it_names_what_each_point_carries(self) -> None:
+        # Anything beyond a position and a time would change what can be built.
+        point = fix(0, speed=30)
+        point["position"]["heading"] = 90  # type: ignore[index]
+        trail = await self.shape(page([point]))
+        assert trail["point_keys"] == ["position", "speed", "timestamp"]
+        assert trail["position_keys"] == ["heading", "latitude", "longitude"]
+
+    async def test_points_without_a_time_or_a_place_are_counted_apart(self) -> None:
+        # The final entries can carry a fix with no time, and the reverse.
+        untimed = {"position": {"latitude": 51.5, "longitude": -0.1}}
+        unplaced = {"position": {}, "timestamp": START}
+        trail = await self.shape(page([fix(5), untimed, unplaced, "junk", None]))
+        assert trail["points"] == 5
+        assert trail["located"] == 2
+        assert trail["timed"] == 2
+
+    async def test_a_trail_out_of_order_says_so(self) -> None:
+        trail = await self.shape(page([fix(30), fix(0)]))
+        assert trail["in_order"] is False
+        assert trail["span"] == "0:30:00"
+
+    async def test_the_pages_own_variables_are_named(self) -> None:
+        # Where a journey's distance or duration might be, if the page has one.
+        trail = await self.shape(
+            page([fix(0)], before="var journeyDistance = 12; const $map = {};")
+        )
+        assert trail["page_variables"] == ["journeyDistance", "$map", "waypoints"]
+
+    async def test_a_page_with_no_trail_still_names_its_variables(self) -> None:
+        # Indistinguishable otherwise from a trail renamed out from under us.
+        trail = await self.shape("<script>let route = [];</script>")
+        assert trail["points"] == 0
+        assert trail["earliest"] is None
+        assert trail["span"] is None
+        assert trail["longest_gaps"] == []
+        assert trail["page_variables"] == ["route"]
+
+    def test_a_page_full_of_scripts_is_cut_short(self) -> None:
+        body = "".join(f"var v{n} = {n};" for n in range(100))
+        assert len(_trail_shape([], body)["page_variables"]) == 40
 
 
 class TestTimestamps:
