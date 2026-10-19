@@ -24,6 +24,7 @@ async def async_get_config_entry_diagnostics(
     coordinator = entry.runtime_data
     data = coordinator.data
     pushed_at = getattr(coordinator, "_pushed_at", {})
+    trails = getattr(coordinator, "_trail", {})
     diagnostics: dict[str, Any] = {
         # Where the data is actually coming from. Without this a dump of empty
         # vehicles looks the same whether the socket is down or the car is.
@@ -46,6 +47,10 @@ async def async_get_config_entry_diagnostics(
             "status": vehicle.get("status", {}),
             "status_ts": vehicle.get("status_ts"),
             "position_stale": vehicle.get("position_stale"),
+            # Counts, times and key names from the portal's journey trail, never
+            # its coordinates: what #36 needs to know whether the trail is one
+            # journey before anything is built that assumes so.
+            "trail": trails.get(vin),
         }
     # scrub() takes and returns Any by design — it walks whatever JLR sent,
     # whose shape is not ours to predict. The annotation is where that Any

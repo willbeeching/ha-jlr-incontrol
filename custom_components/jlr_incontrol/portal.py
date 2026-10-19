@@ -11,8 +11,10 @@ So this module logs in the way a browser would and reads two things:
 
 * ``/ajax/pollvehiclestatus`` — the vehicles, with nickname, brand, model and
   the opaque per-account id the dashboard needs.
-* ``/dashboard/vehicle/{id}`` — an HTML page with the last journey's GPS trail
-  embedded in a script variable. Its final point is where the car is parked.
+* ``/dashboard/vehicle/{id}`` — an HTML page with a GPS trail embedded in a
+  script variable. Its final point is where the car is parked. The trail is
+  taken to be the last journey's, but nobody has confirmed what span it
+  covers; ``_trail_shape`` is how that gets found out.
 
 Two honest limits. The location is the end of the last completed journey, not a
 live position — right for "is it home", wrong for "where is it now". And the
@@ -28,7 +30,8 @@ import logging
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from itertools import pairwise
+from typing import Any, NamedTuple
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -61,6 +64,13 @@ _WAYPOINTS = re.compile(r"let\s+waypoints\s*=\s*(\[.*?\])\s*;", re.DOTALL)
 # registered ones, so the dashboard's own links are a second place to find it.
 _ENC_ID = re.compile(r"vehicle/add/\d+/([^/]+)/continue")
 _DASHBOARD_ID = re.compile(r'href="[^"]*/dashboard/vehicle/([^"/?]+)"')
+# Script variables the dashboard declares. Their names only, for the trail
+# summary: whether the page carries a journey's distance or duration somewhere
+# other than the waypoints is unknown, and the names are what would say so.
+_PAGE_VARIABLE = re.compile(r"\b(?:let|var|const)\s+([A-Za-z_$][\w$]*)\s*=")
+# Enough to recognise a summary among the page's own variables without
+# reporting every analytics script it loads.
+_PAGE_VARIABLES_MAX = 40
 
 # Fields worth lifting off the portal's vehicle record, in its spelling.
 _VEHICLE_FIELDS = ("nickname", "vehicleBrand", "vehicleType", "registrationNumber")
@@ -77,6 +87,15 @@ class JlrPortalError(Exception):
 
 class JlrPortalAuthError(JlrPortalError):
     """Raised when the stored ForgeRock session no longer opens the portal."""
+
+
+class Dashboard(NamedTuple):
+    """One read of a vehicle's dashboard page."""
+
+    # Where the car is parked, or empty if the page did not say.
+    position: dict[str, Any]
+    # The shape of the trail it was read from, without where it went.
+    trail: dict[str, Any]
 
 
 class JlrPortal:
@@ -517,20 +536,20 @@ class JlrPortal:
             len(spare),
         )
 
-    async def async_get_position(self, portal_id: str) -> dict[str, Any]:
-        """Return the parked position from the last journey's trail."""
+    async def async_read_dashboard(self, portal_id: str) -> Dashboard:
+        """Return the parked position, and the shape of the trail behind it."""
         _, body = await self._async_get(f"/dashboard/vehicle/{portal_id}")
         match = _WAYPOINTS.search(body)
         if not match:
             # A car with no journeys logged has no trail. That is a real state,
             # not a failure — report nothing rather than a coordinate.
             _LOGGER.debug("portal dashboard carried no waypoints")
-            return {}
+            return Dashboard({}, _trail_shape([], body))
         try:
             waypoints = json.loads(match.group(1))
         except ValueError as err:
             raise JlrPortalError("could not read the portal's journey trail") from err
-        return _parked(waypoints)
+        return Dashboard(_parked(waypoints), _trail_shape(waypoints, body))
 
 
 # Where the portal sends someone whose session has gone.
@@ -575,13 +594,78 @@ def _parked(waypoints: list[Any]) -> dict[str, Any]:
     return {"latitude": latitude, "longitude": longitude, "timestamp": stamp}
 
 
-def _iso(value: Any) -> str | None:
-    """Epoch milliseconds to an ISO string, or None if it isn't one."""
+def _trail_shape(waypoints: list[Any], body: str) -> dict[str, Any]:
+    """What the trail looks like, without a single coordinate of where it went.
+
+    Asked for on #36: a last-journey sensor built from this trail. Whether the
+    trail *is* one journey nobody has checked — it could as easily be the last
+    day, or the last few hundred fixes — and a start time read off a trail of
+    three trips would be confidently wrong. Counts, times, gaps and key names
+    are enough to tell, and none of them say where the car has been.
+    """
+    points = [point for point in waypoints if isinstance(point, dict)]
+    in_array_order = [
+        moment
+        for moment in (_moment(point.get("timestamp")) for point in points)
+        if moment is not None
+    ]
+    moments = sorted(in_array_order)
+    gaps = sorted(
+        (later - earlier for earlier, later in pairwise(moments)),
+        reverse=True,
+    )
+    positions = [point.get("position") for point in points]
+    return {
+        "points": len(waypoints),
+        "located": sum(
+            1
+            for position in positions
+            if isinstance(position, dict)
+            and position.get("latitude") is not None
+            and position.get("longitude") is not None
+        ),
+        "timed": len(moments),
+        "earliest": _format(moments[0]) if moments else None,
+        "latest": _format(moments[-1]) if moments else None,
+        "span": str(moments[-1] - moments[0]) if moments else None,
+        # A trail of one journey has no long pause in it. Several journeys
+        # show up here as gaps the length of the time the car stood parked.
+        "longest_gaps": [str(gap) for gap in gaps[:3]],
+        "in_order": in_array_order == moments,
+        # Key names only. Anything beyond position and timestamp — a distance,
+        # a speed, a journey id — would change what can honestly be built.
+        "point_keys": sorted({str(key) for point in points for key in point}),
+        "position_keys": sorted(
+            {
+                str(key)
+                for position in positions
+                if isinstance(position, dict)
+                for key in position
+            }
+        ),
+        "page_variables": list(dict.fromkeys(_PAGE_VARIABLE.findall(body)))[
+            :_PAGE_VARIABLES_MAX
+        ],
+    }
+
+
+def _moment(value: Any) -> datetime | None:
+    """Epoch milliseconds to a datetime, or None if it isn't one."""
     try:
-        moment = datetime.fromtimestamp(int(value) / 1000, tz=UTC)
+        return datetime.fromtimestamp(int(value) / 1000, tz=UTC)
     except (TypeError, ValueError, OSError, OverflowError):
         return None
+
+
+def _format(moment: datetime) -> str:
+    """An ISO string in the trail's own UTC, as the tracker reports it."""
     return moment.isoformat().replace("+00:00", "Z")
+
+
+def _iso(value: Any) -> str | None:
+    """Epoch milliseconds to an ISO string, or None if it isn't one."""
+    moment = _moment(value)
+    return _format(moment) if moment else None
 
 
 def _parse_iso(value: str | None) -> datetime | None:

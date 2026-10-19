@@ -60,6 +60,28 @@ Location is the end of the last completed journey rather than a live position, a
 a trip completes and syncs. Vehicle attributes are cached in the config entry so a restart does not
 cost every vehicle its name and model.
 
+### The owner portal's trail
+The position actually comes from the owner portal's dashboard page, which embeds
+`let waypoints = [...]`: points of `{ position: { latitude, longitude }, timestamp }`, the timestamp
+in epoch milliseconds. Either half can be null on the final entries, so the parked fix takes the
+last coordinates and the last timestamp independently. Nothing else in the trail is used.
+
+What the trail covers is **unconfirmed** — one journey, the last day, or the last few hundred fixes.
+A last-journey sensor (#36) is only honest if it is one journey, so diagnostics carry a `trail` block
+per vehicle, and debug logging writes the same summary whenever it changes:
+
+| Field | Meaning |
+| --- | --- |
+| `points`, `located`, `timed` | Entries in the trail; how many have coordinates; how many have a time |
+| `earliest`, `latest`, `span` | The first and last times, and the time between them |
+| `longest_gaps` | The three longest pauses between consecutive times |
+| `in_order` | Whether the times run forwards through the array |
+| `point_keys`, `position_keys` | Every key the points and their positions carry — names only |
+| `page_variables` | Names of the page's script variables, up to 40, in case a journey summary sits outside the trail |
+
+No coordinates. A trail of one drive has no gap longer than a stop in traffic; a trail of several
+has one as long as the car stood parked between them.
+
 ## HA entity mapping
 | Platform | Entities |
 |---|---|

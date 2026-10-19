@@ -70,7 +70,7 @@ from .const import (
     VOLATILE_STATUS_KEYS_1_7,
 )
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
-from .redact import vehicle_label
+from .redact import scrub, vehicle_label
 from .telemetry import JlrTelemetry
 
 _LOGGER = logging.getLogger(__name__)
@@ -249,6 +249,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # above on purpose: the portal answering is not the same as this car
         # having a position in the answer.
         self._position_read_at: dict[str, datetime] = {}
+        # The shape of each car's portal trail as last read, for diagnostics.
+        # Kept apart from the position, which a pushed fix replaces whole.
+        self._trail: dict[str, dict[str, Any]] = {}
         self.telemetry = JlrTelemetry(
             async_get_clientsession(hass),
             self.client,
@@ -550,6 +553,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._decayed_since.pop(vin, None)
             self._decayed_seen.pop(vin, None)
             self._position_read_at.pop(vin, None)
+            self._trail.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
         # A vehicle we were still waiting on has now gone; nothing will ever
@@ -666,7 +670,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 portal_id = self._portal_ids.get(vin)
                 if not portal_id:
                     continue
-                position = await self.portal.async_get_position(portal_id)
+                position, trail = await self.portal.async_read_dashboard(portal_id)
+                self._note_trail(vin, trail)
                 if position:
                     self._position[vin] = position
                     # Per vehicle, and only on one that was actually located.
@@ -687,6 +692,17 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("owner portal unavailable: %s", err)
         except Exception:  # noqa: BLE001 - the portal must never break setup
             _LOGGER.exception("unexpected failure reading the owner portal")
+
+    def _note_trail(self, vin: str, trail: dict[str, Any]) -> None:
+        """Keep the trail's shape, and log it when it changes.
+
+        Only on a change: the trail is read every half hour and stays the same
+        until the car next drives, and what #36 needs from a log is how the
+        trail moves when a journey is added, not the same line forty times.
+        """
+        if self._trail.get(vin) != trail:
+            _LOGGER.debug("%s portal trail: %s", vehicle_label(vin), scrub(trail))
+        self._trail[vin] = trail
 
     def _async_portal_signed_out(self, now: Any, err: Exception) -> None:
         """Back off and tell the user: nothing headless can renew this."""

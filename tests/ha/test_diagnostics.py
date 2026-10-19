@@ -89,3 +89,16 @@ class TestItIsStillWorthDownloading:
         (vehicle,) = diagnostics["vehicles"].values()
         assert vehicle["status"]["ODOMETER"] == "123456"
         assert vehicle["attributes"]["vehicleBrand"] == "Jaguar"
+
+    async def test_it_shows_the_trails_shape_and_not_its_route(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # Enough to tell one journey from several (#36), and nothing of where
+        # any of them went.
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+        (vehicle,) = diagnostics["vehicles"].values()
+        assert vehicle["trail"]["points"] == 3
+        assert vehicle["trail"]["span"] == "0:30:00"
+        text = json.dumps(diagnostics)
+        assert "51.5074" not in text
+        assert "-0.1278" not in text
