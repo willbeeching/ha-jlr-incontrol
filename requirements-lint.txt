@@ -7,5 +7,5 @@
 # that can be read and run, which is the point.
 black==26.10.0
 isort==9.0.2
-ruff==0.16.10
+ruff==0.17.1
 flake8==7.4.1
