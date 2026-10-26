@@ -35,6 +35,7 @@ from homeassistant.util import dt as dt_util
 
 from . import JlrConfigEntry
 from .const import (
+    CONF_APPLIED_UNITS,
     DISTANCE_UNIT_DEFAULT,
     DISTANCE_UNIT_KM,
     DISTANCE_UNIT_MILES,
@@ -198,7 +199,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.KILOMETERS,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         suppress_for_ev=True,
     ),
@@ -209,7 +209,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.MILES,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.TOTAL_INCREASING,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         attr_fn=_odometer_attrs,
     ),
@@ -220,7 +219,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.KILOMETERS,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
     ),
     JlrSensorDescription(
@@ -230,7 +228,6 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.KILOMETERS,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
     ),
     JlrSensorDescription(
@@ -363,7 +360,6 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.MILES,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         requires_ev=True,
     ),
@@ -374,7 +370,6 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.MILES,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_unit_of_measurement=UnitOfLength.MILES,
         suggested_display_precision=0,
         value_fn=_combined_range,
         suppress_for_ev=True,
@@ -517,52 +512,73 @@ async def async_setup_entry(
         entry, Platform.SENSOR, coordinator, async_add_entities, build, protect
     )
 
-    ent_reg = er.async_get(hass)
-    _apply_unit_overrides(ent_reg, coordinator, distance_unit, pressure_unit)
+    _apply_unit_overrides(hass, entry, distance_unit, pressure_unit)
 
 
 def _apply_unit_overrides(
-    ent_reg: er.EntityRegistry,
-    coordinator: JlrCoordinator,
+    hass: HomeAssistant,
+    entry: JlrConfigEntry,
     distance_unit: str | None,
     pressure_unit: str | None,
 ) -> None:
-    """Push the configured display units into the entity registry.
+    """Push a changed unit option into the entity registry, and only then.
 
-    suggested_unit_of_measurement only applies when an entity is FIRST
-    registered, so changing the unit options after setup silently did
-    nothing for existing entities (#4). Options changes reload the entry,
-    which lands here with the registry already populated.
+    suggested_unit_of_measurement only applies when an entity is first
+    registered, so changing the option after setup did nothing for entities
+    that already existed (#4); hence writing to the registry at all. New
+    entities need none of this — they are built with the option as their
+    suggested unit.
+
+    It used to run on every setup, and with the option on the default it
+    removed whatever unit an entity had been given — including one the user
+    picked by hand in the entity's own settings, which went back to miles on
+    every restart and update (#40). So it now acts only when the option has
+    changed since it last ran, and going back to the default removes only
+    the unit this wrote, leaving anything the user has chosen since alone.
     """
-    for vin in coordinator.data.get("vehicles", {}):
+    applied = dict(entry.data.get(CONF_APPLIED_UNITS) or {})
+    wanted = {"distance": distance_unit, "pressure": pressure_unit}
+    if all(applied.get(kind) == unit for kind, unit in wanted.items()):
+        return
+
+    ent_reg = er.async_get(hass)
+    vins = entry.runtime_data.data.get("vehicles", {})
+    for vin in vins:
         for description in (*VEHICLE_SENSORS, *TYRE_SENSORS, *EV_SENSORS):
             if description.device_class == SensorDeviceClass.DISTANCE:
-                unit = distance_unit
+                kind = "distance"
             elif description.device_class == SensorDeviceClass.PRESSURE:
-                unit = pressure_unit
+                kind = "pressure"
             else:
+                continue
+            unit, before = wanted[kind], applied.get(kind)
+            if unit == before:
                 continue
             entity_id = ent_reg.async_get_entity_id(
                 "sensor", DOMAIN, f"{vin}_{description.key}"
             )
-            if not entity_id:
-                continue
-            reg_entry = ent_reg.async_get(entity_id)
-            if reg_entry is None:
+            reg_entry = ent_reg.async_get(entity_id) if entity_id else None
+            if entity_id is None or reg_entry is None:
                 continue
             sensor_options = dict(reg_entry.options.get("sensor", {}))
             current = sensor_options.get("unit_of_measurement")
-            if unit is None:
-                # Back to "Use Home Assistant default": drop any override so
-                # the suggested/native unit applies again.
-                if current is not None:
-                    sensor_options.pop("unit_of_measurement", None)
-                    ent_reg.async_update_entity_options(
-                        entity_id, "sensor", sensor_options or None
-                    )
-            elif current != unit:
+            if unit is not None:
+                # A newly forced unit applies to every sensor of its kind:
+                # choosing it is the user saying so.
                 sensor_options["unit_of_measurement"] = unit
-                ent_reg.async_update_entity_options(entity_id, "sensor", sensor_options)
+            elif current == before:
+                # Back to the default, and this is still the unit we wrote.
+                sensor_options.pop("unit_of_measurement", None)
+            else:
+                continue
+            ent_reg.async_update_entity_options(
+                entity_id, "sensor", sensor_options or None
+            )
+
+    remembered = {kind: unit for kind, unit in wanted.items() if unit is not None}
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_APPLIED_UNITS: remembered}
+    )
 
 
 class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):

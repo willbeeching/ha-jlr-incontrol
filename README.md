@@ -126,6 +126,15 @@ purely about display; neither changes what is fetched or how often.
 | Distance unit | Use Home Assistant default / Miles / Kilometres | Use Home Assistant default | Forces distance sensors (odometer, ranges, distance to service) to one unit instead of following your Home Assistant unit system. |
 | Pressure unit | Use Home Assistant default / kPa / bar / psi | Use Home Assistant default | The same for the four tyre pressure sensors. JLR report kPa; the other two are converted. |
 
+Choosing a unit applies it to every sensor of that kind at the moment you save. After that, a
+unit you set on one sensor in its own settings is kept through restarts and updates, and going
+back to *Use Home Assistant default* only removes the unit the option set.
+
+On the default, distance sensors created from 1.8.0 on follow your unit system: kilometres on a
+metric install, miles on US customary. Sensors that already existed keep the unit they were
+created with, which before 1.8.0 was always miles — change those with the option above or in the
+sensor's own settings.
+
 Saving reloads the integration, which takes a few seconds and creates nothing new — entity ids
 and history are kept.
 

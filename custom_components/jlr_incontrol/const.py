@@ -259,6 +259,10 @@ CONF_PORTAL_BASE = "portal_base"
 # age, and reconstructing it from log timestamps after the fact is how two
 # separate failures this weekend went undiagnosed.
 CONF_PORTAL_MINTED = "portal_minted"
+# The units the distance and pressure options last wrote into the entity
+# registry, by kind. Without it a unit the integration forced and a unit the
+# user picked by hand look identical, and clearing "ours" cleared theirs (#40).
+CONF_APPLIED_UNITS = "applied_units"
 
 # ---- Options keys ----
 OPT_DISTANCE_UNIT = "distance_unit"
