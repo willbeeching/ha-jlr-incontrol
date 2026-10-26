@@ -72,6 +72,15 @@ With [debug logging](#turning-on-debug-logging) on, each sensor logs one line sa
 moment it turns Unknown — for example `vehicle_1a2b3c door_front_left_lock reads unknown: 'X' is
 not a value it understands`. That line is what to paste into an issue.
 
+## "Distances are in miles, or a unit I changed goes back"
+
+Before 1.8.0 every distance sensor was created in miles whatever your unit system, and a unit
+changed in a sensor's own settings was put back on every restart while the **Distance unit**
+option was on its default. Both are fixed: a unit you pick by hand now stays, and new sensors
+follow your unit system. Sensors created by an earlier release keep miles until you change them —
+for all of them at once, set **Distance unit** to Kilometres under Configure. See
+[Options](../README.md#options).
+
 ## "Everything is unavailable"
 
 - **For under half an hour.** Give it time. The telemetry socket reconnects every few minutes by
