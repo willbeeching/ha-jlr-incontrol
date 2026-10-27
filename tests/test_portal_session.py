@@ -308,6 +308,92 @@ class TestTheTrailsShape:
         assert len(_trail_shape([], body)["page_variables"]) == 40
 
 
+class TestHowFarTheOdometerMoved:
+    """The trail's distance, in a unit nobody has confirmed yet (#36).
+
+    Each point carries the car's odometer. The change across the trail, set
+    beside the distance the app shows for the same drive, says whether it
+    counts kilometres, miles or metres. The reading itself is the car's total
+    mileage and never leaves.
+    """
+
+    async def shape(self, body: str) -> dict[str, object]:
+        return (await portal(Reply(200, body)).async_read_dashboard("id-1")).trail
+
+    async def test_the_change_across_a_drive(self) -> None:
+        trail = await self.shape(
+            page(
+                [
+                    fix(0, odometer=48213),
+                    fix(5, odometer=48217.5),
+                    fix(13, odometer=48225),
+                ]
+            )
+        )
+        assert trail["odometer_points"] == 3
+        assert trail["odometer_change"] == 12
+        assert trail["odometer_rising"] is True
+
+    async def test_the_reading_itself_never_appears(self) -> None:
+        trail = await self.shape(
+            page([fix(0, odometer=48213), fix(13, odometer=48225)])
+        )
+        assert "48213" not in json.dumps(trail)
+        assert "48225" not in json.dumps(trail)
+
+    async def test_it_measures_in_time_order_not_array_order(self) -> None:
+        trail = await self.shape(
+            page([fix(13, odometer=48225), fix(0, odometer=48213)])
+        )
+        assert trail["odometer_change"] == 12
+        assert trail["odometer_rising"] is True
+
+    async def test_a_fraction_is_kept_and_not_float_noise(self) -> None:
+        trail = await self.shape(
+            page([fix(0, odometer=1000.1), fix(5, odometer=1000.3)])
+        )
+        assert trail["odometer_change"] == 0.2
+
+    async def test_readings_as_text_count_and_junk_does_not(self) -> None:
+        trail = await self.shape(
+            page(
+                [
+                    fix(0, odometer="48213"),
+                    fix(1, odometer=None),
+                    fix(2, odometer="n/a"),
+                    fix(3, odometer=True),
+                    fix(4, odometer="48220.5"),
+                ]
+            )
+        )
+        assert trail["odometer_points"] == 2
+        assert trail["odometer_change"] == 7.5
+
+    async def test_a_point_without_a_time_is_left_out(self) -> None:
+        # Two of 96 on the first real sample (#36). Without a time there is
+        # no saying where in the drive it belongs.
+        untimed = {"position": {"latitude": 51.5, "longitude": -0.1}, "odometer": 1}
+        trail = await self.shape(
+            page([fix(0, odometer=48213), untimed, fix(13, odometer=48225)])
+        )
+        assert trail["odometer_points"] == 2
+        assert trail["odometer_change"] == 12
+
+    async def test_an_odometer_that_goes_backwards_says_so(self) -> None:
+        trail = await self.shape(page([fix(0, odometer=48213), fix(5, odometer=48200)]))
+        assert trail["odometer_rising"] is False
+        assert trail["odometer_change"] == -13
+
+    @pytest.mark.parametrize(
+        "trail_points", [[], [fix(0)], [fix(0, odometer=48213)]], ids=str
+    )
+    async def test_fewer_than_two_readings_measure_nothing(
+        self, trail_points: list[object]
+    ) -> None:
+        trail = await self.shape(page(trail_points))
+        assert trail["odometer_change"] is None
+
+
 class TestTimestamps:
     def test_epoch_milliseconds_become_iso(self) -> None:
         assert _iso(1756900000000).endswith("Z")

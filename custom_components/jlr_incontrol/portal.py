@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -615,6 +616,15 @@ def _trail_shape(waypoints: list[Any], body: str) -> dict[str, Any]:
         reverse=True,
     )
     positions = [point.get("position") for point in points]
+    # Odometer readings in time order, so a trail out of array order still
+    # measures from the start of the drive to its end.
+    timed_readings: list[tuple[datetime, float]] = []
+    for point in points:
+        moment = _moment(point.get("timestamp"))
+        reading = _number(point.get("odometer"))
+        if moment is not None and reading is not None:
+            timed_readings.append((moment, reading))
+    readings = [reading for _, reading in sorted(timed_readings)]
     return {
         "points": len(waypoints),
         "located": sum(
@@ -646,7 +656,36 @@ def _trail_shape(waypoints: list[Any], body: str) -> dict[str, Any]:
         "page_variables": list(dict.fromkeys(_PAGE_VARIABLE.findall(body)))[
             :_PAGE_VARIABLES_MAX
         ],
+        # How far the odometer moved across the trail, in whatever unit the
+        # page uses: finding out which is why this is here (#36). Set beside
+        # the distance the app shows for the same drive, it says whether the
+        # points count kilometres, miles or metres. A change, never a reading:
+        # the trail's own odometer is the car's total mileage.
+        "odometer_points": len(readings),
+        "odometer_change": (
+            _difference(readings[0], readings[-1]) if len(readings) > 1 else None
+        ),
+        "odometer_rising": all(
+            later >= earlier for earlier, later in pairwise(readings)
+        ),
     }
+
+
+def _number(value: Any) -> float | None:
+    """A reading as a number, or None if it isn't one."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _difference(first: float, last: float) -> float | int:
+    """last - first, as a whole number when it is one."""
+    change = round(last - first, 3)
+    return int(change) if change.is_integer() else change
 
 
 def _moment(value: Any) -> datetime | None:

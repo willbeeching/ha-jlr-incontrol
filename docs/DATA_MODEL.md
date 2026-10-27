@@ -64,9 +64,13 @@ cost every vehicle its name and model.
 The position actually comes from the owner portal's dashboard page, which embeds
 `let waypoints = [...]`: points of `{ position: { latitude, longitude }, timestamp }`, the timestamp
 in epoch milliseconds. Either half can be null on the final entries, so the parked fix takes the
-last coordinates and the last timestamp independently. Nothing else in the trail is used.
+last coordinates and the last timestamp independently. Points also carry `odometer`,
+`fuelConsumption` and `electricalConsumption`/`electricalRegeneration`, and positions `speed` and
+`heading` (seen on an ICE F-Pace, #36). Nothing else in the trail is used yet.
 
 What the trail covers is **unconfirmed** — one journey, the last day, or the last few hundred fixes.
+The first sample (#36) was one 14-minute drive, points about nine seconds apart with no gap over 15
+seconds; a drive with a stop in it, and a car parked overnight, are still to be seen.
 A last-journey sensor (#36) is only honest if it is one journey, so diagnostics carry a `trail` block
 per vehicle, and debug logging writes the same summary whenever it changes:
 
@@ -78,6 +82,7 @@ per vehicle, and debug logging writes the same summary whenever it changes:
 | `in_order` | Whether the times run forwards through the array |
 | `point_keys`, `position_keys` | Every key the points and their positions carry — names only |
 | `page_variables` | Names of the page's script variables, up to 40, in case a journey summary sits outside the trail |
+| `odometer_points`, `odometer_change`, `odometer_rising` | How many points carry a numeric odometer; how far it moved from the first timed reading to the last, in the page's own unit; whether it ever went backwards. Set beside the distance the app shows for the same drive, the change says whether that unit is kilometres, miles or metres. Never a reading — those are the car's total mileage |
 
 No coordinates. A trail of one drive has no gap longer than a stop in traffic; a trail of several
 has one as long as the car stood parked between them.
