@@ -1,0 +1,66 @@
+name: Notify HA issues
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+# Outbound webhook only. An empty set keeps the token from writing to the
+# repository if this job is later changed to run more than curl.
+permissions: {}
+
+jobs:
+  notify:
+    # issue_comment fires for pull request conversation as well. The
+    # pull_request key is present only then, so those are not forwarded.
+    if: ${{ !github.event.issue.pull_request }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Forward to HA watcher
+        env:
+          GROK_WEBHOOK_URL: ${{ secrets.GROK_WEBHOOK_URL }}
+          GROK_WEBHOOK_KEY: ${{ secrets.GROK_WEBHOOK_KEY }}
+        run: |
+          jq -c \
+            --arg github_event "$GITHUB_EVENT_NAME" \
+            --arg actor "$GITHUB_ACTOR" \
+            '
+            {
+              github_event: $github_event,
+              action: .action,
+              repository: .repository.full_name,
+              issue: {
+                number: .issue.number,
+                title: .issue.title,
+                html_url: .issue.html_url,
+                state: .issue.state
+              },
+              actor: $actor
+            }
+            + if $github_event == "issue_comment" then
+                {
+                  comment: {
+                    body: ((.comment.body // "") | .[0:2000]),
+                    html_url: .comment.html_url
+                  }
+                }
+              else
+                {}
+              end
+            ' "$GITHUB_EVENT_PATH" > /tmp/ha-issue-payload.json
+
+          curl --silent --show-error \
+            --output /tmp/ha-issue-response.txt \
+            --write-out "%{http_code}" \
+            --request POST \
+            --header "Authorization: Bearer ${GROK_WEBHOOK_KEY}" \
+            --header "Content-Type: application/json" \
+            --data-binary @/tmp/ha-issue-payload.json \
+            --url "${GROK_WEBHOOK_URL}" > /tmp/ha-issue-status.txt
+
+          http_code="$(tr -d "[:space:]" < /tmp/ha-issue-status.txt)"
+          if [ "$http_code" != "200" ]; then
+            echo "HA watcher webhook returned HTTP ${http_code}"
+            exit 1
+          fi
