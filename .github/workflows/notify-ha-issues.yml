@@ -5,6 +5,8 @@ on:
     types: [opened]
   issue_comment:
     types: [created]
+  pull_request:
+    types: [opened]
 
 # Outbound webhook only. An empty set keeps the token from writing to the
 # repository if this job is later changed to run more than curl.
@@ -14,6 +16,8 @@ jobs:
   notify:
     # issue_comment fires for pull request conversation as well. The
     # pull_request key is present only then, so those are not forwarded.
+    # An opened pull_request has no issue object, so this stays true and
+    # that event is forwarded on its own trigger.
     if: ${{ !github.event.issue.pull_request }}
     runs-on: ubuntu-latest
     steps:
@@ -26,28 +30,47 @@ jobs:
             --arg github_event "$GITHUB_EVENT_NAME" \
             --arg actor "$GITHUB_ACTOR" \
             '
-            {
-              github_event: $github_event,
-              action: .action,
-              repository: .repository.full_name,
-              issue: {
-                number: .issue.number,
-                title: .issue.title,
-                html_url: .issue.html_url,
-                state: .issue.state
-              },
-              actor: $actor
-            }
-            + if $github_event == "issue_comment" then
-                {
-                  comment: {
-                    body: ((.comment.body // "") | .[0:2000]),
-                    html_url: .comment.html_url
+            if $github_event == "pull_request" then
+              # GitHub leaves a draft at state "open". Report "draft" so
+              # the watcher can tell an unfinished PR from one ready to review.
+              {
+                github_event: $github_event,
+                action: .action,
+                repository: .repository.full_name,
+                pull_request: {
+                  number: .pull_request.number,
+                  title: .pull_request.title,
+                  html_url: .pull_request.html_url,
+                  state: (
+                    if .pull_request.draft then "draft" else .pull_request.state end
+                  )
+                },
+                actor: $actor
+              }
+            else
+              {
+                github_event: $github_event,
+                action: .action,
+                repository: .repository.full_name,
+                issue: {
+                  number: .issue.number,
+                  title: .issue.title,
+                  html_url: .issue.html_url,
+                  state: .issue.state
+                },
+                actor: $actor
+              }
+              + if $github_event == "issue_comment" then
+                  {
+                    comment: {
+                      body: ((.comment.body // "") | .[0:2000]),
+                      html_url: .comment.html_url
+                    }
                   }
-                }
-              else
-                {}
-              end
+                else
+                  {}
+                end
+            end
             ' "$GITHUB_EVENT_PATH" > /tmp/ha-issue-payload.json
 
           curl --silent --show-error \
