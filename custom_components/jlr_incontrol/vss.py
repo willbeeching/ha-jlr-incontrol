@@ -19,6 +19,7 @@ WINDOW_FRONT_LEFT_STATUS open on the socket, at the same moment.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -219,3 +220,37 @@ def to_position(body: Mapping[str, Any]) -> dict[str, Any] | None:
         "speed": _number(vehicle.get("Speed")),
         "timestamp": current.get("Timestamp") or body.get("timestamp"),
     }
+
+
+def to_attributes(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Vehicle details, under the attribute names the entities read.
+
+    The same names the old attributes endpoint and the portal used, so the
+    device name, the manufacturer and the electric check read them unchanged.
+    No nickname: the Data Hub does not carry one, and the portal's (when it is
+    signed in) is kept.
+    """
+    vehicle = body.get("Vehicle")
+    if not isinstance(vehicle, Mapping):
+        return {}
+    identity = vehicle.get("VehicleIdentification")
+    identity = identity if isinstance(identity, Mapping) else {}
+    powertrain = vehicle.get("Powertrain")
+    powertrain = powertrain if isinstance(powertrain, Mapping) else {}
+    model = identity.get("Model")
+    found: dict[str, Any] = {
+        "vehicleBrand": identity.get("Brand"),
+        "vehicleType": model,
+        "model": model,
+        "modelYear": identity.get("Year"),
+        "registrationNumber": identity.get("LicensePlate"),
+        "fuelType": powertrain.get("FuelType"),
+    }
+    # "5 Door SWB" says how many doors; "90 Standard" does not, and the rear
+    # door sensors are then kept, as they are for any car that does not say.
+    body_type = identity.get("BodyType")
+    if isinstance(body_type, str):
+        match = re.search(r"(\d+)\s*Door", body_type, re.IGNORECASE)
+        if match:
+            found["numberOfDoors"] = match.group(1)
+    return {key: value for key, value in found.items() if value not in (None, "")}

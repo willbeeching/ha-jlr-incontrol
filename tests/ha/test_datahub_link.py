@@ -189,8 +189,10 @@ class TestSetUp:
         assert stream.state == "on"
         # Status first, then the location probe, then the stream; the two
         # loops run side by side, so only membership is fixed beyond the first.
-        assert hub.datahub.calls[:2] == ["refresh offline-1", "status"]
-        assert {"location", "stream token"} <= set(hub.datahub.calls)
+        # The car's details during housekeeping, then status, the location
+        # probe and the stream, the last three side by side.
+        assert hub.datahub.calls[:2] == ["refresh offline-1", "details"]
+        assert {"status", "location", "stream token"} <= set(hub.datahub.calls)
         call = broker.calls[0]
         # As issued; the portal's capitals are only how it displays it.
         assert call["username"] == "dsas-0123456789ab"

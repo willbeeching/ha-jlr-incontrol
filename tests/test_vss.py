@@ -8,7 +8,7 @@ not those cars' readings.
 
 from __future__ import annotations
 
-from custom_components.jlr_incontrol.vss import to_position, to_status
+from custom_components.jlr_incontrol.vss import to_attributes, to_position, to_status
 
 REPORTED = "2026-11-07T09:00:00.000Z"
 
@@ -156,3 +156,37 @@ class TestLocation:
         assert to_position({}) is None
         assert to_position({"Vehicle": {}}) is None
         assert to_position({"Vehicle": {"CurrentLocation": {"Latitude": 1}}}) is None
+
+
+class TestDetails:
+    def test_details_land_under_the_attribute_names_the_entities_read(self) -> None:
+        body = {
+            "Vehicle": {
+                "VehicleIdentification": {
+                    "VIN": "SALXX0000000000XX",
+                    "Brand": "Land Rover",
+                    "Model": "Range Rover",
+                    "Year": 2023,
+                    "BodyType": "5 Door SWB",
+                    "LicensePlate": None,
+                },
+                "Powertrain": {"FuelType": "diesel"},
+                "Exterior": {"Colour": "Black"},
+            }
+        }
+        assert to_attributes(body) == {
+            "vehicleBrand": "Land Rover",
+            "vehicleType": "Range Rover",
+            "model": "Range Rover",
+            "modelYear": 2023,
+            "fuelType": "diesel",
+            "numberOfDoors": "5",
+        }
+
+    def test_a_body_that_does_not_say_how_many_doors_says_nothing(self) -> None:
+        body = {"Vehicle": {"VehicleIdentification": {"BodyType": "90 Standard"}}}
+        assert "numberOfDoors" not in to_attributes(body)
+
+    def test_nothing_usable_is_nothing(self) -> None:
+        assert to_attributes({}) == {}
+        assert to_attributes({"Vehicle": {"VehicleIdentification": "x"}}) == {}

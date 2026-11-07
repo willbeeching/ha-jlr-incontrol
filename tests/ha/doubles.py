@@ -73,17 +73,22 @@ class FakeClient:
         self.refresh_token = kwargs.get("refresh_token") or "a-refresh-token"
         self.vehicles: list[dict[str, Any]] = [{"vin": KEPT, "role": "Owner"}]
         self.connect_error: Exception | None = None
+        # Every call made, so a test can show the old API was left alone.
+        self.calls: list[str] = []
 
     async def async_connect(self) -> None:
+        self.calls.append("connect")
         if self.connect_error is not None:
             raise self.connect_error
 
     async def async_get_vehicles(self) -> list[dict[str, Any]]:
+        self.calls.append("vehicles")
         if self.connect_error is not None:
             raise self.connect_error
         return list(self.vehicles)
 
     async def async_get_attributes(self, vin: str) -> dict[str, Any]:
+        self.calls.append("attributes")
         return {
             "vehicleBrand": "Jaguar",
             "fuelType": "Diesel",
@@ -264,6 +269,22 @@ class FakeDataHub:
         self.location_result: Any = DataHubForbidden(
             "Access to category is not permitted for this vehicle: position"
         )
+        self.vehicle_result: Any = {
+            "Vehicle": {
+                "VehicleIdentification": {
+                    "VIN": KEPT,
+                    "Brand": "Jaguar",
+                    # Doubles as the device name the entity ids in these
+                    # tests were built from ("test_car"): the Data Hub carries
+                    # no nickname, so the model names the car.
+                    "Model": "Test Car",
+                    "Year": 2023,
+                    "BodyType": "5 Door",
+                    "LicensePlate": None,
+                },
+                "Powertrain": {"FuelType": "diesel"},
+            }
+        }
         self.login_result: Any = None
         self.poll_results: list[Any] = []
 
@@ -282,6 +303,10 @@ class FakeDataHub:
     async def async_status(self, vin: str, access_token: str) -> Any:
         self.calls.append("status")
         return self._answer(self.status_result)
+
+    async def async_vehicle(self, vin: str, access_token: str) -> Any:
+        self.calls.append("details")
+        return self._answer(self.vehicle_result)
 
     async def async_location(self, vin: str, access_token: str) -> Any:
         self.calls.append("location")

@@ -446,3 +446,7 @@ class DataHubClient:
     async def async_location(self, vin: str, access_token: str) -> dict[str, Any]:
         """The current location for one vehicle, where JLR allow it."""
         return await self.async_get(f"/v1/vehicles/{vin}/location", access_token)
+
+    async def async_vehicle(self, vin: str, access_token: str) -> dict[str, Any]:
+        """The vehicle's details: brand, model, year, body, fuel type."""
+        return await self.async_get(f"/v1/vehicles/{vin}", access_token)

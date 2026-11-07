@@ -70,6 +70,7 @@ from .const import (
     VOLATILE_STATUS_KEYS,
     VOLATILE_STATUS_KEYS_1_7,
 )
+from .datahub import DataHubError
 from .datahub_link import DataHubLink
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .redact import scrub, vehicle_label
@@ -235,7 +236,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._snapshot_seen: dict[str, asyncio.Event] = {}
         self.client = JlrClient(
             async_get_clientsession(hass),
-            entry.data[CONF_USERNAME],
+            entry.data.get(CONF_USERNAME, ""),
             entry.data.get(CONF_PASSWORD),
             device_id=entry.data.get(CONF_DEVICE_ID),
             user_id=entry.data.get(CONF_USER_ID),
@@ -297,11 +298,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._datahub_covers_account():
             await self._async_start_datahub_status()
             return
-        if self.datahub is not None:
-            _LOGGER.info(
-                "the Data Hub link does not cover every car on this account, so "
-                "status keeps coming from the telemetry socket"
-            )
+        if not self.has_incontrol:
+            # A Data Hub entry with nothing to show yet and no socket to fall
+            # back on: the repair has said why.
+            return
         self.telemetry.async_set_vehicles(self._vehicles)
         await self.telemetry.async_start()
         try:
@@ -325,17 +325,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     def _datahub_covers_account(self) -> bool:
-        """Whether the Data Hub can be the status source for every car.
+        """Whether the Data Hub is the status source.
 
-        All or nothing. A car the owner left out of the client at data.jlr.com
-        would otherwise have no status source at all, and running the socket
-        alongside for one car would bring back exactly the sign-in it needs.
+        It covers the account by construction: when it is linked, the cars are
+        the ones it lists. Only a link JLR have stopped accepting falls back.
         """
-        return (
-            self.datahub is not None
-            and bool(self._vehicles)
-            and set(self._vehicles) <= set(self.datahub.vehicles)
-        )
+        return self.uses_datahub and bool(self._vehicles)
 
     async def _async_start_datahub_status(self) -> None:
         """Take status from the Data Hub, waiting for every car's first read.
@@ -401,6 +396,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         unavailable sensors while they get round to it.
         """
         if self.status_source != "datahub":
+            return
+        if not self.has_incontrol:
+            # Nothing to fall back on: the entry was set up on the Data Hub
+            # alone. The repair asks for it to be linked again.
             return
         self.status_source = "socket"
         _LOGGER.warning(
@@ -598,15 +597,44 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except JlrApiError as err:
             raise UpdateFailed(f"could not reach the JLR backend: {err}") from err
 
-    async def _async_housekeeping(self) -> dict[str, Any]:
-        await self.client.async_connect()
-        vehicles = await self.client.async_get_vehicles()
+    @property
+    def uses_datahub(self) -> bool:
+        """Whether the Data Hub is this entry's source of cars and status."""
+        return self.datahub is not None and not self.datahub.signed_out
 
-        found: dict[str, dict[str, Any]] = {}
-        for vehicle in vehicles:
-            vin = vehicle.get("vin") or vehicle.get("vehicleId")
-            if vin:
-                found[vin] = vehicle
+    @property
+    def has_incontrol(self) -> bool:
+        """Whether this entry holds an InControl sign-in at all.
+
+        Entries set up on the Data Hub alone do not, and never touch the
+        reverse-engineered endpoints; the owner portal, if it is signed in,
+        uses its own session cookies.
+        """
+        return bool(
+            self.entry.data.get(CONF_REFRESH_TOKEN)
+            or self.entry.data.get(CONF_PASSWORD)
+        )
+
+    async def _async_housekeeping(self) -> dict[str, Any]:
+        if self.uses_datahub:
+            assert self.datahub is not None
+            # The cars the owner selected on the client at data.jlr.com. The
+            # old vehicle list is not consulted: moving off it is the point.
+            found: dict[str, dict[str, Any]] = {
+                vin: {"vin": vin} for vin in self.datahub.vehicles
+            }
+        elif self.has_incontrol:
+            await self.client.async_connect()
+            vehicles = await self.client.async_get_vehicles()
+            found = {}
+            for vehicle in vehicles:
+                vin = vehicle.get("vin") or vehicle.get("vehicleId")
+                if vin:
+                    found[vin] = vehicle
+        else:
+            # A Data Hub entry whose link JLR no longer accept, and nothing
+            # else to ask. The repair says so; keep what is held.
+            return self._build()
         # Authoritative, including when it is empty. Keeping the old list on
         # an empty result meant selling your only car left it on the dashboard
         # showing cached state, and undeletable — the removal hook still saw it
@@ -629,7 +657,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # the VIN's manufacturer prefix costs nothing. Both are floors — a
             # real attributes document overwrites them.
             self._seed_identity(vin, vehicle)
-            await self._async_refresh_attributes(vin)
+            if self.uses_datahub:
+                await self._async_refresh_datahub_details(vin)
+            else:
+                await self._async_refresh_attributes(vin)
 
         await self._async_read_portal()
         self._persist()
@@ -719,6 +750,27 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if attributes:
             self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
+
+    async def _async_refresh_datahub_details(self, vin: str) -> None:
+        """Model, year and fuel type from the Data Hub, daily.
+
+        On the same clock as the old attributes endpoint, whose job this takes
+        over. Merged over what is held, so the portal's nickname survives.
+        """
+        assert self.datahub is not None
+        now = dt_util.utcnow()
+        attempted = self._attributes_attempted.get(vin)
+        wait = ATTRIBUTES_TTL if vin in self._attributes else ATTRIBUTES_RETRY
+        if attempted and now - attempted < wait:
+            return
+        self._attributes_attempted[vin] = now
+        try:
+            details = await self.datahub.async_vehicle_details(vin)
+        except DataHubError as err:
+            _LOGGER.debug("Data Hub details for %s: %s", vehicle_label(vin), err)
+            return
+        if details:
+            self._attributes[vin] = {**self._attributes.get(vin, {}), **details}
 
     @callback
     def async_force_portal_read(self) -> bool:
@@ -956,10 +1008,18 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         rotating token into a reload every five minutes.
         """
         updates: dict[str, Any] = {}
-        for key, value in (
-            (CONF_USER_ID, self.client.user_id),
-            (CONF_REFRESH_TOKEN, self.client.refresh_token),
-        ):
+        # Only for an entry that signed in to InControl. One set up on the
+        # Data Hub alone has a client that was never used, and writing its
+        # empty-handed defaults here would make the entry look signed in.
+        sign_in = (
+            (
+                (CONF_USER_ID, self.client.user_id),
+                (CONF_REFRESH_TOKEN, self.client.refresh_token),
+            )
+            if self.has_incontrol
+            else ()
+        )
+        for key, value in sign_in:
             if value and self.entry.data.get(key) != value:
                 updates[key] = value
         # No truthiness guard on the left: clearing the last vehicle's details

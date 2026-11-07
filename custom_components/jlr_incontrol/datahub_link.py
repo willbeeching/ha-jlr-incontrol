@@ -66,7 +66,7 @@ from .stream import (
     MqttRejected,
     run_session,
 )
-from .vss import to_position, to_status
+from .vss import to_attributes, to_position, to_status
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -422,6 +422,11 @@ class DataHubLink:
             _LOGGER.debug("Data Hub status read on demand failed: %s", err)
             return False
         return True
+
+    async def async_vehicle_details(self, vin: str) -> dict[str, Any]:
+        """One car's details, as attributes. Raises DataHubError."""
+        token = await self._async_access_token()
+        return to_attributes(await self.client.async_vehicle(vin, token))
 
     async def _async_probe_location(self) -> None:
         """Ask for each car's location, and hand on any that is given."""

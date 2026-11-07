@@ -84,6 +84,12 @@ class TestStatusFromTheDataHub:
         coordinator = entry.runtime_data
         assert coordinator.status_source == "datahub"
         assert not on_datahub.telemetry.connected
+        # Nor the old REST API: the cars and their details come from the hub.
+        assert on_datahub.client.calls == []
+        attributes = coordinator.data["vehicles"][KEPT]["attributes"]
+        assert attributes["fuelType"] == "diesel"
+        assert attributes["modelYear"] == 2023
+        assert attributes["numberOfDoors"] == "5"
         # Values from the Data Hub's snapshot, under the same entities as ever.
         assert float(hass.states.get("sensor.test_car_fuel_level").state) == 42
         assert hass.states.get("sensor.test_car_odometer") is not None
@@ -183,15 +189,30 @@ class TestStatusFromTheDataHub:
         assert coordinator.data["vehicles"][KEPT]["position_trusted"]
 
 
-class TestWhenTheDataHubIsNotTheSource:
-    async def test_a_link_that_misses_a_car_leaves_status_on_the_socket(
-        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+class TestTheOldApiIsLeftAlone:
+    async def test_the_cars_are_the_ones_on_the_client_not_the_old_list(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        link_entry(entry, hass, vehicles=["SALZZ0000000000ZZ"])
+        # The old vehicle list is not consulted once the Data Hub is linked:
+        # the cars are the ones the owner selected at data.jlr.com.
+        other = "SALZZ0000000000ZZ"
+        link_entry(entry, hass, vehicles=[other])
+        build = datahub_link.DataHubClient
+
+        def other_car(*args: Any) -> Any:
+            fake = build(*args)
+            fake.tokens.vehicles = [other]
+            return fake
+
+        monkeypatch.setattr(datahub_link, "DataHubClient", other_car)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
-        assert entry.runtime_data.status_source == "socket"
-        assert hub.telemetry.connected
+        assert set(entry.runtime_data.data["vehicles"]) == {other}
+        assert hub.client.calls == []
         assert await hass.config_entries.async_unload(entry.entry_id)
 
     async def test_no_status_from_the_data_hub_retries_setup(
@@ -345,3 +366,90 @@ class TestTheStreamLoopSurvives:
             await link._async_run()
         assert len(pause.waits) == 2
         assert pause.waits[1] > pause.waits[0]
+
+
+@pytest.fixture
+def hub_only(hass: HomeAssistant) -> MockConfigEntry:
+    """An entry set up on the Data Hub alone: no InControl sign-in at all."""
+    created = MockConfigEntry(
+        domain="jlr_incontrol",
+        title="JLR Data Hub",
+        data={"datahub": dict(SETTINGS)},
+        unique_id="acct-1",
+    )
+    created.add_to_hass(hass)
+    return created
+
+
+class TestAnEntryOnTheDataHubAlone:
+    async def test_it_runs_without_ever_touching_the_old_api(
+        self, hass: HomeAssistant, hub_only: MockConfigEntry, hub: Doubles
+    ) -> None:
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        coordinator = hub_only.runtime_data
+        assert not coordinator.has_incontrol
+        assert coordinator.status_source == "datahub"
+        assert hub.client.calls == []
+        assert not hub.telemetry.connected
+        assert float(hass.states.get("sensor.test_car_fuel_level").state) == 42
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_a_revoked_link_has_no_socket_to_fall_back_on(
+        self, hass: HomeAssistant, hub_only: MockConfigEntry, hub: Doubles
+    ) -> None:
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        coordinator = hub_only.runtime_data
+        coordinator.datahub._signed_out(DataHubAuthError("invalid_grant"))
+        await hass.async_block_till_done()
+        assert coordinator.status_source == "datahub"
+        assert not hub.telemetry.connected
+        assert not coordinator.telemetry_ok
+        # Housekeeping keeps what it holds rather than asking anyone.
+        held = coordinator.data["vehicles"][KEPT]["status"]
+        data = await coordinator._async_housekeeping()
+        assert data["vehicles"][KEPT]["status"] == held
+        assert hub.client.calls == []
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_details_that_cannot_be_read_keep_what_is_held(
+        self, hass: HomeAssistant, hub_only: MockConfigEntry, hub: Doubles
+    ) -> None:
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        coordinator = hub_only.runtime_data
+        held = dict(coordinator._attributes[KEPT])
+        # Within the day: not asked again.
+        before = hub.datahub.calls.count("details")
+        await coordinator._async_refresh_datahub_details(KEPT)
+        assert hub.datahub.calls.count("details") == before
+        # Due, and refused: what was held stays.
+        coordinator._attributes_attempted.clear()
+        hub.datahub.vehicle_result = DataHubError("down")
+        await coordinator._async_refresh_datahub_details(KEPT)
+        assert coordinator._attributes[KEPT] == held
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_with_nothing_listed_yet_it_waits_rather_than_failing(
+        self,
+        hass: HomeAssistant,
+        hub_only: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hass.config_entries.async_update_entry(
+            hub_only, data={"datahub": {**SETTINGS, "vehicles": []}}
+        )
+        build = datahub_link.DataHubClient
+
+        def no_cars(*args: Any) -> Any:
+            fake = build(*args)
+            fake.tokens.vehicles = []
+            return fake
+
+        monkeypatch.setattr(datahub_link, "DataHubClient", no_cars)
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        assert hub_only.runtime_data.data["vehicles"] == {}
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
