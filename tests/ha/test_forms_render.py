@@ -53,8 +53,24 @@ async def test_the_sign_in_form_as_the_frontend_gets_it(hass: HomeAssistant) -> 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
     )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "incontrol"}
+    )
     names = {field["name"] for field in render(result["data_schema"])}
     assert names == {"username", "password"}
+
+
+async def test_the_data_hub_setup_form_as_the_frontend_gets_it(
+    hass: HomeAssistant,
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "datahub"}
+    )
+    names = {field["name"] for field in render(result["data_schema"])}
+    assert names == {"client_id"}
 
 
 async def test_the_options_form_with_its_current_values(

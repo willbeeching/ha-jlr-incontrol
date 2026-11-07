@@ -260,3 +260,98 @@ class TestUnlinking:
         assert "datahub" not in entry.data
         assert entry.data["refresh_token"] == "a-refresh-token"
         assert entry.runtime_data.datahub is None
+
+
+async def open_setup(hass: HomeAssistant) -> dict[str, Any]:
+    """Open "Add integration" and choose the Data Hub."""
+    menu = await hass.config_entries.flow.async_init(
+        "jlr_incontrol", context={"source": "user"}
+    )
+    return await hass.config_entries.flow.async_configure(
+        menu["flow_id"], {"next_step_id": "datahub"}
+    )
+
+
+async def finish_setup(hass: HomeAssistant, result: dict[str, Any]) -> dict[str, Any]:
+    if result["type"] is not FlowResultType.SHOW_PROGRESS:
+        return result
+    await hass.async_block_till_done()
+    return await hass.config_entries.flow.async_configure(result["flow_id"])
+
+
+class TestSettingUpOnTheDataHub:
+    async def test_no_incontrol_sign_in_is_asked_for(
+        self, hass: HomeAssistant, hub: Doubles
+    ) -> None:
+        result = await open_setup(hass)
+        assert result["step_id"] == "datahub"
+        assert result["description_placeholders"]["certificate"] == (
+            credentials().certificate.strip()
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        result = await finish_setup(hass, result)
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert result["title"] == "JLR Data Hub"
+        entry = result["result"]
+        assert entry.unique_id == "acct-1"
+        # Nothing of an InControl sign-in: no email, password or tokens. (The
+        # car details the coordinator caches are kept on the entry too.)
+        assert not {"username", "password", "refresh_token"} & set(entry.data)
+        assert entry.data["datahub"]["refresh_token"] == "offline-2"
+        # And it runs, on the Data Hub alone.
+        assert entry.runtime_data.status_source == "datahub"
+        assert hub.client.calls == []
+        # Nothing to unlink back to, so unlinking is not offered.
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert menu["menu_options"] == ["settings", "datahub"]
+        await hass.config_entries.options.async_configure(
+            menu["flow_id"], {"next_step_id": "settings"}
+        )
+        assert await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_the_same_account_twice_is_refused(
+        self, hass: HomeAssistant, hub: Doubles
+    ) -> None:
+        MockConfigEntry(
+            domain="jlr_incontrol", data={"datahub": {}}, unique_id="acct-1"
+        ).add_to_hass(hass)
+        result = await open_setup(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        result = await finish_setup(hass, result)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "already_configured"
+
+    async def test_a_link_declined_on_the_phone_says_so(
+        self, hass: HomeAssistant, hub: Doubles
+    ) -> None:
+        result = await open_setup(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        hub.flow_clients[0].poll_results = [DataHubDenied("no")]
+        result = await finish_setup(hass, result)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "datahub_denied"
+
+    async def test_a_client_jlr_refuse_is_said_on_the_form(
+        self, hass: HomeAssistant, hub: Doubles, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = await open_setup(hass)
+        build = config_flow.DataHubClient
+
+        def refusing(*args: Any) -> Any:
+            fake = build(*args)
+            fake.login_result = DataHubAuthError("invalid_client")
+            return fake
+
+        monkeypatch.setattr(config_flow, "DataHubClient", refusing)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-x"}
+        )
+        assert result["type"] is FlowResultType.FORM
+        assert result["errors"] == {"base": "datahub_rejected"}

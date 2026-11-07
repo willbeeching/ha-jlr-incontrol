@@ -2,6 +2,14 @@
   "config": {
     "step": {
       "user": {
+        "title": "Connect to Jaguar Land Rover",
+        "description": "Choose how this integration reads your cars.",
+        "menu_options": {
+          "datahub": "JLR Data Hub (recommended): JLR's official API, available in the UK and EU",
+          "incontrol": "InControl sign-in (older): for owners JLR do not offer the Data Hub to"
+        }
+      },
+      "incontrol": {
         "title": "Jaguar Land Rover InControl",
         "description": "Sign in with your Land Rover Remote / InControl account. JLR will email you a verification code to finish, so have your inbox open — the code expires quickly.",
         "data": {
@@ -29,6 +37,16 @@
         "data": {
           "password": "Password"
         }
+      },
+      "datahub": {
+        "title": "Link the JLR Data Hub",
+        "description": "JLR's Data Hub is their official API for owners. Your cars' status (doors, locks, windows, tyres, fuel, mileage and the rest) comes from it, with the time each car actually reported. No InControl email or password is needed. JLR do not offer location through the Data Hub yet, so there is no location for now; you can add an InControl sign-in for it later from the integration's options.\n\nThis is a beta. The [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
+        "data": {
+          "client_id": "Client ID"
+        },
+        "data_description": {
+          "client_id": "Shown on the client's page at data.jlr.com, and looks like dsas-0123456789ab."
+        }
       }
     },
     "error": {
@@ -38,13 +56,21 @@
       "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details.",
       "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit.",
       "api_rejected": "Signed in successfully, but Jaguar Land Rover then refused the connection. Check the logs for the reason and please report it.",
-      "cannot_reach_api": "Signed in successfully, but Home Assistant could not reach Jaguar Land Rover's vehicle servers — this looks like a DNS or network problem on your side rather than a problem with your account. Check that your DNS can resolve jlrmotor.com, including any Pi-hole, AdGuard or router-level filtering."
+      "cannot_reach_api": "Signed in successfully, but Home Assistant could not reach Jaguar Land Rover's vehicle servers — this looks like a DNS or network problem on your side rather than a problem with your account. Check that your DNS can resolve jlrmotor.com, including any Pi-hole, AdGuard or router-level filtering.",
+      "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown on this page. If you opened this step more than once, the certificate changed: paste the current one into the client again, or create a new client with it."
     },
     "abort": {
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
       "reauth_successful": "Signed in again successfully.",
       "unknown_entry": "That integration entry no longer exists.",
-      "reconfigure_successful": "Signed in again successfully."
+      "reconfigure_successful": "Signed in again successfully.",
+      "datahub_denied": "The link was declined on the JLR sign-in page.",
+      "datahub_expired": "The code expired before it was approved. Start adding the integration again to get a new one; the certificate will be new too, so paste it into the client again.",
+      "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
+      "unknown": "The link could not be completed."
+    },
+    "progress": {
+      "datahub_link": "Open [{url}]({url}) on your phone and approve the link with your JLR account. If it asks for a code, enter **{code}**.\n\nThis page moves on by itself once you have approved it. The code lasts 10 minutes; if it runs out, open the options again to get a new one."
     }
   },
   "options": {

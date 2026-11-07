@@ -102,8 +102,13 @@ def signing_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def start(hass: HomeAssistant) -> dict[str, Any]:
-    return await hass.config_entries.flow.async_init(
+    """Open "Add integration" and choose the InControl sign-in from its menu."""
+    menu = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    assert menu["menu_options"] == ["datahub", "incontrol"]
+    return await hass.config_entries.flow.async_configure(
+        menu["flow_id"], {"next_step_id": "incontrol"}
     )
 
 
@@ -117,7 +122,7 @@ class TestSigningIn:
     async def test_the_form_comes_up(self, hass: HomeAssistant) -> None:
         result = await start(hass)
         assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
 
     async def test_credentials_lead_to_the_code_step(self, hass: HomeAssistant) -> None:
         result = await credentials(hass, (await start(hass))["flow_id"])
@@ -199,7 +204,7 @@ class TestWhenItGoesWrong:
         )
         result = await credentials(hass, (await start(hass))["flow_id"])
         assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "invalid_auth"}
 
     async def test_credentials_refused_outright_are_an_auth_problem(
@@ -211,7 +216,7 @@ class TestWhenItGoesWrong:
             FakeLogin, "begin_error", JlrInvalidCode("credentials refused")
         )
         result = await credentials(hass, (await start(hass))["flow_id"])
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "invalid_auth"}
 
     async def test_a_wrong_code_lets_them_retype_it(
@@ -246,7 +251,7 @@ class TestWhenItGoesWrong:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"code": CODE}
         )
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "session_expired"}
 
     async def test_an_unreachable_api_is_not_blamed_on_jlr(
@@ -411,7 +416,7 @@ class TestTheJourneyFallingOverInWaysNobodyPlanned:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"code": CODE}
         )
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "cannot_connect"}
 
     async def test_a_journey_refused_at_the_code_step_restarts(
@@ -424,7 +429,7 @@ class TestTheJourneyFallingOverInWaysNobodyPlanned:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"code": CODE}
         )
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "invalid_auth"}
 
     async def test_a_code_submitted_with_no_journey_behind_it(
@@ -444,7 +449,7 @@ class TestTheJourneyFallingOverInWaysNobodyPlanned:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"code": CODE}
         )
-        assert result["step_id"] == "user"
+        assert result["step_id"] == "incontrol"
         assert result["errors"] == {"base": "session_expired"}
 
     async def test_a_bad_code_during_reauth_stays_on_the_reauth_step(

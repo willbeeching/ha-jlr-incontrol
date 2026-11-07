@@ -25,7 +25,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -168,6 +168,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         """Set up the transient state that spans the sign-in steps."""
         self._login: JlrLogin | None = None
         self._username: str | None = None
+        self._linker = DataHubLinker()
 
     async def _async_start_login(self, username: str, password: str) -> dict[str, str]:
         """Run the journey up to the emailed code. Returns form errors, if any."""
@@ -209,7 +210,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
                 description_placeholders={"email": self._username or ""},
             )
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors={"base": error}
+            step_id="incontrol", data_schema=STEP_USER_SCHEMA, errors={"base": error}
         )
 
     async def _async_discard_login(self) -> None:
@@ -219,6 +220,68 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             self._login = None
 
     async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose how to connect: the Data Hub, or the older InControl sign-in."""
+        return self.async_show_menu(
+            step_id="user", menu_options=["datahub", "incontrol"]
+        )
+
+    async def async_step_datahub(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show the certificate to paste at data.jlr.com, then take the client id."""
+        errors = await self._linker.async_submit(self.hass, user_input)
+        if user_input is not None and not errors:
+            return await self.async_step_datahub_link()
+        return self.async_show_form(
+            step_id="datahub",
+            data_schema=STEP_DATAHUB_SCHEMA,
+            errors=errors,
+            description_placeholders=self._linker.form_placeholders(),
+        )
+
+    async def async_step_datahub_link(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Wait while the owner approves the link on their phone."""
+        task = self._linker.waiting(self.hass)
+        if not task.done():
+            return self.async_show_progress(
+                step_id="datahub_link",
+                progress_action="datahub_link",
+                description_placeholders=self._linker.progress_placeholders(),
+                progress_task=task,
+            )
+        return self.async_show_progress_done(
+            next_step_id="datahub_done" if self._linker.tokens else "datahub_failed"
+        )
+
+    async def async_step_datahub_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Create an entry that uses the Data Hub alone.
+
+        Identified by the Data Hub account, which is what a second attempt at
+        the same cars would share; the client id changes every time someone
+        makes a new client.
+        """
+        settings = self._linker.settings()
+        await self.async_set_unique_id(
+            settings[DATAHUB_ACCOUNT_ID] or settings[DATAHUB_CLIENT_ID]
+        )
+        self._abort_if_unique_id_configured()
+        return self.async_create_entry(
+            title="JLR Data Hub", data={CONF_DATAHUB: settings}
+        )
+
+    async def async_step_datahub_failed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Say why the link was not made."""
+        return self.async_abort(reason=self._linker.error)
+
+    async def async_step_incontrol(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Collect credentials and start the sign-in journey."""
@@ -240,7 +303,7 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self.async_step_code()
 
         return self.async_show_form(
-            step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
+            step_id="incontrol", data_schema=STEP_USER_SCHEMA, errors=errors
         )
 
     async def async_step_code(
@@ -397,6 +460,113 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+class DataHubLinker:
+    """Linking a Data Hub client: shared by setup and by the options.
+
+    Both flows walk the same three steps — show a certificate and take the
+    client id, wait for approval on a phone, keep what came back — and only
+    differ in where the result goes. Holding the state here keeps the two
+    from drifting apart.
+    """
+
+    def __init__(self) -> None:
+        self.credentials: Credentials | None = None
+        self.client: DataHubClient | None = None
+        self.login: DeviceLogin | None = None
+        self.task: asyncio.Task[None] | None = None
+        self.tokens: Tokens | None = None
+        self.error = "unknown"
+
+    async def async_submit(
+        self, hass: HomeAssistant, user_input: dict[str, Any] | None
+    ) -> dict[str, str]:
+        """Make the key pair if there is none yet; start sign-in on submit.
+
+        The key pair is made here, in Home Assistant, so the private key never
+        exists anywhere else. Only the certificate is ever shown.
+        """
+        if self.credentials is None:
+            self.credentials = await hass.async_add_executor_job(generate_credentials)
+        if user_input is None:
+            return {}
+        self.client = DataHubClient(
+            async_get_clientsession(hass),
+            user_input[DATAHUB_CLIENT_ID].strip(),
+            self.credentials.private_key,
+        )
+        try:
+            self.login = await self.client.async_start_device_login()
+        except DataHubAuthError:
+            # The client id is wrong, or the certificate pasted at the
+            # portal is not this one: the two look identical from here.
+            return {"base": "datahub_rejected"}
+        except DataHubError:
+            return {"base": "cannot_connect"}
+        return {}
+
+    def form_placeholders(self) -> dict[str, str]:
+        assert self.credentials is not None
+        return {
+            "portal": PORTAL_URL,
+            "guide": GUIDE_URL,
+            "certificate": self.credentials.certificate.strip(),
+        }
+
+    def progress_placeholders(self) -> dict[str, str]:
+        assert self.login is not None
+        return {
+            "url": self.login.verification_uri_complete,
+            "code": self.login.user_code,
+        }
+
+    def waiting(self, hass: HomeAssistant) -> asyncio.Task[None]:
+        if self.task is None:
+            self.task = hass.async_create_task(self._async_wait_for_approval())
+        return self.task
+
+    async def _async_wait_for_approval(self) -> None:
+        """Poll at the interval JLR asked for until approved, refused or expired."""
+        assert self.client is not None and self.login is not None
+        interval = self.login.interval
+        while time.time() < self.login.expires_at:
+            await asyncio.sleep(interval)
+            try:
+                tokens = await self.client.async_poll_device_login(self.login)
+            except DataHubDenied:
+                self.error = "datahub_denied"
+                return
+            except DataHubExpired:
+                break
+            except DataHubAuthError:
+                self.error = "datahub_rejected"
+                return
+            except DataHubError as err:
+                # A dropped poll is not a refusal; the code is still good.
+                _LOGGER.debug("Data Hub sign-in poll failed: %s", err)
+                interval += 5
+                continue
+            if tokens is not None:
+                if tokens.refresh_token:
+                    self.tokens = tokens
+                else:
+                    self.error = "datahub_rejected"
+                return
+        self.error = "datahub_expired"
+
+    def settings(self) -> dict[str, Any]:
+        """What the entry keeps under CONF_DATAHUB."""
+        assert self.tokens is not None
+        assert self.client is not None and self.credentials is not None
+        return {
+            DATAHUB_CLIENT_ID: self.client.client_id,
+            DATAHUB_PRIVATE_KEY: self.credentials.private_key,
+            DATAHUB_CERTIFICATE: self.credentials.certificate,
+            DATAHUB_REFRESH_TOKEN: self.tokens.refresh_token,
+            DATAHUB_VEHICLES: self.tokens.vehicles,
+            DATAHUB_ACCOUNT_ID: self.tokens.account_id,
+        }
+
+
 def _login_error_code(err: JlrLoginError) -> str:
     """Map a sign-in failure to a translated form error."""
     text = str(err).lower()
@@ -423,19 +593,20 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
     """
 
     def __init__(self) -> None:
-        self._credentials: Credentials | None = None
-        self._client: DataHubClient | None = None
-        self._login: DeviceLogin | None = None
-        self._link_task: asyncio.Task[None] | None = None
-        self._tokens: Tokens | None = None
-        self._link_error = "unknown"
+        self._linker = DataHubLinker()
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose between the settings and the Data Hub link."""
         menu = ["settings", "datahub"]
-        if self.config_entry.data.get(CONF_DATAHUB):
+        # Only where there is an InControl sign-in to go back to: unlinking an
+        # entry set up on the Data Hub alone would leave it reading nothing.
+        # Deleting the integration is the way out of that one.
+        if self.config_entry.data.get(CONF_DATAHUB) and (
+            self.config_entry.data.get(CONF_REFRESH_TOKEN)
+            or self.config_entry.data.get(CONF_PASSWORD)
+        ):
             menu.append("datahub_remove")
         return self.async_show_menu(step_id="init", menu_options=menu)
 
@@ -466,115 +637,40 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
     async def async_step_datahub(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the certificate to paste at data.jlr.com, then take the client id.
-
-        The key pair is made here, in Home Assistant, so the private key never
-        exists anywhere else. Only the certificate is shown.
-        """
-        errors: dict[str, str] = {}
-        if self._credentials is None:
-            self._credentials = await self.hass.async_add_executor_job(
-                generate_credentials
-            )
-        if user_input is not None:
-            client_id = user_input[DATAHUB_CLIENT_ID].strip()
-            self._client = DataHubClient(
-                async_get_clientsession(self.hass),
-                client_id,
-                self._credentials.private_key,
-            )
-            try:
-                self._login = await self._client.async_start_device_login()
-            except DataHubAuthError:
-                # The client id is wrong, or the certificate pasted at the
-                # portal is not this one: the two look identical from here.
-                errors["base"] = "datahub_rejected"
-            except DataHubError:
-                errors["base"] = "cannot_connect"
-            else:
-                return await self.async_step_datahub_link()
+        """Show the certificate to paste at data.jlr.com, then take the client id."""
+        errors = await self._linker.async_submit(self.hass, user_input)
+        if user_input is not None and not errors:
+            return await self.async_step_datahub_link()
         return self.async_show_form(
             step_id="datahub",
             data_schema=STEP_DATAHUB_SCHEMA,
             errors=errors,
-            description_placeholders={
-                "portal": PORTAL_URL,
-                "guide": GUIDE_URL,
-                "certificate": self._credentials.certificate.strip(),
-            },
+            description_placeholders=self._linker.form_placeholders(),
         )
 
     async def async_step_datahub_link(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Wait while the owner approves the link on their phone."""
-        assert self._login is not None
-        if self._link_task is None:
-            self._link_task = self.hass.async_create_task(
-                self._async_wait_for_approval()
-            )
-        if not self._link_task.done():
+        task = self._linker.waiting(self.hass)
+        if not task.done():
             return self.async_show_progress(
                 step_id="datahub_link",
                 progress_action="datahub_link",
-                description_placeholders={
-                    "url": self._login.verification_uri_complete,
-                    "code": self._login.user_code,
-                },
-                progress_task=self._link_task,
+                description_placeholders=self._linker.progress_placeholders(),
+                progress_task=task,
             )
         return self.async_show_progress_done(
-            next_step_id="datahub_done" if self._tokens else "datahub_failed"
+            next_step_id="datahub_done" if self._linker.tokens else "datahub_failed"
         )
-
-    async def _async_wait_for_approval(self) -> None:
-        """Poll at the interval JLR asked for until approved, refused or expired."""
-        assert self._client is not None and self._login is not None
-        interval = self._login.interval
-        while time.time() < self._login.expires_at:
-            await asyncio.sleep(interval)
-            try:
-                tokens = await self._client.async_poll_device_login(self._login)
-            except DataHubDenied:
-                self._link_error = "datahub_denied"
-                return
-            except DataHubExpired:
-                break
-            except DataHubAuthError:
-                self._link_error = "datahub_rejected"
-                return
-            except DataHubError as err:
-                # A dropped poll is not a refusal; the code is still good.
-                _LOGGER.debug("Data Hub sign-in poll failed: %s", err)
-                interval += 5
-                continue
-            if tokens is not None:
-                if tokens.refresh_token:
-                    self._tokens = tokens
-                else:
-                    self._link_error = "datahub_rejected"
-                return
-        self._link_error = "datahub_expired"
 
     async def async_step_datahub_done(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Keep the link on the entry and reload so it starts."""
-        assert self._tokens is not None
-        assert self._client is not None and self._credentials is not None
         self.hass.config_entries.async_update_entry(
             self.config_entry,
-            data={
-                **self.config_entry.data,
-                CONF_DATAHUB: {
-                    DATAHUB_CLIENT_ID: self._client.client_id,
-                    DATAHUB_PRIVATE_KEY: self._credentials.private_key,
-                    DATAHUB_CERTIFICATE: self._credentials.certificate,
-                    DATAHUB_REFRESH_TOKEN: self._tokens.refresh_token,
-                    DATAHUB_VEHICLES: self._tokens.vehicles,
-                    DATAHUB_ACCOUNT_ID: self._tokens.account_id,
-                },
-            },
+            data={**self.config_entry.data, CONF_DATAHUB: self._linker.settings()},
         )
         # The options are unchanged, so the automatic reload will not fire.
         self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
@@ -584,7 +680,7 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Say why the link was not made."""
-        return self.async_abort(reason=self._link_error)
+        return self.async_abort(reason=self._linker.error)
 
     async def async_step_datahub_remove(
         self, user_input: dict[str, Any] | None = None
