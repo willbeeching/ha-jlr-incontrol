@@ -219,6 +219,7 @@ class TestDetails:
             "modelYear": 2023,
             "fuelType": "diesel",
             "numberOfDoors": "5",
+            "bodyType": "5 Door SWB",
             "colour": "Black",
         }
 
@@ -229,6 +230,7 @@ class TestDetails:
     def test_a_body_that_does_not_say_how_many_doors_says_nothing(self) -> None:
         body = {"Vehicle": {"VehicleIdentification": {"BodyType": "90 Standard"}}}
         assert "numberOfDoors" not in to_attributes(body)
+        assert to_attributes(body)["bodyType"] == "90 Standard"
 
     def test_nothing_usable_is_nothing(self) -> None:
         assert to_attributes({}) == {}

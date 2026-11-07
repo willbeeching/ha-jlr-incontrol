@@ -16,6 +16,10 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 
 from doubles import KEPT  # noqa: E402
 
+from custom_components.jlr_incontrol.entity import (  # noqa: E402
+    is_convertible,
+    is_not_diesel,
+)
 from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     EV_SENSORS,
     TYRE_SENSORS,
@@ -324,3 +328,35 @@ class TestTheDataHubsReadings:
             "CLIMATE_STATUS_TIMER1_MINUTE": "0",
         }
         assert _climate_timer(1)(status) is None
+
+
+class TestWhichCarsGetWhat:
+    @pytest.mark.parametrize(
+        ("fuel", "hidden"),
+        [("Petrol", True), ("petrol plug-in hybrid", True), ("electric", True)],
+    )
+    def test_adblue_is_hidden_on_a_car_known_not_to_be_a_diesel(
+        self, fuel: str, hidden: bool
+    ) -> None:
+        assert is_not_diesel({"fuelType": fuel}) is hidden
+
+    @pytest.mark.parametrize("attributes", [{"fuelType": "DIESEL"}, {}])
+    def test_a_diesel_or_a_car_that_does_not_say_keeps_it(
+        self, attributes: dict[str, Any]
+    ) -> None:
+        # Hiding a diesel's AdBlue warning on a guess is the worse mistake.
+        assert not is_not_diesel(attributes)
+
+    @pytest.mark.parametrize(
+        ("body", "soft_top"),
+        [
+            ("2 Door Convertible", True),
+            ("Cabriolet", True),
+            ("5 Door SWB", False),
+            (None, False),
+        ],
+    )
+    def test_only_a_soft_top_says_it_is_one(
+        self, body: str | None, soft_top: bool
+    ) -> None:
+        assert is_convertible({"bodyType": body}) is soft_top

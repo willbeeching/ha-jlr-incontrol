@@ -39,6 +39,11 @@ that is.
   `UNKNOWN` sentinels, so key presence alone is not enough to go on; `EV_STATE_OF_CHARGE` is the
   discriminator.
 - **PHEV** — plug-in hybrids only.
+- **diesel** — hidden on a car whose fuel type is known and is not diesel. Petrol cars send the
+  AdBlue keys too, so presence alone is not enough. A car whose fuel type is not known keeps them:
+  hiding a diesel's AdBlue warning on a guess would be the worse mistake.
+- **soft-top** — only when the body type from the Data Hub says convertible or cabriolet. Every car
+  sends the convertible roof key, hard-tops included.
 
 ## Sensors
 
@@ -48,7 +53,7 @@ that is.
 | Fuel level | `FUEL_LEVEL_PERC` | non-EV | — | on |
 | Fuel range | `DISTANCE_TO_EMPTY_FUEL` | non-EV | — | on |
 | Odometer | `ODOMETER_MILES` | any | — | on |
-| AdBlue range | `EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM` | any | — | on |
+| AdBlue range | `EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM` | diesel | — | on |
 | Distance to service | `EXT_KILOMETERS_TO_SERVICE` | any | — | on |
 | 12V battery voltage | `BATTERY_VOLTAGE` | any | diagnostic | on |
 | 12V battery charge | `BATTERY_STATUS_12V_SOC` | any | diagnostic | **off** |
@@ -64,8 +69,8 @@ that is.
 | EVCC status | derived | EV/PHEV | — | **off** |
 | Charge-now override | `EV_CHARGE_NOW_SETTING` | EV/PHEV | — | **off** |
 | Fuel in tank | `FUEL_LEVEL_LITRES` | non-EV, Data Hub | — | on |
-| Total range | `DISTANCE_TO_EMPTY_TOTAL` | any, Data Hub | — | **off** |
-| AdBlue to refill | `EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10` | any | — | on |
+| Total range | `DISTANCE_TO_EMPTY_TOTAL` | PHEV, Data Hub | — | on |
+| AdBlue to refill | `EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10` | diesel | — | on |
 | Engine immobiliser | `ENGINE_BLOCK` | any | diagnostic | on |
 | Lifecycle mode | `VEHICLE_LIFECYCLE_MODE` | any, Data Hub | diagnostic | on |
 | 12V battery status, health, charge estimate | `BATTERY_STATUS`, `BATTERY_STATUS_12V_HEALTH`, `BATTERY_STATUS_12V_ESTIMATE` | any | diagnostic | **off** |
@@ -128,16 +133,17 @@ any of them on in the entity settings.
 | Front/rear left and right door locks, boot lock (off by default) | `DOOR_*_LOCK_STATUS` | cars that report them |
 | Alarm armed | `THEFT_ALARM_STATUS` | any |
 | Alarm triggered | `THEFT_ALARM_STATUS` | any |
-| Brake fluid / coolant / oil / washer fluid / AdBlue warnings | `*_WARN` | any |
+| Brake fluid / coolant / oil / washer fluid warnings | `*_WARN` | any |
+| AdBlue warning | `EXT_EXHAUST_FLUID_WARN` | diesel |
 | Charging | `EV_CHARGING_STATUS` | EV/PHEV |
 | Plugged in | `EV_CHARGING_METHOD` | EV/PHEV |
 | Preconditioning | `EV_PRECONDITION_OPERATING_STATUS` | EV/PHEV |
 | Bonnet lock (off by default) | `DOOR_ENGINE_HOOD_LOCK_STATUS` | any |
-| Convertible roof (off by default) | `IS_CAB_OPEN` | any |
+| Convertible roof | `IS_CAB_OPEN` | soft-top |
 | Headlights | `IS_HEAD_LIGHTS_ON` | any |
 | Panic alarm, airbag deployed, front impact | `IS_PANIC_ALARM_TRIGGERED`, `SRS_STATUS`, `FRONT_IMPACT_DETECTED` | any |
 | Privacy mode (diagnostic) | `PRIVACY_SWITCH` | any |
-| Particulate filter warning | `EXT_PARTICULATE_FILTER_WARN` | diesels |
+| Particulate filter warning | `EXT_PARTICULATE_FILTER_WARN` | any: not hidden on petrol cars, many of which have one too |
 | Tyre warning ×4 | `TYRE_STATUS_*` | any |
 | Climate, air conditioning | `CLIMATE_STATUS_OPERATING_STATUS`, `AIR_CONDITIONING_ACTIVE` | any |
 | Climate timer, departure timer set | `CLIMATE_STATUS_TIMER_ACTIVATION_STATUS`, `DEPARTURE_TIMER_IS_SET` | any |
@@ -150,15 +156,14 @@ any of them on in the entity settings.
 **Data Hub** in the table means the reading comes only from the Data Hub: the telemetry socket had
 no key for it. The electric rows marked Data Hub are from JLR's published catalog, with the
 catalog's units, and have not yet been checked against an electric car's own display; if one reads
-wrong on yours, please open an issue. The **Total range** is the fuel range again on a car with one
-source of energy, which is why it is off by default. **Climate run time** reads 30 with the climate
+wrong on yours, please open an issue. The **Total range** is made only for plug-in hybrids: on a car
+with one source of energy it is that source's range again. **Climate run time** reads 30 with the climate
 off: it is how long a run lasts, and counts down only while one is going. The climate timers carry
 no year, so each is shown in the year that puts it nearest to now. Departure and climate timers are
 read in Home Assistant's time zone, as the car keeps its owner's clock.
 
 The bonnet lock is off by default and not part of the security readings: it is a latch outside
-central locking, and reads locked with every door open. The convertible roof is off by default
-because every car reports it, hard-tops included. `DOOR_IS_BOOT_LOCKED` and the kilometre electric
+central locking, and reads locked with every door open. `DOOR_IS_BOOT_LOCKED` and the kilometre electric
 range have no entity of their own: they say what the boot lock and electric range already say.
 
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or

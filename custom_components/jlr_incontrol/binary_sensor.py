@@ -23,7 +23,9 @@ from .entity import (
     JlrDataHubEntity,
     JlrVehicleEntity,
     async_add_vehicle_entities,
+    is_convertible,
     is_electrified,
+    is_not_diesel,
 )
 from .redact import vehicle_label
 
@@ -56,6 +58,8 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # than being forced through is_on. Empty means the predicate copes with
     # whatever arrives, which is true of the older open/closed readings.
     known: frozenset[str] = frozenset()
+    # AdBlue: hidden on a car known to burn something other than diesel.
+    requires_diesel: bool = False
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -191,13 +195,12 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         known=frozenset({"LOCKED", "UNLOCKED"}),
         is_on=lambda v: v == "UNLOCKED",
     ),
-    # Every car so far reports it, convertible or not, so off by default
-    # rather than a "convertible roof: closed" on every hard-top.
+    # Every car so far reports it, convertible or not, so it is only made
+    # for a body type that says soft-top; see is_convertible.
     _flag(
         "convertible_roof",
         "IS_CAB_OPEN",
         device_class=BinarySensorDeviceClass.OPENING,
-        entity_registry_enabled_default=False,
     ),
     _flag(
         "headlights", "IS_HEAD_LIGHTS_ON", device_class=BinarySensorDeviceClass.LIGHT
@@ -250,7 +253,14 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
     _warning("coolant_level_warning", "ENG_COOLANT_LEVEL_WARN"),
     _warning("oil_level_warning", "EXT_OIL_LEVEL_WARN"),
     _warning("washer_fluid_warning", "WASHER_FLUID_WARN"),
-    _warning("adblue_warning", "EXT_EXHAUST_FLUID_WARN"),
+    JlrBinaryDescription(
+        key="adblue_warning",
+        translation_key="adblue_warning",
+        status_key="EXT_EXHAUST_FLUID_WARN",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on=lambda v: v != "NORMAL",
+        requires_diesel=True,
+    ),
     # The filter reports CLEAR rather than NORMAL when there is nothing to say.
     JlrBinaryDescription(
         key="particulate_filter_warning",
@@ -375,6 +385,9 @@ REAR_DOOR_KEYS = {
 }
 
 
+CONVERTIBLE_KEYS = {"convertible_roof"}
+
+
 def _has_rear_doors(attributes: dict[str, Any]) -> bool:
     """False only when the attributes clearly report a 2/3-door body."""
     try:
@@ -412,6 +425,8 @@ async def async_setup_entry(
             if description.status_key in status
             and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
             and (not description.requires_ev or is_electrified(attributes, status))
+            and not (description.requires_diesel and is_not_diesel(attributes))
+            and (description.key not in CONVERTIBLE_KEYS or is_convertible(attributes))
         ]
         if coordinator.datahub and vin in coordinator.datahub.vehicles:
             entities.append(JlrDataHubStreamSensor(coordinator, vin))

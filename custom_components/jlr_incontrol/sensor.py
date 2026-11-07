@@ -59,6 +59,7 @@ from .entity import (
     async_add_vehicle_entities,
     is_electric,
     is_electrified,
+    is_not_diesel,
 )
 
 
@@ -116,6 +117,8 @@ class JlrSensorDescription(SensorEntityDescription):
     # day, hour and minute. Given the whole status; status_key still decides
     # whether the car has the reading at all.
     status_fn: Callable[[dict[str, Any]], Any] | None = None
+    # AdBlue: hidden on a car known to burn something other than diesel.
+    requires_diesel: bool = False
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -382,6 +385,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         key="adblue_range",
         translation_key="adblue_range",
         status_key="EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM",
+        requires_diesel=True,
         native_unit_of_measurement=UnitOfLength.KILOMETERS,
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
@@ -459,9 +463,9 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         suppress_for_ev=True,
     ),
     JlrSensorDescription(
-        # Everything the car can go on, fuel and battery together. Off by
-        # default because on a car with one source of energy it is the fuel
-        # range again under another name.
+        # Everything the car can go on, fuel and battery together: a plug-in
+        # hybrid's combined range. On a car with one source of energy it is
+        # that source's range again under another name, so only hybrids.
         key="total_range",
         translation_key="total_range",
         status_key="DISTANCE_TO_EMPTY_TOTAL",
@@ -469,7 +473,8 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.DISTANCE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        entity_registry_enabled_default=False,
+        suppress_for_ev=True,
+        requires_ev=True,
     ),
     JlrSensorDescription(
         # In tenths of a litre, as the socket's key name says: 80 is 8 litres.
@@ -478,6 +483,7 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         key="adblue_to_refill",
         translation_key="adblue_to_refill",
         status_key="EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10",
+        requires_diesel=True,
         native_unit_of_measurement=UnitOfVolume.LITERS,
         device_class=SensorDeviceClass.VOLUME,
         state_class=SensorStateClass.MEASUREMENT,
@@ -888,6 +894,8 @@ def _should_create_sensor(
     if description.status_key not in status:
         return False
     if description.suppress_for_ev and is_electric(attributes):
+        return False
+    if description.requires_diesel and is_not_diesel(attributes):
         return False
     if description.requires_ev:
         return is_electrified(attributes, status)

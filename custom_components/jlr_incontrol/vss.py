@@ -359,6 +359,7 @@ def to_attributes(body: Mapping[str, Any]) -> dict[str, Any]:
     # door sensors are then kept, as they are for any car that does not say.
     body_type = identity.get("BodyType")
     if isinstance(body_type, str):
+        found["bodyType"] = body_type
         match = re.search(r"(\d+)\s*Door", body_type, re.IGNORECASE)
         if match:
             found["numberOfDoors"] = match.group(1)

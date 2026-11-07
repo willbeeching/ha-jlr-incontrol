@@ -129,6 +129,29 @@ def is_electric(attributes: dict[str, Any]) -> bool:
     return str(attributes.get("fuelType", "")).lower() == "electric"
 
 
+def is_not_diesel(attributes: dict[str, Any]) -> bool:
+    """True only when the car is known to burn something other than diesel.
+
+    For AdBlue, which only a diesel has. Petrol cars still send its keys, so
+    presence alone put an AdBlue range on a petrol car. A car whose fuel type
+    is not known keeps them: hiding a diesel's warnings on a guess is worse
+    than a petrol car showing an AdBlue reading it does not need.
+    """
+    fuel = str(attributes.get("fuelType") or "").lower()
+    return bool(fuel) and "diesel" not in fuel
+
+
+def is_convertible(attributes: dict[str, Any]) -> bool:
+    """True only when the body type says soft-top.
+
+    Every car reports the convertible roof key, hard-tops included, so its
+    presence means nothing. Only the Data Hub's vehicle details carry a body
+    type; a car without one has never had this entity and does not gain it.
+    """
+    body = str(attributes.get("bodyType") or "").lower()
+    return any(word in body for word in ("convertible", "cabrio"))
+
+
 def is_electrified(attributes: dict[str, Any], status: dict[str, Any]) -> bool:
     """True for anything with a charge port (BEV or plug-in hybrid).
 

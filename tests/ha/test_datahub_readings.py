@@ -183,6 +183,16 @@ def snapshot() -> dict[str, Any]:
 
 
 @pytest.fixture
+def fuel(snapshot: dict[str, Any]) -> str:
+    return "electric" if snapshot is ELECTRIC else "diesel"
+
+
+@pytest.fixture
+def body() -> str:
+    return "5 Door"
+
+
+@pytest.fixture
 def every_entity_on(monkeypatch: pytest.MonkeyPatch) -> None:
     # Most of these are off by default, and an entity that is off has no
     # state to read. Core's own tests switch them on the same way.
@@ -199,9 +209,10 @@ async def car(
     monkeypatch: pytest.MonkeyPatch,
     every_entity_on: None,
     snapshot: dict[str, Any],
+    fuel: str,
+    body: str,
 ) -> AsyncIterator[None]:
     """A car on the Data Hub, every entity switched on, holding ``snapshot``."""
-    fuel = "electric" if snapshot is ELECTRIC else "diesel"
 
     class Hub(FakeDataHub):
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -212,6 +223,7 @@ async def car(
             }
             self.vehicle_result["Vehicle"]["Powertrain"] = {"FuelType": fuel}
             self.vehicle_result["Vehicle"]["Exterior"] = {"Colour": "Santorini Black"}
+            self.vehicle_result["Vehicle"]["VehicleIdentification"]["BodyType"] = body
 
     monkeypatch.setattr(datahub_link, "DataHubClient", doubles.builder("datahub", Hub))
 
@@ -253,7 +265,6 @@ class TestTheCarsOwnReadings:
         ("key", "expected"),
         [
             ("fuel_volume", "33.0"),
-            ("total_range", "640.0"),
             # Tenths of a litre on the wire.
             ("adblue_to_refill", "8.0"),
             ("engine_immobiliser", "Normal unblocked"),
@@ -283,7 +294,6 @@ class TestTheCarsOwnReadings:
         ("key", "expected"),
         [
             ("bonnet_lock", "off"),
-            ("convertible_roof", "off"),
             ("headlights", "on"),
             # UNKNOWN from the car is unknown here, not "no panic".
             ("panic_alarm", STATE_UNKNOWN),
@@ -340,6 +350,32 @@ class TestTheCarsOwnReadings:
         self, hass: HomeAssistant
     ) -> None:
         assert state(hass, "sensor", "ev_charge_limit") is None
+
+
+@pytest.mark.usefixtures("car")
+class TestWhatIsLeftOff:
+    """A reading that means nothing for this kind of car has no entity."""
+
+    def test_a_diesel_has_no_total_range_or_soft_top(self, hass: HomeAssistant) -> None:
+        # Its total range is its fuel range, and a hard-top still reports the
+        # convertible roof key.
+        assert state(hass, "sensor", "total_range") is None
+        assert state(hass, "binary_sensor", "convertible_roof") is None
+        assert state(hass, "sensor", "adblue_to_refill") is not None
+
+    @pytest.mark.parametrize("fuel", ["petrol"])
+    def test_a_petrol_car_has_no_adblue(self, hass: HomeAssistant) -> None:
+        # It sends the AdBlue keys all the same.
+        assert state(hass, "sensor", "adblue_to_refill") is None
+        assert state(hass, "binary_sensor", "particulate_filter_warning") is not None
+
+    @pytest.mark.parametrize("fuel", ["petrol plug-in hybrid"])
+    def test_a_hybrid_has_its_combined_range(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "total_range") == "640.0"
+
+    @pytest.mark.parametrize("body", ["2 Door Convertible"])
+    def test_a_soft_top_has_its_roof(self, hass: HomeAssistant) -> None:
+        assert state(hass, "binary_sensor", "convertible_roof") == "off"
 
 
 @pytest.mark.usefixtures("car")
