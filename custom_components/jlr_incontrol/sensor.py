@@ -23,10 +23,15 @@ from homeassistant.const import (
     EntityCategory,
     Platform,
     UnitOfElectricPotential,
+    UnitOfEnergy,
+    UnitOfEnergyDistance,
     UnitOfLength,
+    UnitOfPower,
     UnitOfPressure,
+    UnitOfSpeed,
     UnitOfTemperature,
     UnitOfTime,
+    UnitOfVolume,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -107,6 +112,10 @@ class JlrSensorDescription(SensorEntityDescription):
     # Only create on vehicles with a charge port; ICE cars report EV_* keys
     # with UNKNOWN sentinels, so key presence alone is not enough.
     requires_ev: bool = False
+    # For a reading made of several keys, such as a time sent as separate
+    # day, hour and minute. Given the whole status; status_key still decides
+    # whether the car has the reading at all.
+    status_fn: Callable[[dict[str, Any]], Any] | None = None
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -172,6 +181,162 @@ def _charging_status(value: str) -> str | None:
             value,
         )
     return slug
+
+
+def _words(value: Any) -> str | None:
+    """An open-ended status word, readable: NORMAL_UNBLOCKED -> Normal unblocked.
+
+    For the values JLR never documented a full list of. Not an ENUM for the
+    reason the alarm state is not one: a value outside a declared list takes
+    the entity unavailable for whoever's car sends it.
+    """
+    text = str(value).strip()
+    if text.upper() in ("", "UNKNOWN"):
+        return None
+    # A state is capped at 255 characters, and the free-text cleaning fields
+    # have no documented length.
+    return text.replace("__", "_").replace("_", " ").capitalize()[:255]
+
+
+def _enum(words: dict[str, str]) -> Callable[[Any], str | None]:
+    """A closed list from JLR's catalog, as translated options.
+
+    Anything outside it reads unknown rather than an error: the catalog is
+    JLR's, and a car is free to send something it does not list.
+    """
+
+    def read(value: Any) -> str | None:
+        return words.get(str(value).strip().upper())
+
+    return read
+
+
+def _tenths(value: Any) -> float | None:
+    """A figure the car sends in tenths, such as AdBlue litres times ten."""
+    number = _to_float(value)
+    return None if number is None else round(number / 10, 1)
+
+
+def _per_100(value: Any) -> float | None:
+    """Wh/km, as JLR send consumption, in the kWh/100 km Home Assistant uses."""
+    number = _to_float(value)
+    return None if number is None else round(number / 10, 2)
+
+
+def _watts(value: Any) -> float | None:
+    """Wh per second, as JLR send standing consumption, as a power in watts."""
+    number = _to_float(value)
+    return None if number is None else round(number * 3600, 1)
+
+
+def _whole(value: Any) -> int | None:
+    number = _to_float(value)
+    return None if number is None else int(number)
+
+
+def _local(year: int, month: int, day: int, hour: int, minute: int) -> datetime | None:
+    try:
+        return datetime(
+            year, month, day, hour, minute, tzinfo=dt_util.get_default_time_zone()
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def _departure(status: dict[str, Any]) -> datetime | None:
+    """The departure timer as one time.
+
+    In Home Assistant's time zone: the car keeps the clock its owner set, and
+    the timer is read off that clock. Zeros are an unset timer, not midnight on
+    the first of January.
+    """
+    parts = [
+        _whole(status.get(f"DEPARTURE_TIMER_{part}"))
+        for part in ("YEAR", "MONTH", "DAY", "HOUR", "MINUTE")
+    ]
+    if any(part is None for part in parts) or not all(parts[:3]):
+        return None
+    year, month, day, hour, minute = parts
+    return _local(year, month, day, hour, minute)  # type: ignore[arg-type]
+
+
+def _climate_timer(slot: int) -> Callable[[dict[str, Any]], datetime | None]:
+    """A climate timer as one time.
+
+    It carries a month and a day but no year, so the year is the one that puts
+    it nearest to now: a timer set for 2 January read on 30 December is next
+    week, not last January.
+    """
+
+    def read(status: dict[str, Any]) -> datetime | None:
+        month, day, hour, minute = (
+            _whole(status.get(f"CLIMATE_STATUS_TIMER{slot}_{part}"))
+            for part in ("MONTH", "DAY", "HOUR", "MINUTE")
+        )
+        if not month or not day or hour is None or minute is None:
+            return None
+        now = dt_util.now()
+        candidates = [
+            when
+            for year in (now.year - 1, now.year, now.year + 1)
+            if (when := _local(year, month, day, hour, minute)) is not None
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda when: abs(when - now))
+
+    return read
+
+
+# Seat fold positions, from JLR's catalog.
+_SEAT_FOLD = {
+    "UNFOLDED": "unfolded",
+    "FOLDED": "folded",
+    "MOVING": "moving",
+    "MIDTRAVELSTATIONARY": "part_folded",
+}
+_CLIMATE_MODES = {"IMMEDIATE": "immediate", "TIMED": "timed", "INACTIVE": "inactive"}
+_CLIMATE_PRIORITIES = {
+    "PRIORITIZE_COMFORT": "comfort",
+    "PRIORITIZE_RANGE": "range",
+}
+
+
+def _minutes(key: str, status_key: str, **kwargs: Any) -> JlrSensorDescription:
+    return JlrSensorDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        device_class=SensorDeviceClass.DURATION,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        **kwargs,
+    )
+
+
+def _wording(key: str, status_key: str, **kwargs: Any) -> JlrSensorDescription:
+    return JlrSensorDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        value_fn=_words,
+        **kwargs,
+    )
+
+
+def _seat(key: str, status_key: str) -> JlrSensorDescription:
+    # Off by default: a folded seat is rarely news, and a car with all seven
+    # would otherwise add seven entities nobody asked for.
+    return JlrSensorDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        value_fn=_enum(_SEAT_FOLD),
+        device_class=SensorDeviceClass.ENUM,
+        options=sorted(set(_SEAT_FOLD.values())),
+        entity_registry_enabled_default=False,
+    )
 
 
 VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
@@ -283,6 +448,162 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         decays=True,
         suppress_for_ev=True,
     ),
+    JlrSensorDescription(
+        key="fuel_volume",
+        translation_key="fuel_volume",
+        status_key="FUEL_LEVEL_LITRES",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        suppress_for_ev=True,
+    ),
+    JlrSensorDescription(
+        # Everything the car can go on, fuel and battery together. Off by
+        # default because on a car with one source of energy it is the fuel
+        # range again under another name.
+        key="total_range",
+        translation_key="total_range",
+        status_key="DISTANCE_TO_EMPTY_TOTAL",
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        device_class=SensorDeviceClass.DISTANCE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        entity_registry_enabled_default=False,
+    ),
+    JlrSensorDescription(
+        # In tenths of a litre, as the socket's key name says: 80 is 8 litres.
+        # The socket called it the volume to refill and the Data Hub calls the
+        # same figure the level; the socket's word is the one kept.
+        key="adblue_to_refill",
+        translation_key="adblue_to_refill",
+        status_key="EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10",
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        device_class=SensorDeviceClass.VOLUME,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value_fn=_tenths,
+    ),
+    _wording(
+        "engine_immobiliser",
+        "ENGINE_BLOCK",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    _wording(
+        "lifecycle_mode",
+        "VEHICLE_LIFECYCLE_MODE",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # The 12V battery's own self-assessment. Off by default: the words are
+    # the telematics unit's (BATTERY_1_1, NONE, ACCURATE) and nobody has
+    # mapped them to anything an owner would act on; voltage is the signal.
+    _wording(
+        "battery_12v_status",
+        "BATTERY_STATUS",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "battery_12v_health",
+        "BATTERY_STATUS_12V_HEALTH",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "battery_12v_estimate",
+        "BATTERY_STATUS_12V_ESTIMATE",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+)
+
+
+# Climate, cabin air cleaning and the timers. Read-only: what the car has been
+# told to do, not a way to tell it.
+CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
+    JlrSensorDescription(
+        key="climate_mode",
+        translation_key="climate_mode",
+        status_key="CLIMATE_MODE",
+        value_fn=_enum(_CLIMATE_MODES),
+        device_class=SensorDeviceClass.ENUM,
+        options=sorted(set(_CLIMATE_MODES.values())),
+    ),
+    JlrSensorDescription(
+        key="climate_priority",
+        translation_key="climate_priority",
+        status_key="CLIMATE_PRIORITY",
+        value_fn=_enum(_CLIMATE_PRIORITIES),
+        device_class=SensorDeviceClass.ENUM,
+        options=sorted(set(_CLIMATE_PRIORITIES.values())),
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    # It reads 30 with the climate off: it is how long a run lasts, counting
+    # down only while one is going.
+    _minutes("climate_run_time", "CLIMATE_STATUS_REMAINING_RUNTIME"),
+    _minutes(
+        "climate_venting_time",
+        "CLIMATE_STATUS_VENTING_TIME",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    _minutes("heater_time_remaining", "CLIMATE_STATUS_FFH_REMAINING_RUNTIME"),
+    JlrSensorDescription(
+        key="climate_timer_1",
+        translation_key="climate_timer_1",
+        status_key="CLIMATE_STATUS_TIMER1_MONTH",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        status_fn=_climate_timer(1),
+    ),
+    JlrSensorDescription(
+        key="climate_timer_2",
+        translation_key="climate_timer_2",
+        status_key="CLIMATE_STATUS_TIMER2_MONTH",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        status_fn=_climate_timer(2),
+    ),
+    JlrSensorDescription(
+        key="departure_time",
+        translation_key="departure_time",
+        status_key="DEPARTURE_TIMER_YEAR",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        status_fn=_departure,
+    ),
+    # Cabin air cleaning. Off by default: a feature few cars have and fewer
+    # owners run, and the free-text fields have no documented format.
+    _minutes(
+        "air_cleaning_cycle_time",
+        "CAC_CYCLE_TIME",
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "air_cleaning_last_cycle",
+        "CAC_LAST_CYCLE_STATUS",
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "air_cleaning_started",
+        "CAC_CYCLE_START_TIME",
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "air_cleaning_last_completed",
+        "CAC_LAST_COMPLETED_CYCLE",
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "air_cleaning_last_error",
+        "CAC_LAST_CYCLE_ERROR",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    _seat("seat_front_right", "SEAT_FRONT_RIGHT_FOLDED"),
+    _seat("seat_rear_left", "SEAT_REAR_LEFT_FOLDED"),
+    _seat("seat_rear_right", "SEAT_REAR_RIGHT_FOLDED"),
+    _seat("rear_armrest", "SEAT_REAR_ARMREST_FOLDED"),
+    _seat("ski_hatch", "SEAT_SKI_HATCH_FOLDED"),
+    _seat("seat_third_row_left", "SEAT_THIRD_ROW_LEFT_FOLDED"),
+    _seat("seat_third_row_right", "SEAT_THIRD_ROW_RIGHT_FOLDED"),
 )
 
 
@@ -408,7 +729,154 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         suggested_display_precision=0,
         requires_ev=True,
     ),
+    # From here on, from JLR's Data Hub catalog: units as the catalog gives
+    # them, not yet matched against an electric car's own display.
+    _minutes("ev_time_to_bulk", "EV_MINUTES_TO_BULK_CHARGED", requires_ev=True),
+    JlrSensorDescription(
+        key="ev_energy_last_charge",
+        translation_key="ev_energy_last_charge",
+        status_key="EV_ENERGY_CONSUMED_LAST_CHARGE_KWH",
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        suggested_display_precision=1,
+        requires_ev=True,
+    ),
+    JlrSensorDescription(
+        key="ev_charge_limit",
+        translation_key="ev_charge_limit",
+        status_key="EV_CHARGE_LIMIT",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        requires_ev=True,
+    ),
+    JlrSensorDescription(
+        key="ev_charge_limit_one_off",
+        translation_key="ev_charge_limit_one_off",
+        status_key="EV_CHARGE_LIMIT_ONE_OFF",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        requires_ev=True,
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "ev_charge_limit_one_off_mode",
+        "EV_CHARGE_LIMIT_ONE_OFF_MODE",
+        requires_ev=True,
+        entity_registry_enabled_default=False,
+    ),
+    _wording(
+        "ev_charge_limit_permanent_mode",
+        "EV_CHARGE_LIMIT_PERMANENT_MODE",
+        requires_ev=True,
+        entity_registry_enabled_default=False,
+    ),
+    _wording("ev_charging_mode", "EV_CHARGING_MODE_CHOICE", requires_ev=True),
+    JlrSensorDescription(
+        # Range added per hour of charging: km/hr in the catalog.
+        key="ev_charging_rate",
+        translation_key="ev_charging_rate",
+        status_key="EV_CHARGING_RATE_KM_PER_HOUR",
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        device_class=SensorDeviceClass.SPEED,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        requires_ev=True,
+    ),
+    JlrSensorDescription(
+        key="ev_charging_rate_percent",
+        translation_key="ev_charging_rate_percent",
+        status_key="EV_CHARGING_RATE_SOC_PER_HOUR",
+        native_unit_of_measurement="%/h",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        requires_ev=True,
+    ),
+    JlrSensorDescription(
+        # The battery's true charge, where ev_battery is the figure shown on
+        # the dash. Off by default: two percentages that disagree slightly
+        # are more confusing than one.
+        key="ev_battery_actual",
+        translation_key="ev_battery_actual",
+        status_key="EV_STATE_OF_CHARGE_ACTUAL",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        requires_ev=True,
+    ),
+    # What the car's range estimate is built from. Off by default: it is
+    # there for the curious, not for a dashboard.
+    *(
+        JlrSensorDescription(
+            key=f"ev_consumption_band_{band}",
+            translation_key=f"ev_consumption_band_{band}",
+            status_key=f"EV_CONSUMPTION_SPEED_BAND_{band}",
+            native_unit_of_measurement=(UnitOfEnergyDistance.KILO_WATT_HOUR_PER_100_KM),
+            device_class=SensorDeviceClass.ENERGY_DISTANCE,
+            state_class=SensorStateClass.MEASUREMENT,
+            suggested_display_precision=1,
+            value_fn=_per_100,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            requires_ev=True,
+        )
+        for band in range(1, 8)
+    ),
+    *(
+        JlrSensorDescription(
+            key=key,
+            translation_key=key,
+            status_key=status_key,
+            native_unit_of_measurement=UnitOfEnergy.WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY,
+            suggested_display_precision=0,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            requires_ev=True,
+        )
+        for key, status_key in (
+            ("ev_consumption_ascent", "EV_CONSUMPTION_ASCENT"),
+            ("ev_consumption_descent", "EV_CONSUMPTION_DESCENT"),
+        )
+    ),
+    JlrSensorDescription(
+        key="ev_consumption_standing",
+        translation_key="ev_consumption_standing",
+        status_key="EV_CONSUMPTION_STATIONARY",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        value_fn=_watts,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        requires_ev=True,
+    ),
+    *(
+        JlrSensorDescription(
+            key=key,
+            translation_key=key,
+            status_key=status_key,
+            native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+            device_class=SensorDeviceClass.ENERGY_STORAGE,
+            state_class=SensorStateClass.MEASUREMENT,
+            suggested_display_precision=1,
+            entity_category=EntityCategory.DIAGNOSTIC,
+            entity_registry_enabled_default=False,
+            requires_ev=True,
+        )
+        for key, status_key in (
+            ("ev_usable_energy", "EV_USABLE_ENERGY_INITIAL"),
+            ("ev_usable_energy_regenerative", "EV_USABLE_ENERGY_REGENERATIVE"),
+            ("ev_usable_energy_revised", "EV_USABLE_ENERGY_REVISED"),
+        )
+    ),
 )
+
+ALL_SENSORS = (*VEHICLE_SENSORS, *CABIN_SENSORS, *TYRE_SENSORS, *EV_SENSORS)
 
 
 def _should_create_sensor(
@@ -481,9 +949,11 @@ async def async_setup_entry(
             JlrVehicleSensor(
                 coordinator, vin, description, distance_unit, pressure_unit
             )
-            for description in (*VEHICLE_SENSORS, *TYRE_SENSORS, *EV_SENSORS)
+            for description in ALL_SENSORS
             if _should_create_sensor(description, status, attributes)
         )
+        if attributes.get("colour"):
+            entities.append(JlrColourSensor(coordinator, vin))
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
         if coordinator.datahub and vin in coordinator.datahub.vehicles:
             entities.append(JlrDataHubReportSensor(coordinator, vin))
@@ -547,7 +1017,7 @@ def _apply_unit_overrides(
     ent_reg = er.async_get(hass)
     vins = entry.runtime_data.data.get("vehicles", {})
     for vin in vins:
-        for description in (*VEHICLE_SENSORS, *TYRE_SENSORS, *EV_SENSORS):
+        for description in ALL_SENSORS:
             if description.device_class == SensorDeviceClass.DISTANCE:
                 kind = "distance"
             elif description.device_class == SensorDeviceClass.PRESSURE:
@@ -614,6 +1084,8 @@ class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
             # perfectly ordinary 89 °C — and nothing in the number gives it
             # away.
             return None
+        if self.entity_description.status_fn is not None:
+            return self.entity_description.status_fn(self._vehicle.get("status", {}))
         raw = self._status_value(self.entity_description.status_key)
         if raw is None or raw == "":
             return None
@@ -697,6 +1169,22 @@ class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return dict(self._vehicle.get("status", {}))
+
+
+class JlrColourSensor(JlrVehicleEntity, SensorEntity):
+    """The paint, as JLR's vehicle details give it."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "colour"
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_colour"
+
+    @property
+    def native_value(self) -> str | None:
+        colour = self._vehicle.get("attributes", {}).get("colour")
+        return str(colour)[:255] if colour else None
 
 
 class JlrEvccStatusSensor(JlrVehicleEntity, SensorEntity):

@@ -114,6 +114,32 @@ def _warning(key: str, status_key: str) -> JlrBinaryDescription:
     )
 
 
+def _flag(key: str, status_key: str, **kwargs: Any) -> JlrBinaryDescription:
+    """A TRUE/FALSE reading. UNKNOWN, which unfitted hardware sends, reads
+    unknown rather than off."""
+    return JlrBinaryDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        known=frozenset({"TRUE", "FALSE"}),
+        is_on=lambda v: v == "TRUE",
+        **kwargs,
+    )
+
+
+def _seat_held(key: str, status_key: str) -> JlrBinaryDescription:
+    # Off by default with the fold positions they belong to.
+    return JlrBinaryDescription(
+        key=key,
+        translation_key=key,
+        status_key=status_key,
+        known=frozenset({"INHIBITED", "NOTINHIBITED"}),
+        is_on=lambda v: v == "INHIBITED",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    )
+
+
 VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
     # Doors.
     _door("door_front_left", "DOOR_FRONT_LEFT_POSITION"),
@@ -145,14 +171,37 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         volatile=True,
         is_on=lambda v: v != "TRUE",
     ),
-    # Each door's own lock (#31). The bonnet has a lock key too, but it is a
-    # latch outside central locking that reads LOCKED with every door open.
-    # DOOR_IS_BOOT_LOCKED says the same as the boot's own key, so is left out.
+    # Each door's own lock (#31). DOOR_IS_BOOT_LOCKED says the same as the
+    # boot's own key, so is left out.
     _lock("door_front_left_lock", "DOOR_FRONT_LEFT_LOCK_STATUS"),
     _lock("door_front_right_lock", "DOOR_FRONT_RIGHT_LOCK_STATUS"),
     _lock("door_rear_left_lock", "DOOR_REAR_LEFT_LOCK_STATUS"),
     _lock("door_rear_right_lock", "DOOR_REAR_RIGHT_LOCK_STATUS"),
     _lock("boot_lock", "DOOR_BOOT_LOCK_STATUS"),
+    # The bonnet's latch, for completeness. Not volatile and off by default
+    # for the reason it was long left out: it sits outside central locking
+    # and reads LOCKED with every door open, so it says nothing about whether
+    # the car is secure.
+    JlrBinaryDescription(
+        key="bonnet_lock",
+        translation_key="bonnet_lock",
+        status_key="DOOR_ENGINE_HOOD_LOCK_STATUS",
+        device_class=BinarySensorDeviceClass.LOCK,
+        entity_registry_enabled_default=False,
+        known=frozenset({"LOCKED", "UNLOCKED"}),
+        is_on=lambda v: v == "UNLOCKED",
+    ),
+    # Every car so far reports it, convertible or not, so off by default
+    # rather than a "convertible roof: closed" on every hard-top.
+    _flag(
+        "convertible_roof",
+        "IS_CAB_OPEN",
+        device_class=BinarySensorDeviceClass.OPENING,
+        entity_registry_enabled_default=False,
+    ),
+    _flag(
+        "headlights", "IS_HEAD_LIGHTS_ON", device_class=BinarySensorDeviceClass.LIGHT
+    ),
     # No SAFETY device class here: that renders on/off as Unsafe/Safe, which
     # reads backwards for an armed alarm (locked car showed "Unsafe", #4).
     # Armed is independent of locked — a car can be locked with the alarm off;
@@ -177,12 +226,80 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         is_on=lambda v: v in ("ALARM_TRIGGER", "ALARM_TRIGGERED", "ALARM_SOUNDING"),
     ),
+    _flag(
+        "panic_alarm",
+        "IS_PANIC_ALARM_TRIGGERED",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+    ),
+    JlrBinaryDescription(
+        key="airbag_deployed",
+        translation_key="airbag_deployed",
+        status_key="SRS_STATUS",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        known=frozenset({"SRS_DEPLOYED", "SRS_NOT_DEPLOYED"}),
+        is_on=lambda v: v == "SRS_DEPLOYED",
+    ),
+    _flag(
+        "front_impact",
+        "FRONT_IMPACT_DETECTED",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+    ),
+    _flag("privacy_mode", "PRIVACY_SWITCH", entity_category=EntityCategory.DIAGNOSTIC),
     # Service / fluid warnings.
     _warning("brake_fluid_warning", "BRAKE_FLUID_WARN"),
     _warning("coolant_level_warning", "ENG_COOLANT_LEVEL_WARN"),
     _warning("oil_level_warning", "EXT_OIL_LEVEL_WARN"),
     _warning("washer_fluid_warning", "WASHER_FLUID_WARN"),
     _warning("adblue_warning", "EXT_EXHAUST_FLUID_WARN"),
+    # The filter reports CLEAR rather than NORMAL when there is nothing to say.
+    JlrBinaryDescription(
+        key="particulate_filter_warning",
+        translation_key="particulate_filter_warning",
+        status_key="EXT_PARTICULATE_FILTER_WARN",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        is_on=lambda v: v not in ("CLEAR", "NORMAL"),
+    ),
+    _warning("tyre_warning_fl", "TYRE_STATUS_FRONT_LEFT"),
+    _warning("tyre_warning_fr", "TYRE_STATUS_FRONT_RIGHT"),
+    _warning("tyre_warning_rl", "TYRE_STATUS_REAR_LEFT"),
+    _warning("tyre_warning_rr", "TYRE_STATUS_REAR_RIGHT"),
+    # Climate and timers: what the car is doing or has been told to do.
+    JlrBinaryDescription(
+        key="climate",
+        translation_key="climate",
+        status_key="CLIMATE_STATUS_OPERATING_STATUS",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        is_on=lambda v: v in CLIMATE_ACTIVE_STATES,
+    ),
+    _flag(
+        "air_conditioning",
+        "AIR_CONDITIONING_ACTIVE",
+        device_class=BinarySensorDeviceClass.RUNNING,
+    ),
+    _flag("climate_timer", "CLIMATE_STATUS_TIMER_ACTIVATION_STATUS"),
+    _flag("departure_timer", "DEPARTURE_TIMER_IS_SET"),
+    JlrBinaryDescription(
+        key="heater_enabled",
+        translation_key="heater_enabled",
+        status_key="CLIMATE_FFH_SETTING",
+        known=frozenset({"ENABLED", "DISABLED"}),
+        is_on=lambda v: v == "ENABLED",
+    ),
+    JlrBinaryDescription(
+        key="air_cleaning",
+        translation_key="air_cleaning",
+        status_key="CAC_OPERATING_STATE",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        is_on=lambda v: v not in ("INACTIVE", "OFF"),
+        entity_registry_enabled_default=False,
+    ),
+    _seat_held("seat_front_right_held", "SEAT_FRONT_RIGHT_INHIBITED"),
+    _seat_held("seat_rear_left_held", "SEAT_REAR_LEFT_INHIBITED"),
+    _seat_held("seat_rear_right_held", "SEAT_REAR_RIGHT_INHIBITED"),
+    _seat_held("rear_armrest_held", "SEAT_REAR_ARMREST_INHIBITED"),
+    _seat_held("ski_hatch_held", "SEAT_SKI_HATCH_INHIBITED"),
+    _seat_held("seat_third_row_left_held", "SEAT_THIRD_ROW_LEFT_INHIBITED"),
+    _seat_held("seat_third_row_right_held", "SEAT_THIRD_ROW_RIGHT_INHIBITED"),
     # EV / PHEV — only created when the vehicle reports charging status.
     JlrBinaryDescription(
         key="ev_charging",
@@ -213,6 +330,36 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         status_key="EV_PRECONDITION_OPERATING_STATUS",
         device_class=BinarySensorDeviceClass.RUNNING,
         is_on=lambda v: v in CLIMATE_ACTIVE_STATES,
+        requires_ev=True,
+    ),
+    # From JLR's Data Hub catalog, not yet seen on an electric car. The
+    # catalog types them as strings without listing the words, so TRUE is
+    # taken as on and anything else as off.
+    JlrBinaryDescription(
+        # The same news as ev_charging from a different signal, so off by
+        # default; there for the car whose charging status says nothing.
+        key="ev_charging_flag",
+        translation_key="ev_charging_flag",
+        status_key="EV_IS_CHARGING",
+        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
+        is_on=lambda v: v == "TRUE",
+        requires_ev=True,
+        entity_registry_enabled_default=False,
+    ),
+    JlrBinaryDescription(
+        key="ev_cable_connected",
+        translation_key="ev_cable_connected",
+        status_key="EV_IS_PLUGGED_IN",
+        device_class=BinarySensorDeviceClass.PLUG,
+        is_on=lambda v: v in ("TRUE", "CONNECTED"),
+        requires_ev=True,
+    ),
+    JlrBinaryDescription(
+        key="ev_battery_conditioning",
+        translation_key="ev_battery_conditioning",
+        status_key="EV_IS_PRECONDITIONING",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        is_on=lambda v: v in ("TRUE", "ACTIVE"),
         requires_ev=True,
     ),
 )

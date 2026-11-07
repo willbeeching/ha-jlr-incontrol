@@ -89,6 +89,24 @@ class TestRenaming:
         status = to_status({"Vehicle.Powertrain.FuelSystem.RelativeLevel": None}, None)
         assert "FUEL_LEVEL_PERC" not in status
 
+    def test_the_data_hubs_own_signals_get_names_in_the_sockets_style(self) -> None:
+        status = to_status(
+            {
+                "Vehicle.Powertrain.FuelSystem.AbsoluteLevel": 41,
+                "Vehicle.Cabin.Seat.Row2.DriverSide.Backrest.IsFolded": "FOLDED",
+                "Vehicle.Schedule.Departure.Hour": 7,
+                "Vehicle.Powertrain.TractionBattery.RangeEstimation."
+                "Consumption.SpeedBracket.SB3": 180,
+            },
+            None,
+        )
+        assert status == {
+            "FUEL_LEVEL_LITRES": "41",
+            "SEAT_REAR_LEFT_FOLDED": "FOLDED",
+            "DEPARTURE_TIMER_HOUR": "7",
+            "EV_CONSUMPTION_SPEED_BAND_3": "180",
+        }
+
     def test_a_true_boolean_reads_as_the_socket_wrote_it(self) -> None:
         status = to_status({"Vehicle.Body.Roof.IsOpen": True}, None)
         assert status["IS_SUNROOF_OPEN"] == "TRUE"
@@ -201,7 +219,12 @@ class TestDetails:
             "modelYear": 2023,
             "fuelType": "diesel",
             "numberOfDoors": "5",
+            "colour": "Black",
         }
+
+    def test_the_colour_is_read_under_either_spelling(self) -> None:
+        body = {"Vehicle": {"Exterior": {"Color": "Blue"}}}
+        assert to_attributes(body) == {"colour": "Blue"}
 
     def test_a_body_that_does_not_say_how_many_doors_says_nothing(self) -> None:
         body = {"Vehicle": {"VehicleIdentification": {"BodyType": "90 Standard"}}}

@@ -25,11 +25,17 @@ from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     JlrEvccStatusSensor,
     JlrLastUpdatedSensor,
     JlrVehicleSensor,
+    _climate_timer,
     _combined_range,
     _coolant_temp,
+    _departure,
     _odometer_attrs,
+    _per_100,
+    _tenths,
     _to_float,
     _tyre_kpa,
+    _watts,
+    _words,
 )
 
 ALL = VEHICLE_SENSORS + TYRE_SENSORS + EV_SENSORS
@@ -275,3 +281,46 @@ class TestChargeNowOverride:
         sensor = build(JlrChargeNowSettingSensor)
         sensor.coordinator._charge_now = raw
         assert sensor.native_value is None
+
+
+class TestTheDataHubsReadings:
+    @pytest.mark.parametrize("convert", [_tenths, _per_100, _watts])
+    def test_a_figure_that_is_not_a_number_is_not_guessed_at(
+        self, convert: Any
+    ) -> None:
+        assert convert("UNKNOWN") is None
+
+    @pytest.mark.parametrize("raw", ["UNKNOWN", "", " "])
+    def test_a_word_that_says_nothing_is_unknown(self, raw: str) -> None:
+        assert _words(raw) is None
+
+    def test_a_word_is_capped_at_what_a_state_can_hold(self) -> None:
+        assert len(_words("X" * 300) or "") == 255
+
+    def test_a_departure_missing_a_part_is_no_departure(self) -> None:
+        status = {
+            "DEPARTURE_TIMER_YEAR": "2026",
+            "DEPARTURE_TIMER_MONTH": "11",
+            "DEPARTURE_TIMER_DAY": "8",
+            "DEPARTURE_TIMER_HOUR": "7",
+        }
+        assert _departure(status) is None
+
+    def test_a_date_that_does_not_exist_is_no_departure(self) -> None:
+        status = {
+            "DEPARTURE_TIMER_YEAR": "2026",
+            "DEPARTURE_TIMER_MONTH": "2",
+            "DEPARTURE_TIMER_DAY": "30",
+            "DEPARTURE_TIMER_HOUR": "7",
+            "DEPARTURE_TIMER_MINUTE": "30",
+        }
+        assert _departure(status) is None
+
+    def test_a_climate_timer_on_a_day_no_year_has_is_unknown(self) -> None:
+        status = {
+            "CLIMATE_STATUS_TIMER1_MONTH": "2",
+            "CLIMATE_STATUS_TIMER1_DAY": "30",
+            "CLIMATE_STATUS_TIMER1_HOUR": "6",
+            "CLIMATE_STATUS_TIMER1_MINUTE": "0",
+        }
+        assert _climate_timer(1)(status) is None

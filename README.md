@@ -84,6 +84,10 @@ supported route would be a better outcome than another workaround.
   preconditioning time remaining. ICE-only sensors are hidden automatically on electric cars.
 - Every door's open/closed and lock state, all four windows, the sunroof, theft alarm status, and
   warnings for fluids and service, as binary sensors.
+- Climate, timers and the cabin: whether climate and air conditioning are running, the climate and
+  departure timers, the fuel-fired heater, headlights, airbag and front-impact flags, tyre
+  warnings, fuel in litres, and seat fold positions. Some are off by default; every one is listed
+  in [docs/ENTITIES.md](docs/ENTITIES.md).
 - A GPS `device_tracker` showing where the car finished its last journey, with the time of the fix.
 - **All info** sensor (disabled by default) exposing the full status dict as attributes.
 - Diagnostics download for troubleshooting, with VIN, plate and position redacted.

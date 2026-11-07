@@ -63,6 +63,31 @@ that is.
 | Preconditioning time remaining | `EV_PRECONDITION_REMAINING_RUNTIME_MINUTES` | EV/PHEV | — | on |
 | EVCC status | derived | EV/PHEV | — | **off** |
 | Charge-now override | `EV_CHARGE_NOW_SETTING` | EV/PHEV | — | **off** |
+| Fuel in tank | `FUEL_LEVEL_LITRES` | non-EV, Data Hub | — | on |
+| Total range | `DISTANCE_TO_EMPTY_TOTAL` | any, Data Hub | — | **off** |
+| AdBlue to refill | `EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10` | any | — | on |
+| Engine immobiliser | `ENGINE_BLOCK` | any | diagnostic | on |
+| Lifecycle mode | `VEHICLE_LIFECYCLE_MODE` | any, Data Hub | diagnostic | on |
+| 12V battery status, health, charge estimate | `BATTERY_STATUS`, `BATTERY_STATUS_12V_HEALTH`, `BATTERY_STATUS_12V_ESTIMATE` | any | diagnostic | **off** |
+| Climate mode | `CLIMATE_MODE` | any, Data Hub | — | on |
+| Climate priority | `CLIMATE_PRIORITY` | any, Data Hub | diagnostic | on |
+| Climate run time | `CLIMATE_STATUS_REMAINING_RUNTIME` | any | — | on |
+| Climate venting time | `CLIMATE_STATUS_VENTING_TIME` | any | diagnostic | **off** |
+| Fuel-fired heater time remaining | `CLIMATE_STATUS_FFH_REMAINING_RUNTIME` | any | — | on |
+| Climate timer 1 and 2 | `CLIMATE_STATUS_TIMER{1,2}_*` | any | — | on |
+| Departure timer | `DEPARTURE_TIMER_*` | any, Data Hub | — | on |
+| Air purification cycle time, last cycle, started, last completed, last error | `CAC_*` | any | — | **off** |
+| Seat fold position ×7 | `SEAT_*_FOLDED` | any, Data Hub | — | **off** |
+| Colour | vehicle details | Data Hub | diagnostic | on |
+| Time to bulk charge | `EV_MINUTES_TO_BULK_CHARGED` | EV/PHEV | — | on |
+| Energy added last charge | `EV_ENERGY_CONSUMED_LAST_CHARGE_KWH` | EV/PHEV | — | on |
+| Charge limit | `EV_CHARGE_LIMIT` | EV/PHEV, Data Hub | — | on |
+| One-off charge limit, and its mode; permanent limit mode | `EV_CHARGE_LIMIT_*` | EV/PHEV, Data Hub | — | **off** |
+| Charging mode | `EV_CHARGING_MODE_CHOICE` | EV/PHEV, Data Hub | — | on |
+| Charging rate (range per hour, and % per hour) | `EV_CHARGING_RATE_*` | EV/PHEV, Data Hub | — | on |
+| Battery (actual) | `EV_STATE_OF_CHARGE_ACTUAL` | EV/PHEV, Data Hub | diagnostic | **off** |
+| Consumption by speed band ×7, climbing, descending, standing | `EV_CONSUMPTION_*` | EV/PHEV, Data Hub | diagnostic | **off** |
+| Usable energy (initial, from regeneration, revised) | `EV_USABLE_ENERGY_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Last updated | — | any | diagnostic | on |
 | Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
 | All info | — | any | diagnostic | **off** |
@@ -107,7 +132,34 @@ any of them on in the entity settings.
 | Charging | `EV_CHARGING_STATUS` | EV/PHEV |
 | Plugged in | `EV_CHARGING_METHOD` | EV/PHEV |
 | Preconditioning | `EV_PRECONDITION_OPERATING_STATUS` | EV/PHEV |
+| Bonnet lock (off by default) | `DOOR_ENGINE_HOOD_LOCK_STATUS` | any |
+| Convertible roof (off by default) | `IS_CAB_OPEN` | any |
+| Headlights | `IS_HEAD_LIGHTS_ON` | any |
+| Panic alarm, airbag deployed, front impact | `IS_PANIC_ALARM_TRIGGERED`, `SRS_STATUS`, `FRONT_IMPACT_DETECTED` | any |
+| Privacy mode (diagnostic) | `PRIVACY_SWITCH` | any |
+| Particulate filter warning | `EXT_PARTICULATE_FILTER_WARN` | diesels |
+| Tyre warning ×4 | `TYRE_STATUS_*` | any |
+| Climate, air conditioning | `CLIMATE_STATUS_OPERATING_STATUS`, `AIR_CONDITIONING_ACTIVE` | any |
+| Climate timer, departure timer set | `CLIMATE_STATUS_TIMER_ACTIVATION_STATUS`, `DEPARTURE_TIMER_IS_SET` | any |
+| Fuel-fired heater enabled | `CLIMATE_FFH_SETTING` | cars with one |
+| Air purification (off by default) | `CAC_OPERATING_STATE` | any |
+| Seat held ×7 (off by default) | `SEAT_*_INHIBITED` | any, Data Hub |
+| Charging (flag, off by default), charging cable connected, battery conditioning | `EV_IS_CHARGING`, `EV_IS_PLUGGED_IN`, `EV_IS_PRECONDITIONING` | EV/PHEV |
 | Data Hub stream (diagnostic) | — | cars on a linked Data Hub |
+
+**Data Hub** in the table means the reading comes only from the Data Hub: the telemetry socket had
+no key for it. The electric rows marked Data Hub are from JLR's published catalog, with the
+catalog's units, and have not yet been checked against an electric car's own display; if one reads
+wrong on yours, please open an issue. The **Total range** is the fuel range again on a car with one
+source of energy, which is why it is off by default. **Climate run time** reads 30 with the climate
+off: it is how long a run lasts, and counts down only while one is going. The climate timers carry
+no year, so each is shown in the year that puts it nearest to now. Departure and climate timers are
+read in Home Assistant's time zone, as the car keeps its owner's clock.
+
+The bonnet lock is off by default and not part of the security readings: it is a latch outside
+central locking, and reads locked with every door open. The convertible roof is off by default
+because every car reports it, hard-tops included. `DOOR_IS_BOOT_LOCKED` and the kilometre electric
+range have no entity of their own: they say what the boot lock and electric range already say.
 
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or
 "warning active". Those map to *unknown* rather than to a state.

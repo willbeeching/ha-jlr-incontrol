@@ -32,6 +32,17 @@ _DOORS = (
     ("Row2.DriverSide", "REAR_LEFT"),
     ("Row2.PassengerSide", "REAR_RIGHT"),
 )
+# Seats with a powered fold, as the Data Hub names them -> where they sit.
+# DriverSide is LEFT here as it is for the doors.
+_SEATS = (
+    ("Row1.PassengerSide.Backrest", "FRONT_RIGHT"),
+    ("Row2.DriverSide.Backrest", "REAR_LEFT"),
+    ("Row2.PassengerSide.Backrest", "REAR_RIGHT"),
+    ("Row2.Middle.Armrest", "REAR_ARMREST"),
+    ("Row2.Middle.SkiHatch", "SKI_HATCH"),
+    ("Row3.DriverSide.Backrest", "THIRD_ROW_LEFT"),
+    ("Row3.PassengerSide.Backrest", "THIRD_ROW_RIGHT"),
+)
 _WHEELS = (
     ("Row1.Wheel.Left", "FRONT_LEFT"),
     ("Row1.Wheel.Right", "FRONT_RIGHT"),
@@ -63,6 +74,7 @@ RENAMES: dict[str, str] = {
     "Body.Security.IsEngineBlocked": "ENGINE_BLOCK",
     "Body.Security.IsPanicAlarmTriggered": "IS_PANIC_ALARM_TRIGGERED",
     "Body.Crash.Airbag.IsFired": "SRS_STATUS",
+    "Body.Crash.Front.IsImpactDetected": "FRONT_IMPACT_DETECTED",
     "Connectivity.PrivacyMode": "PRIVACY_SWITCH",
     # Tyres
     **{
@@ -93,9 +105,12 @@ RENAMES: dict[str, str] = {
     ),
     # Fuel, distance, service
     "Powertrain.FuelSystem.RelativeLevel": "FUEL_LEVEL_PERC",
+    "Powertrain.FuelSystem.AbsoluteLevel": "FUEL_LEVEL_LITRES",
     "Powertrain.FuelSystem.Range": "DISTANCE_TO_EMPTY_FUEL",
+    "Powertrain.Range": "DISTANCE_TO_EMPTY_TOTAL",
     "Service.DistanceToService": "EXT_KILOMETERS_TO_SERVICE",
     "System.DriveCycle.Status": "VEHICLE_STATE_TYPE",
+    "System.Lifecycle.Mode": "VEHICLE_LIFECYCLE_MODE",
     # 12 V battery
     "LowVoltageBattery.CurrentVoltage": "BATTERY_VOLTAGE",
     "LowVoltageBattery.StateOfCharge": "BATTERY_STATUS_12V_SOC",
@@ -118,6 +133,33 @@ RENAMES: dict[str, str] = {
     "Cabin.HVAC.Cleaning.IsCycleActive": "CAC_OPERATING_STATE",
     "Cabin.HVAC.Cleaning.CycleTimeRemaining": "CAC_CYCLE_TIME",
     "Cabin.HVAC.Cleaning.LastCycleStatus": "CAC_LAST_CYCLE_STATUS",
+    # The rest are the Data Hub's alone: the socket had no key for them, so
+    # these names are new, in its style.
+    "Cabin.HVAC.IsAirConditioningActive": "AIR_CONDITIONING_ACTIVE",
+    "Cabin.HVAC.AirConditioning.Mode": "CLIMATE_MODE",
+    "Cabin.HVAC.AirConditioning.PrioritySetting": "CLIMATE_PRIORITY",
+    "Cabin.HVAC.AirConditioning.FuelFiredHeater.Setting": "CLIMATE_FFH_SETTING",
+    "Cabin.HVAC.Cleaning.CycleStartTime": "CAC_CYCLE_START_TIME",
+    "Cabin.HVAC.Cleaning.LastCompletedCycle": "CAC_LAST_COMPLETED_CYCLE",
+    "Cabin.HVAC.Cleaning.LastCycle.Error": "CAC_LAST_CYCLE_ERROR",
+    # Departure timer
+    **{
+        f"Schedule.Departure.{part}": f"DEPARTURE_TIMER_{word}"
+        for part, word in (
+            ("IsSet", "IS_SET"),
+            ("Year", "YEAR"),
+            ("Month", "MONTH"),
+            ("Day", "DAY"),
+            ("Hour", "HOUR"),
+            ("Minute", "MINUTE"),
+        )
+    },
+    # Seats
+    **{f"Cabin.Seat.{seat}.IsFolded": f"SEAT_{key}_FOLDED" for seat, key in _SEATS},
+    **{
+        f"Cabin.Seat.{seat}.IsMovementInhibited": f"SEAT_{key}_INHIBITED"
+        for seat, key in _SEATS
+    },
     # Electric. From JLR's catalog rather than a car: neither car this was
     # checked against is electric, so these are the one part not yet matched
     # value for value against the socket.
@@ -140,6 +182,41 @@ RENAMES: dict[str, str] = {
     "Powertrain.TractionBattery.BatteryConditioning.IsActive": (
         "EV_IS_PRECONDITIONING"
     ),
+    "Powertrain.TractionBattery.StateOfCharge.Current": "EV_STATE_OF_CHARGE_ACTUAL",
+    "Powertrain.TractionBattery.Charging.ChargeLimit": "EV_CHARGE_LIMIT",
+    "Powertrain.TractionBattery.Charging.ChargeLimitSetting.OneOffValue": (
+        "EV_CHARGE_LIMIT_ONE_OFF"
+    ),
+    "Powertrain.TractionBattery.Charging.ChargeLimitSetting.OneOffMode": (
+        "EV_CHARGE_LIMIT_ONE_OFF_MODE"
+    ),
+    "Powertrain.TractionBattery.Charging.ChargeLimitSetting.PermanentMode": (
+        "EV_CHARGE_LIMIT_PERMANENT_MODE"
+    ),
+    "Powertrain.TractionBattery.Charging.ChargeRate": "EV_CHARGING_RATE_KM_PER_HOUR",
+    "Powertrain.TractionBattery.Charging.StateOfChargeRate": (
+        "EV_CHARGING_RATE_SOC_PER_HOUR"
+    ),
+    "Powertrain.TractionBattery.Charging.ChargingModeChoice": (
+        "EV_CHARGING_MODE_CHOICE"
+    ),
+    **{
+        f"Powertrain.TractionBattery.RangeEstimation.Consumption.SpeedBracket.SB{n}": (
+            f"EV_CONSUMPTION_SPEED_BAND_{n}"
+        )
+        for n in range(1, 8)
+    },
+    **{
+        f"Powertrain.TractionBattery.RangeEstimation.{part}": key
+        for part, key in (
+            ("Consumption.Ascent", "EV_CONSUMPTION_ASCENT"),
+            ("Consumption.Descent", "EV_CONSUMPTION_DESCENT"),
+            ("Consumption.Stationary", "EV_CONSUMPTION_STATIONARY"),
+            ("UsableEnergy.Initial", "EV_USABLE_ENERGY_INITIAL"),
+            ("UsableEnergy.Regenerative", "EV_USABLE_ENERGY_REGENERATIVE"),
+            ("UsableEnergy.Revised", "EV_USABLE_ENERGY_REVISED"),
+        )
+    },
 }
 
 
@@ -274,6 +351,10 @@ def to_attributes(body: Mapping[str, Any]) -> dict[str, Any]:
         "registrationNumber": identity.get("LicensePlate"),
         "fuelType": powertrain.get("FuelType"),
     }
+    exterior = vehicle.get("Exterior")
+    if isinstance(exterior, Mapping):
+        # Spelled both ways across JLR's own docs and answers.
+        found["colour"] = exterior.get("Colour") or exterior.get("Color")
     # "5 Door SWB" says how many doors; "90 Standard" does not, and the rear
     # door sensors are then kept, as they are for any car that does not say.
     body_type = identity.get("BodyType")

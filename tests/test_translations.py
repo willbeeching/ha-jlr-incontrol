@@ -69,7 +69,22 @@ class TestFlowStrings:
 
 
 class TestEnumStates:
-    @pytest.mark.parametrize("key", ["ev_charging_status", "charge_now_setting"])
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "ev_charging_status",
+            "charge_now_setting",
+            "climate_mode",
+            "climate_priority",
+            "seat_front_right",
+            "seat_rear_left",
+            "seat_rear_right",
+            "rear_armrest",
+            "ski_hatch",
+            "seat_third_row_left",
+            "seat_third_row_right",
+        ],
+    )
     def test_the_enum_sensors_translate_their_states(self, key: str) -> None:
         # An ENUM sensor with no state translations shows the raw option, and
         # the whole reason for an option list is that it can be worded.

@@ -1,8 +1,59 @@
 {
   "entity": {
     "binary_sensor": {
+      "air_cleaning": {
+        "default": "mdi:air-purifier"
+      },
+      "air_conditioning": {
+        "default": "mdi:air-conditioner"
+      },
+      "airbag_deployed": {
+        "default": "mdi:airbag"
+      },
       "alarm": {
         "default": "mdi:shield-car"
+      },
+      "climate": {
+        "default": "mdi:thermostat"
+      },
+      "climate_timer": {
+        "default": "mdi:timer-cog-outline"
+      },
+      "departure_timer": {
+        "default": "mdi:clock-start"
+      },
+      "front_impact": {
+        "default": "mdi:car-emergency"
+      },
+      "heater_enabled": {
+        "default": "mdi:radiator"
+      },
+      "panic_alarm": {
+        "default": "mdi:alarm-light"
+      },
+      "privacy_mode": {
+        "default": "mdi:incognito"
+      },
+      "rear_armrest_held": {
+        "default": "mdi:seat"
+      },
+      "seat_front_right_held": {
+        "default": "mdi:seat"
+      },
+      "seat_rear_left_held": {
+        "default": "mdi:seat"
+      },
+      "seat_rear_right_held": {
+        "default": "mdi:seat"
+      },
+      "seat_third_row_left_held": {
+        "default": "mdi:seat"
+      },
+      "seat_third_row_right_held": {
+        "default": "mdi:seat"
+      },
+      "ski_hatch_held": {
+        "default": "mdi:seat"
       }
     },
     "button": {
@@ -19,11 +70,38 @@
       "adblue_range": {
         "default": "mdi:water-opacity"
       },
+      "adblue_to_refill": {
+        "default": "mdi:water-opacity"
+      },
+      "air_cleaning_cycle_time": {
+        "default": "mdi:air-purifier"
+      },
+      "air_cleaning_last_completed": {
+        "default": "mdi:air-purifier"
+      },
+      "air_cleaning_last_cycle": {
+        "default": "mdi:air-purifier"
+      },
+      "air_cleaning_last_error": {
+        "default": "mdi:air-purifier"
+      },
+      "air_cleaning_started": {
+        "default": "mdi:air-purifier"
+      },
       "alarm_state": {
         "default": "mdi:shield-car"
       },
       "all_info": {
         "default": "mdi:database"
+      },
+      "battery_12v_estimate": {
+        "default": "mdi:car-battery"
+      },
+      "battery_12v_health": {
+        "default": "mdi:car-battery"
+      },
+      "battery_12v_status": {
+        "default": "mdi:car-battery"
       },
       "battery_soc_12v": {
         "default": "mdi:car-battery"
@@ -31,8 +109,56 @@
       "charge_now_setting": {
         "default": "mdi:ev-station"
       },
+      "climate_mode": {
+        "default": "mdi:thermostat"
+      },
+      "climate_priority": {
+        "default": "mdi:thermostat-auto"
+      },
+      "climate_run_time": {
+        "default": "mdi:timer-outline"
+      },
+      "climate_timer_1": {
+        "default": "mdi:timer-cog-outline"
+      },
+      "climate_timer_2": {
+        "default": "mdi:timer-cog-outline"
+      },
+      "climate_venting_time": {
+        "default": "mdi:fan-clock"
+      },
+      "colour": {
+        "default": "mdi:palette"
+      },
+      "departure_time": {
+        "default": "mdi:clock-start"
+      },
       "distance_to_service": {
         "default": "mdi:wrench-clock"
+      },
+      "engine_immobiliser": {
+        "default": "mdi:engine-off"
+      },
+      "ev_battery_actual": {
+        "default": "mdi:battery"
+      },
+      "ev_charge_limit": {
+        "default": "mdi:battery-charging-80"
+      },
+      "ev_charge_limit_one_off": {
+        "default": "mdi:battery-charging-80"
+      },
+      "ev_charge_limit_one_off_mode": {
+        "default": "mdi:battery-charging-80"
+      },
+      "ev_charge_limit_permanent_mode": {
+        "default": "mdi:battery-charging-80"
+      },
+      "ev_charging_mode": {
+        "default": "mdi:ev-station"
+      },
+      "ev_charging_rate_percent": {
+        "default": "mdi:battery-arrow-up"
       },
       "ev_charging_status": {
         "default": "mdi:ev-station"
@@ -46,6 +172,9 @@
       "ev_range_combined": {
         "default": "mdi:map-marker-distance"
       },
+      "ev_time_to_bulk": {
+        "default": "mdi:timer-sand"
+      },
       "ev_time_to_full": {
         "default": "mdi:timer-sand"
       },
@@ -55,11 +184,44 @@
       "fuel_level": {
         "default": "mdi:fuel"
       },
+      "fuel_volume": {
+        "default": "mdi:gas-station"
+      },
+      "heater_time_remaining": {
+        "default": "mdi:radiator"
+      },
       "last_updated": {
         "default": "mdi:update"
       },
+      "lifecycle_mode": {
+        "default": "mdi:car-info"
+      },
       "odometer": {
         "default": "mdi:counter"
+      },
+      "rear_armrest": {
+        "default": "mdi:seat"
+      },
+      "seat_front_right": {
+        "default": "mdi:seat"
+      },
+      "seat_rear_left": {
+        "default": "mdi:seat"
+      },
+      "seat_rear_right": {
+        "default": "mdi:seat"
+      },
+      "seat_third_row_left": {
+        "default": "mdi:seat"
+      },
+      "seat_third_row_right": {
+        "default": "mdi:seat"
+      },
+      "ski_hatch": {
+        "default": "mdi:seat"
+      },
+      "total_range": {
+        "default": "mdi:map-marker-distance"
       },
       "vehicle_state": {
         "default": "mdi:car-key"

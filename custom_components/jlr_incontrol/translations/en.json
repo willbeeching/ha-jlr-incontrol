@@ -262,6 +262,213 @@
       },
       "datahub_last_report": {
         "name": "Last report (Data Hub)"
+      },
+      "fuel_volume": {
+        "name": "Fuel in tank"
+      },
+      "total_range": {
+        "name": "Total range"
+      },
+      "adblue_to_refill": {
+        "name": "AdBlue to refill"
+      },
+      "engine_immobiliser": {
+        "name": "Engine immobiliser"
+      },
+      "lifecycle_mode": {
+        "name": "Lifecycle mode"
+      },
+      "battery_12v_status": {
+        "name": "12V battery status"
+      },
+      "battery_12v_health": {
+        "name": "12V battery health"
+      },
+      "battery_12v_estimate": {
+        "name": "12V charge estimate"
+      },
+      "climate_mode": {
+        "name": "Climate mode",
+        "state": {
+          "immediate": "Immediate",
+          "timed": "Timed",
+          "inactive": "Inactive"
+        }
+      },
+      "climate_priority": {
+        "name": "Climate priority",
+        "state": {
+          "comfort": "Comfort",
+          "range": "Range"
+        }
+      },
+      "climate_run_time": {
+        "name": "Climate run time"
+      },
+      "climate_venting_time": {
+        "name": "Climate venting time"
+      },
+      "heater_time_remaining": {
+        "name": "Fuel-fired heater time remaining"
+      },
+      "climate_timer_1": {
+        "name": "Climate timer 1"
+      },
+      "climate_timer_2": {
+        "name": "Climate timer 2"
+      },
+      "departure_time": {
+        "name": "Departure timer"
+      },
+      "air_cleaning_cycle_time": {
+        "name": "Air purification cycle time"
+      },
+      "air_cleaning_last_cycle": {
+        "name": "Air purification last cycle"
+      },
+      "air_cleaning_started": {
+        "name": "Air purification started"
+      },
+      "air_cleaning_last_completed": {
+        "name": "Air purification last completed"
+      },
+      "air_cleaning_last_error": {
+        "name": "Air purification last error"
+      },
+      "colour": {
+        "name": "Colour"
+      },
+      "ev_time_to_bulk": {
+        "name": "Time to bulk charge"
+      },
+      "ev_energy_last_charge": {
+        "name": "Energy added last charge"
+      },
+      "ev_charge_limit": {
+        "name": "Charge limit"
+      },
+      "ev_charge_limit_one_off": {
+        "name": "One-off charge limit"
+      },
+      "ev_charge_limit_one_off_mode": {
+        "name": "One-off charge limit mode"
+      },
+      "ev_charge_limit_permanent_mode": {
+        "name": "Permanent charge limit mode"
+      },
+      "ev_charging_mode": {
+        "name": "Charging mode"
+      },
+      "ev_charging_rate": {
+        "name": "Charging rate"
+      },
+      "ev_charging_rate_percent": {
+        "name": "Charging rate (battery)"
+      },
+      "ev_battery_actual": {
+        "name": "Battery (actual)"
+      },
+      "ev_consumption_ascent": {
+        "name": "Energy used climbing"
+      },
+      "ev_consumption_descent": {
+        "name": "Energy regained descending"
+      },
+      "ev_consumption_standing": {
+        "name": "Standing consumption"
+      },
+      "ev_usable_energy": {
+        "name": "Usable energy"
+      },
+      "ev_usable_energy_regenerative": {
+        "name": "Usable energy from regeneration"
+      },
+      "ev_usable_energy_revised": {
+        "name": "Usable energy (revised)"
+      },
+      "ev_consumption_band_1": {
+        "name": "Consumption, speed band 1"
+      },
+      "ev_consumption_band_2": {
+        "name": "Consumption, speed band 2"
+      },
+      "ev_consumption_band_3": {
+        "name": "Consumption, speed band 3"
+      },
+      "ev_consumption_band_4": {
+        "name": "Consumption, speed band 4"
+      },
+      "ev_consumption_band_5": {
+        "name": "Consumption, speed band 5"
+      },
+      "ev_consumption_band_6": {
+        "name": "Consumption, speed band 6"
+      },
+      "ev_consumption_band_7": {
+        "name": "Consumption, speed band 7"
+      },
+      "seat_front_right": {
+        "name": "Front passenger seat",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "seat_rear_left": {
+        "name": "Rear left seat",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "seat_rear_right": {
+        "name": "Rear right seat",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "rear_armrest": {
+        "name": "Rear armrest",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "ski_hatch": {
+        "name": "Ski hatch",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "seat_third_row_left": {
+        "name": "Third row left seat",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
+      },
+      "seat_third_row_right": {
+        "name": "Third row right seat",
+        "state": {
+          "unfolded": "Up",
+          "folded": "Folded",
+          "moving": "Moving",
+          "part_folded": "Part folded"
+        }
       }
     },
     "binary_sensor": {
@@ -348,6 +555,90 @@
       },
       "datahub_stream": {
         "name": "Data Hub stream"
+      },
+      "bonnet_lock": {
+        "name": "Bonnet lock"
+      },
+      "convertible_roof": {
+        "name": "Convertible roof"
+      },
+      "headlights": {
+        "name": "Headlights"
+      },
+      "panic_alarm": {
+        "name": "Panic alarm"
+      },
+      "airbag_deployed": {
+        "name": "Airbag deployed"
+      },
+      "front_impact": {
+        "name": "Front impact"
+      },
+      "privacy_mode": {
+        "name": "Privacy mode"
+      },
+      "particulate_filter_warning": {
+        "name": "Particulate filter warning"
+      },
+      "tyre_warning_fl": {
+        "name": "Front left tyre warning"
+      },
+      "tyre_warning_fr": {
+        "name": "Front right tyre warning"
+      },
+      "tyre_warning_rl": {
+        "name": "Rear left tyre warning"
+      },
+      "tyre_warning_rr": {
+        "name": "Rear right tyre warning"
+      },
+      "climate": {
+        "name": "Climate"
+      },
+      "air_conditioning": {
+        "name": "Air conditioning"
+      },
+      "climate_timer": {
+        "name": "Climate timer"
+      },
+      "departure_timer": {
+        "name": "Departure timer set"
+      },
+      "heater_enabled": {
+        "name": "Fuel-fired heater enabled"
+      },
+      "air_cleaning": {
+        "name": "Air purification"
+      },
+      "seat_front_right_held": {
+        "name": "Front passenger seat held"
+      },
+      "seat_rear_left_held": {
+        "name": "Rear left seat held"
+      },
+      "seat_rear_right_held": {
+        "name": "Rear right seat held"
+      },
+      "rear_armrest_held": {
+        "name": "Rear armrest held"
+      },
+      "ski_hatch_held": {
+        "name": "Ski hatch held"
+      },
+      "seat_third_row_left_held": {
+        "name": "Third row left seat held"
+      },
+      "seat_third_row_right_held": {
+        "name": "Third row right seat held"
+      },
+      "ev_charging_flag": {
+        "name": "Charging (flag)"
+      },
+      "ev_cable_connected": {
+        "name": "Charging cable connected"
+      },
+      "ev_battery_conditioning": {
+        "name": "Battery conditioning"
       }
     },
     "device_tracker": {
