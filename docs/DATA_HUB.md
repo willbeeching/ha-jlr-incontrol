@@ -81,8 +81,15 @@ Also measured:
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
 - With it switched on, the broker in the docs accepts the connection and then hangs up on every
-  login tried, and the broker the portal names does not resolve. As of 1.9.0-beta.3 the stream has
-  not been seen to connect for an owner account; the link reads status hourly meanwhile.
+  login tried, and the broker the portal names does not resolve. That name is not a portal typo:
+  the portal reads it from JLR's own `/account/credential/stream` API. The portal also shows every
+  stream detail in capitals through CSS, so the capitals are not the username's real case. As of
+  1.9.0-beta.3 the stream has not been seen to connect for an owner account; the link reads status
+  hourly meanwhile.
+- The docs' Vehicle Data and Diagnostics pages list endpoints the published API spec does not:
+  `/v1/vehicles/{vin}/alerts`, `/ev/hv-battery` and `/diagnostics`, and a `Capabilities` list on
+  vehicle details that includes `live-data-streaming`. Neither car tested returned `Capabilities`,
+  and the extra endpoints are untested.
 
 ## If it is not working
 
