@@ -80,8 +80,11 @@ Also measured:
   Location keeps coming from the owner portal.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
-- With it switched on, the broker in the docs accepts the connection and then hangs up on every
-  login tried, and the broker the portal names does not resolve. That name is not a portal typo:
+- With it switched on, the broker the portal names does not resolve, and the broker in the docs
+  refuses every login except one: the client ID as issued, used as both the MQTT username and the
+  MQTT client ID. With that login it then hung up on the docs' own subscription,
+  `account/{accountId}/vehicles/{vin}/#`. From 1.9.0-beta.5 the link keeps the accepted login and
+  tries the other topic layouts the docs show, once each. That name is not a portal typo:
   the portal reads it from JLR's own `/account/credential/stream` API. The portal also shows every
   stream detail in capitals through CSS, so the capitals are not the username's real case. As of
   1.9.0-beta.3 the stream has not been seen to connect for an owner account; the link reads status
@@ -100,8 +103,11 @@ Also measured:
   means exactly this. If it is on, diagnostics show `last_rejection`: which way of logging in was
   tried last and where the broker hung up (before the login was accepted, or before the
   subscription was confirmed). Until one works the link tries five, once each: the username as
-  issued and in capitals, each with its own client id and as the client id, then port 443. If all
-  five are turned down it leaves the stream for six hours before trying again.
+  issued and in capitals, each with its own client id and as the client id, then port 443. Once a
+  login is accepted it keeps it, and tries the topic layouts once each: every category per car,
+  each car with no category, status per car, the whole account, the account id in capitals, and
+  the first car alone. `accepted_login` and `topics` in diagnostics show where it got to. If a
+  round ends with nothing working it leaves the stream for six hours before trying again.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
   or consent withdrawn. Link it again from the options; a new certificate is made each time.
 - Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the

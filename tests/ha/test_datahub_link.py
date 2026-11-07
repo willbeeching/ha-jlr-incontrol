@@ -38,6 +38,8 @@ from custom_components.jlr_incontrol.diagnostics import (  # noqa: E402
     async_get_config_entry_diagnostics,
 )
 from custom_components.jlr_incontrol.stream import (  # noqa: E402
+    LOGIN_STAGE,
+    SUBSCRIPTION_STAGE,
     MqttDropped,
     MqttError,
     MqttRefused,
@@ -352,7 +354,7 @@ class TestTheLoop:
         # Bad credentials are bad on both brokers; trying the second host would
         # only add to the refusals JLR see.
         link, pause = bare_link(hass, linked, 1)
-        broker.sessions += [([], MqttRefused(5))] + [([], MqttDropped("login"))] * 4
+        broker.sessions += [([], MqttRefused(5))] + [([], MqttDropped(LOGIN_STAGE))] * 4
         await run(link)
         seen = [
             (c["host"], c["port"], c["username"], c["client_id"]) for c in broker.calls
@@ -379,7 +381,7 @@ class TestTheLoop:
     ) -> None:
         link, _ = bare_link(hass, linked, 2)
         broker.sessions += [
-            ([], MqttDropped("login")),
+            ([], MqttDropped(LOGIN_STAGE)),
             ([], "time limit"),
             ([], "time limit"),
         ]
@@ -389,6 +391,57 @@ class TestTheLoop:
         assert last["client_id"] == last["username"] == "dsas-0123456789ab"
         diagnostics = link.diagnostics()
         assert diagnostics["login"] == "username as issued, as client id"
+
+    async def test_a_login_accepted_then_a_topic_refused_tries_other_layouts(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
+    ) -> None:
+        # What JLR's broker did in November 2026: the client id as both the
+        # username and the MQTT client id got past the login, and the docs'
+        # own filter was then refused.
+        link, _ = bare_link(hass, linked, 1)
+        broker.sessions += [
+            ([], MqttDropped(LOGIN_STAGE)),
+            ([], MqttDropped(SUBSCRIPTION_STAGE)),
+            ([], "time limit"),
+        ]
+        await run(link)
+        assert [c["topics"] for c in broker.calls[1:]] == [
+            [f"account/acct-1/vehicles/{KEPT}/#"],
+            [f"account/acct-1/vehicles/{KEPT}"],
+        ]
+        assert broker.calls[2]["username"] == broker.calls[2]["client_id"]
+        diagnostics = link.diagnostics()
+        assert diagnostics["topics"] == "each car, no category"
+        assert diagnostics["login"] == "username as issued, as client id"
+
+    async def test_every_layout_refused_keeps_the_login_and_waits_hours(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
+    ) -> None:
+        link, pause = bare_link(hass, linked, 1)
+        layouts = len(link._all_topic_sets("acct-1"))
+        broker.sessions += [([], MqttDropped(LOGIN_STAGE))] + [
+            ([], MqttDropped(SUBSCRIPTION_STAGE))
+        ] * layouts
+        await run(link)
+        # One refused login, then every layout once with the accepted one,
+        # and no other login tried after it.
+        assert len(broker.calls) == 1 + layouts
+        assert len({c["username"] for c in broker.calls[1:]}) == 1
+        assert pause.waits == [datahub_link.STATUS_INTERVAL]
+        assert (
+            link.diagnostics()["accepted_login"] == "username as issued, as client id"
+        )
+        # The next round starts from the login that was accepted.
+        assert [login.label for login in link._logins()] == [
+            "username as issued, as client id"
+        ]
+
+    async def test_without_a_vehicle_list_it_asks_for_the_whole_account(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        link.vehicles = []
+        assert link._topic_sets("acct-1") == [("whole account", ["account/acct-1/#"])]
 
     async def test_an_unreachable_broker_falls_back_to_the_other(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker

@@ -38,6 +38,11 @@ _REFUSALS = {
     5: "not authorised",
 }
 
+# What a hang-up names when the broker accepted the login but not the
+# subscription: the login was right, the topics were not.
+LOGIN_STAGE = "the login was accepted"
+SUBSCRIPTION_STAGE = "the subscription was confirmed"
+
 # Large enough for any signal message seen; small enough that a corrupt length
 # cannot make us buffer the broker's whole stream.
 MAX_PACKET = 1 << 20
@@ -178,7 +183,7 @@ async def run_session(
     reading: asyncio.Future[tuple[int, bytes]] | None = None
     # What the broker has yet to confirm. A hang-up before it is a rejection;
     # after it, the normal end of a session.
-    stage = "the login was accepted"
+    stage = LOGIN_STAGE
     try:
         writer.write(
             connect_packet(client_id, username, password, max(1, round(keepalive)))
@@ -190,7 +195,7 @@ async def run_session(
         if body[1]:
             raise MqttRefused(body[1])
 
-        stage = "the subscription was confirmed"
+        stage = SUBSCRIPTION_STAGE
         writer.write(subscribe_packet(1, topics))
         await writer.drain()
         awaiting_ping = False

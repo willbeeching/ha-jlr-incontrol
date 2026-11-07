@@ -56,7 +56,13 @@ from .datahub import (
     Tokens,
 )
 from .redact import vehicle_label
-from .stream import MqttError, MqttRejected, run_session
+from .stream import (
+    SUBSCRIPTION_STAGE,
+    MqttDropped,
+    MqttError,
+    MqttRejected,
+    run_session,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -151,6 +157,10 @@ class DataHubLink:
         self.stream_enabled: bool | None = None
         self.broker: str | None = None
         self._login: _Login | None = None
+        # A login the broker accepted, even if the subscription then was not.
+        self._accepted: _Login | None = None
+        # The topic layout that the broker let us subscribe with.
+        self._shape: str | None = None
         self._alpn_context: ssl.SSLContext | None = None
         # The newest time the car itself reported, per VIN, from either source.
         self.reports: dict[str, datetime] = {}
@@ -375,58 +385,126 @@ class DataHubLink:
             raise DataHubError("the stream token names no account")
         context: ssl.SSLContext = client_context()
         hosts = (self.broker,) if self.broker else BROKERS
-        # One filter per car, as in JLR's own example, rather than the whole
-        # account: the narrowest thing that delivers everything wanted.
-        topics = [f"account/{account}/vehicles/{vin}/#" for vin in self.vehicles] or [
-            f"account/{account}/#"
-        ]
         last_error: MqttError | None = None
         for host in hosts:
+            # How this host's attempts ended: "refused" (it answered and
+            # said no, so the other host would only refuse too) or
+            # "unreachable" (try the other host).
+            verdict = "refused"
             for login in self._logins():
-                started = time.monotonic()
-                try:
-                    reason = await run_session(
-                        host=host,
-                        port=login.port,
-                        ssl_context=(
-                            context if login.port == BROKER_PORT else await self._alpn()
-                        ),
-                        client_id=login.client_id(self.entry.entry_id, started),
-                        username=login.username,
-                        password=stream.access_token,
-                        topics=topics,
-                        on_message=self._on_message,
-                        on_subscribed=partial(self._on_subscribed, host, login),
-                        max_seconds=SESSION_SECONDS,
+                login_refused = False
+                for shape, topics in self._topic_sets(account):
+                    started = time.monotonic()
+                    try:
+                        reason = await run_session(
+                            host=host,
+                            port=login.port,
+                            ssl_context=(
+                                context
+                                if login.port == BROKER_PORT
+                                else await self._alpn()
+                            ),
+                            client_id=login.client_id(self.entry.entry_id, started),
+                            username=login.username,
+                            password=stream.access_token,
+                            topics=topics,
+                            on_message=self._on_message,
+                            on_subscribed=partial(
+                                self._on_subscribed, host, login, shape
+                            ),
+                            max_seconds=SESSION_SECONDS,
+                        )
+                    except MqttDropped as err:
+                        last_error = err
+                        self.stats["last_rejection"] = f"{login.label}, {shape}: {err}"
+                        _LOGGER.debug(
+                            "Data Hub broker %s, %s, %s: %s",
+                            host,
+                            login.label,
+                            shape,
+                            err,
+                        )
+                        if err.stage == SUBSCRIPTION_STAGE:
+                            # The login was accepted; only the topics were
+                            # not. Keep this login, try the next layout.
+                            self._accepted = login
+                            continue
+                        login_refused = True
+                        break
+                    except MqttRejected as err:
+                        last_error = err
+                        self.stats["last_rejection"] = f"{login.label}: {err}"
+                        _LOGGER.debug(
+                            "Data Hub broker %s, %s: %s", host, login.label, err
+                        )
+                        login_refused = True
+                        break
+                    except MqttError as err:
+                        last_error = err
+                        if self.broker:
+                            raise
+                        _LOGGER.debug("Data Hub broker %s: %s", host, err)
+                        verdict = "unreachable"
+                        break
+                    finally:
+                        self._set_connected(False)
+                    lasted = time.monotonic() - started
+                    self.stats["last_session_seconds"] = round(lasted)
+                    self.stats["last_session_end"] = reason
+                    _LOGGER.debug(
+                        "Data Hub stream session ended after %.0fs: %s", lasted, reason
                     )
-                except MqttRejected as err:
-                    # The broker is there and said no: the next way of
-                    # logging in, not the next host.
-                    last_error = err
-                    self.stats["last_rejection"] = f"{login.label}: {err}"
-                    _LOGGER.debug("Data Hub broker %s, %s: %s", host, login.label, err)
-                    continue
-                except MqttError as err:
-                    last_error = err
-                    if self.broker:
-                        raise
-                    _LOGGER.debug("Data Hub broker %s: %s", host, err)
+                    return lasted
+                if not login_refused:
+                    # Either every layout failed with a login the broker
+                    # accepted, so another login could only do worse, or the
+                    # host was unreachable.
                     break
-                finally:
-                    self._set_connected(False)
-                lasted = time.monotonic() - started
-                self.stats["last_session_seconds"] = round(lasted)
-                self.stats["last_session_end"] = reason
-                _LOGGER.debug(
-                    "Data Hub stream session ended after %.0fs: %s", lasted, reason
-                )
-                return lasted
-            if isinstance(last_error, MqttRejected):
+            if verdict == "refused":
                 # Turned down by a broker that answered: the other host would
                 # only be more refusals for JLR to count.
                 break
         assert last_error is not None
         raise last_error
+
+    def _topic_sets(self, account: str) -> list[tuple[str, list[str]]]:
+        """The topic layouts to subscribe with, best guess first.
+
+        Measured in November 2026: the broker accepted a login and then hung
+        up on the docs' own example filter, one ``…/vehicles/{vin}/#`` per car.
+        The docs show the topic three ways in three places, and AWS IoT drops
+        the whole connection when any filter in a subscription is not allowed,
+        so each layout is its own connection, tried once, and the one that
+        works is kept.
+        """
+        if self._shape is not None:
+            return [s for s in self._all_topic_sets(account) if s[0] == self._shape]
+        return self._all_topic_sets(account)
+
+    def _all_topic_sets(self, account: str) -> list[tuple[str, list[str]]]:
+        vins = self.vehicles
+        if not vins:
+            return [("whole account", [f"account/{account}/#"])]
+        return [
+            (
+                "each car, all categories",
+                [f"account/{account}/vehicles/{v}/#" for v in vins],
+            ),
+            (
+                "each car, no category",
+                [f"account/{account}/vehicles/{v}" for v in vins],
+            ),
+            (
+                "each car, status",
+                [f"account/{account}/vehicles/{v}/status" for v in vins],
+            ),
+            ("whole account", [f"account/{account}/#"]),
+            (
+                "account id in capitals",
+                [f"account/{account.upper()}/vehicles/{v}/#" for v in vins],
+            ),
+            ("first car only", [f"account/{account}/vehicles/{vins[0]}/#"]),
+        ]
 
     def _logins(self) -> list[_Login]:
         """The ways of logging in to try, best guess first.
@@ -440,6 +518,8 @@ class DataHubLink:
         """
         if self._login is not None:
             return [self._login]
+        if self._accepted is not None:
+            return [self._accepted]
         issued = self.client.client_id
         logins = [
             _Login(issued, own_id=False, label="username as issued"),
@@ -475,11 +555,14 @@ class DataHubLink:
             self._alpn_context = await self.hass.async_add_executor_job(build)
         return self._alpn_context
 
-    def _on_subscribed(self, host: str, login: _Login) -> None:
-        if self.broker != host or self._login != login:
-            _LOGGER.info("Data Hub stream connected (%s, %s)", host, login.label)
+    def _on_subscribed(self, host: str, login: _Login, shape: str) -> None:
+        if self.broker != host or self._login != login or self._shape != shape:
+            _LOGGER.info(
+                "Data Hub stream connected (%s, %s, %s)", host, login.label, shape
+            )
         self.broker = host
         self._login = login
+        self._shape = shape
         self.stats["sessions"] += 1
         self._set_connected(True)
 
@@ -525,6 +608,8 @@ class DataHubLink:
             "stream_enabled": self.stream_enabled,
             "broker": self.broker,
             "login": self._login.label if self._login else None,
+            "accepted_login": self._accepted.label if self._accepted else None,
+            "topics": self._shape,
             "stats": dict(self.stats),
             "vehicles": {
                 vehicle_label(vin): {
