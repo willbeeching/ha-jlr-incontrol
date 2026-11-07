@@ -118,9 +118,9 @@ InControl**. It asks how to connect:
 
 - **JLR Data Hub (recommended)**, for the UK and the EU. No InControl password: you create a
   client at [data.jlr.com](https://data.jlr.com), paste the certificate Home Assistant shows, and
-  approve the link on your phone. The steps are in [docs/DATA_HUB.md](docs/DATA_HUB.md). JLR do not
-  offer location through the Data Hub yet, so add **InControl sign-in for location** from the
-  options afterwards if you want the car's location.
+  approve the link on your phone. The steps are in [docs/DATA_HUB.md](docs/DATA_HUB.md). For location,
+  declare each car at data.jlr.com as having a **sole user** or **shared user**; JLR refuse a
+  car's location until it is declared.
 - **InControl sign-in (older)**, for owners JLR do not offer the Data Hub to. Enter your InControl
   email and password, then the verification code JLR email you (it expires quickly, so have your
   inbox open). This connection is reverse-engineered from the app, and stays for owners the Data
@@ -137,7 +137,8 @@ Data Hub without losing anything: link it from the options and the same entities
 - **Link the JLR Data Hub (beta)**: moves the entry onto JLR's official owner API. See
   [docs/DATA_HUB.md](docs/DATA_HUB.md).
 - **InControl sign-in for location**: on an entry set up on the Data Hub, signs in to JLR's owner
-  portal for location and car names only.
+  portal for location and car names only. Not needed for a car declared at data.jlr.com, which
+  gets its location from the Data Hub.
 - **Unlink the JLR Data Hub**: on an entry that also has an InControl sign-in, goes back to it.
 
 The two unit settings are purely about display; neither changes what is fetched or how often.

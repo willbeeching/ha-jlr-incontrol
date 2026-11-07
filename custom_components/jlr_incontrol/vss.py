@@ -222,6 +222,34 @@ def to_position(body: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
+LATITUDE = "Vehicle.CurrentLocation.Latitude"
+LONGITUDE = "Vehicle.CurrentLocation.Longitude"
+POSITION_SIGNALS = frozenset(
+    (LATITUDE, LONGITUDE, "Vehicle.CurrentLocation.Heading", "Vehicle.Speed")
+)
+
+
+def signals_to_position(
+    signals: Mapping[str, Any], when: str | None
+) -> dict[str, Any] | None:
+    """A fix from the stream's separate signals, shaped as ``to_position``'s.
+
+    The stream sends one signal per value where REST nests them, so this is the
+    same fix read from dotted names. ``when`` is the fix's own time.
+    """
+    latitude = _number(signals.get(LATITUDE))
+    longitude = _number(signals.get(LONGITUDE))
+    if latitude is None or longitude is None:
+        return None
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "heading": _number(signals.get("Vehicle.CurrentLocation.Heading")),
+        "speed": _number(signals.get("Vehicle.Speed")),
+        "timestamp": when,
+    }
+
+
 def to_attributes(body: Mapping[str, Any]) -> dict[str, Any]:
     """Vehicle details, under the attribute names the entities read.
 

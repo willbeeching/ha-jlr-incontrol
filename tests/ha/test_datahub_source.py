@@ -277,7 +277,7 @@ class TestTheStatusTimer:
         await status_loop(link)
         assert pause.waits[0] == datahub_link.STATUS_INTERVAL
 
-    async def test_location_is_asked_for_hourly_not_every_read(
+    async def test_a_refused_car_is_asked_hourly_not_every_read(
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         link, _ = bare(hass, entry, 3)
@@ -287,6 +287,32 @@ class TestTheStatusTimer:
         (answer,) = link.location.values()
         assert answer.startswith("refused")
         assert link.diagnostics()["location"]
+
+    async def test_a_permitted_car_is_located_with_every_status_read(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Once the car is declared at data.jlr.com, location rides on the
+        # status cadence, as the portal's position did.
+        link, _ = bare(hass, entry, 3)
+        hub.datahub.location_result = {
+            "Vehicle": {"CurrentLocation": {"Latitude": 1.5, "Longitude": 2.5}},
+            "timestamp": "2026-11-07T09:00:00Z",
+        }
+        await status_loop(link)
+        assert hub.datahub.calls.count("status") == 3
+        assert hub.datahub.calls.count("location") == 3
+
+    async def test_a_declaration_made_later_is_noticed_within_the_hour(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare(hass, entry, 1)
+        await status_loop(link)
+        assert link.location[KEPT].startswith("refused")
+        hub.datahub.location_result = {"Vehicle": {}}
+        link._location_due[KEPT] = 0.0  # the hour has passed
+        link._pause = Steps(1)  # type: ignore[method-assign]
+        await status_loop(link)
+        assert link.location[KEPT] == "permitted, no fix"
 
     async def test_a_location_when_jlr_allow_it_is_handed_on(
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles

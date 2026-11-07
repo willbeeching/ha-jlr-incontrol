@@ -153,10 +153,12 @@ user-facing detail; what matters when changing the code:
 - Measured, not documented: access tokens last 5 minutes, the refresh token
   is offline with no expiry, the broker in the portal does not resolve, and
   the broker in the docs accepts only the client id as both MQTT username and
-  client id, and only exact `/status` topics (no wildcards). Location and
-  journeys were refused to owners; location is suspected to need the per-car
-  declaration at data.jlr.com (user class, other drivers' consent), which the
-  portal's own code gates on — unconfirmed.
+  client id, and only exact topics (no wildcards). Location is refused per
+  car until the owner completes the car's declaration at data.jlr.com (sole
+  or shared user, other drivers' consent) — confirmed on two cars, which went
+  from refused to permitted straight after. Journeys stay refused to owners.
+  Whether the broker allows the `/position` topic is not yet measured, which
+  is why status alone is the fallback layout.
 - Every key, token, client id and account id stays in the config entry;
   `redact.py` covers them. Never put a real owner's readings in tests or
   comments — use made-up values of the same shape.

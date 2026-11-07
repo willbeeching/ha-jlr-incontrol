@@ -8,7 +8,12 @@ not those cars' readings.
 
 from __future__ import annotations
 
-from custom_components.jlr_incontrol.vss import to_attributes, to_position, to_status
+from custom_components.jlr_incontrol.vss import (
+    signals_to_position,
+    to_attributes,
+    to_position,
+    to_status,
+)
 
 REPORTED = "2026-11-07T09:00:00.000Z"
 
@@ -151,6 +156,21 @@ class TestLocation:
         assert position is not None
         assert position["timestamp"] == "2026-11-07T09:05:00Z"
         assert position["heading"] is None
+
+    def test_the_streams_separate_signals_make_the_same_fix(self) -> None:
+        signals = {
+            "Vehicle.CurrentLocation.Latitude": 51.5,
+            "Vehicle.CurrentLocation.Longitude": -0.12,
+            "Vehicle.Speed": 0,
+        }
+        assert signals_to_position(signals, "2026-11-07T09:00:00Z") == {
+            "latitude": 51.5,
+            "longitude": -0.12,
+            "heading": None,
+            "speed": 0.0,
+            "timestamp": "2026-11-07T09:00:00Z",
+        }
+        assert signals_to_position({"Vehicle.Speed": 0}, None) is None
 
     def test_no_fix_is_none(self) -> None:
         assert to_position({}) is None

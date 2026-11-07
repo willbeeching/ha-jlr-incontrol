@@ -17,7 +17,7 @@ how fresh it can be and what happens when that source is down.
 | Source | What it feeds | How often | If it fails |
 | --- | --- | --- | --- |
 | Telemetry socket (STOMP over websocket) | every sensor and binary sensor below | pushed by the car; a full snapshot on each connection, then updates as the car reports | entities go unavailable after a 30-minute grace, because a value nobody can refresh is not a reading |
-| JLR Data Hub, when [linked](DATA_HUB.md) | replaces the telemetry socket for every sensor and binary sensor below | REST every 15 minutes (hourly once the stream delivers), plus the stream as the car reports | entities go unavailable after three hours without a good read; a revoked link falls back to the socket |
+| JLR Data Hub, when [linked](DATA_HUB.md) | replaces the telemetry socket for every sensor and binary sensor below, and the owner portal for `device_tracker` on cars declared at data.jlr.com | REST every 15 minutes (hourly once the stream delivers), location with it, plus the stream as the car reports | entities go unavailable after three hours without a good read; a revoked link falls back to the socket |
 | Owner web portal | `device_tracker`, and the vehicle's real name and registration | location every 30 minutes; names once a day | location holds its last fix and reports `trusted: false`; Home Assistant asks you to sign in again if the session has gone |
 | IF9 REST API | the vehicle list, and the account housekeeping | every 15 minutes | setup retries; nothing already on screen is lost |
 

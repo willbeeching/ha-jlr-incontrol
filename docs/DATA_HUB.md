@@ -13,11 +13,13 @@ not link carries on exactly as before.
 
 - **The cars and their details** (brand, model, year, fuel type) come from the Data Hub too: the
   cars are the ones selected on the client at data.jlr.com. The older vehicle list is not used.
-- **Location** is the one thing the Data Hub does not give owners yet; the link asks hourly, and
-  uses it from the day JLR allow it. Until then it comes from JLR's owner portal, which needs an
-  InControl sign-in: on an entry set up on the Data Hub, choose **InControl sign-in for location**
-  in the options. Only the portal's session is kept, not your password, and it is used for location
-  and car names only.
+- **Location** comes from the Data Hub too, once each car is **declared** at data.jlr.com: say
+  whether you are its sole user or a shared user (and, if shared, that the other drivers agree).
+  JLR refuse a car's location until that is done; confirmed on two cars in November 2026, which
+  were refused before the declaration and permitted straight after it. A car that is not declared
+  can take its location from JLR's owner portal instead, which needs an InControl sign-in: on an
+  entry set up on the Data Hub, choose **InControl sign-in for location** in the options. Only the
+  portal's session is kept, not your password, and it is used for location and car names only.
 - **If the link stops working** (the client deleted, its certificate replaced, consent
   withdrawn), a repair says so. An entry that also has an InControl sign-in falls back to the
   telemetry socket by itself, so the sensors keep working while you link it again; one set up on
@@ -46,6 +48,8 @@ minutes with your phone to hand.
    - credential type **device-based**
    - select your vehicles
    - select **all** data categories
+   - for location, complete each car's **declaration** in your vehicle list: sole user or shared
+     user. Without it JLR refuse that car's location.
    - when it asks for a public certificate, paste the whole block Home Assistant showed, from
      `-----BEGIN CERTIFICATE-----` to `-----END CERTIFICATE-----`.
 3. On the client's page, turn **Toggle your stream** on.
@@ -71,8 +75,12 @@ client at data.jlr.com.
   housekeeping already keeps; it is there because the REST read is the only source of change
   until the stream is shown to work. The **Refresh** button reads status on demand, at most once a
   minute.
-- **Location**: asked for once an hour per car. Refused for owner accounts so far; the answer is
-  in diagnostics under `location`.
+- **Location**: read with each status read for every car JLR allow it for, so every 15 minutes
+  until the stream proves itself and hourly after. A car JLR refuse (not declared at data.jlr.com)
+  is asked once an hour instead, so a declaration made later is picked up within the hour without
+  asking every 15 minutes in the meantime. The answer per car is in diagnostics under `location`.
+  The stream also subscribes to each car's `position` topic alongside `status`; if the broker will
+  not allow it, the link falls back to status alone.
 - **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
   the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
   least 30 seconds, and backs off to 15 minutes when connections keep failing. If the broker
@@ -99,13 +107,14 @@ Also measured:
 - The status values are the same as the existing integration's (the same frozen coolant
   temperature, the same `KEY_ON_ENGINE_OFF`), so everything in [DATA_MODEL.md](DATA_MODEL.md)
   still applies.
-- **Position** is refused per car ("Access to category is not permitted for this vehicle"), and
-  **journeys** are refused for owner accounts altogether, even with both categories selected.
-  Location keeps coming from the owner portal.
-  The portal has a per-car **declaration** (region, whether you are the sole user, whether other
-  drivers have agreed), and its own code treats undeclared cars differently. Location is personal
-  data about whoever is driving, so completing that declaration may be what unlocks it; this is
-  being tested. Look for each car's status and class in your vehicle list at data.jlr.com.
+- **Position** is refused per car ("Access to category is not permitted for this vehicle") until
+  the car is **declared** at data.jlr.com: region, whether you are the sole user or a shared user,
+  and whether other drivers have agreed. Location is personal data about whoever is driving, and
+  the docs do not say this. Confirmed on two cars: both refused, both declared as sole user, both
+  permitted at the next read. Look for each car's status and class in your vehicle list at
+  data.jlr.com.
+- **Journeys** are refused for owner accounts altogether, even with the category selected and the
+  car declared.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
 - With it switched on, the broker the portal names does not resolve, and the broker in the docs
@@ -132,9 +141,9 @@ Also measured:
   tried last and where the broker hung up (before the login was accepted, or before the
   subscription was confirmed). Until one works the link tries five, once each: the username as
   issued and in capitals, each with its own client id and as the client id, then port 443. Once a
-  login is accepted it keeps it, and tries the topic layouts once each: every category per car,
-  each car with no category, status per car, the whole account, the account id in capitals, and
-  the first car alone. `accepted_login` and `topics` in diagnostics show where it got to. If a
+  login is accepted it keeps it, and tries the topic layouts once each: status and position per car,
+  status alone per car, every category per car, each car with no category, the whole account, the
+  account id in capitals, and the first car alone. `accepted_login` and `topics` in diagnostics show where it got to. If a
   round ends with nothing working it leaves the stream for six hours before trying again.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
   or consent withdrawn. Link it again from the options; a new certificate is made each time.

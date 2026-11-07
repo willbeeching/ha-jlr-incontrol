@@ -197,7 +197,10 @@ class TestSetUp:
         # As issued; the portal's capitals are only how it displays it.
         assert call["username"] == "dsas-0123456789ab"
         assert call["password"] == "stream"
-        assert call["topics"] == [f"account/acct-1/vehicles/{KEPT}/#"]
+        assert call["topics"] == [
+            f"account/acct-1/vehicles/{KEPT}/status",
+            f"account/acct-1/vehicles/{KEPT}/position",
+        ]
 
         broker.hold.set()
         assert await hass.config_entries.async_unload(linked.entry_id)
@@ -415,13 +418,18 @@ class TestTheLoop:
             ([], "time limit"),
         ]
         await run(link)
+        # Position with status first; a car not declared for location may
+        # make the broker drop that, so status alone comes next.
         assert [c["topics"] for c in broker.calls[1:]] == [
-            [f"account/acct-1/vehicles/{KEPT}/#"],
-            [f"account/acct-1/vehicles/{KEPT}"],
+            [
+                f"account/acct-1/vehicles/{KEPT}/status",
+                f"account/acct-1/vehicles/{KEPT}/position",
+            ],
+            [f"account/acct-1/vehicles/{KEPT}/status"],
         ]
         assert broker.calls[2]["username"] == broker.calls[2]["client_id"]
         diagnostics = link.diagnostics()
-        assert diagnostics["topics"] == "each car, no category"
+        assert diagnostics["topics"] == "each car, status"
         assert diagnostics["login"] == "username as issued, as client id"
 
     async def test_every_layout_refused_keeps_the_login_and_waits_hours(
@@ -577,3 +585,104 @@ class TestWhatItReads:
         )
         assert link.signals[KEPT]["Vehicle.A"]["time"] is None
         assert link.reports == {}
+
+
+POSITION_TOPIC = f"account/acct-1/vehicles/{KEPT}/position"
+
+
+def fix(when: str, latitude: Any = 51.5, longitude: Any = -0.12) -> list[dict]:
+    return [
+        {
+            "name": "Vehicle.CurrentLocation.Latitude",
+            "timestamp": when,
+            "value": latitude,
+        },
+        {
+            "name": "Vehicle.CurrentLocation.Longitude",
+            "timestamp": when,
+            "value": longitude,
+        },
+    ]
+
+
+class TestPositionOnTheStream:
+    async def test_a_fix_on_the_stream_is_handed_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[tuple[str, dict[str, Any]]] = []
+        link = DataHubLink(
+            hass, linked, on_position=lambda v, p: positions.append((v, p))
+        )
+        batch = [
+            *fix("2026-11-07T15:00:00Z"),
+            {
+                "name": "Vehicle.CurrentLocation.Heading",
+                "timestamp": "2026-11-07T15:00:00Z",
+                "value": 90,
+            },
+        ]
+        link._on_message(POSITION_TOPIC, json.dumps(batch).encode())
+        assert positions == [
+            (
+                KEPT,
+                {
+                    "latitude": 51.5,
+                    "longitude": -0.12,
+                    "heading": 90.0,
+                    "speed": None,
+                    "timestamp": "2026-11-07T15:00:00+00:00",
+                },
+            )
+        ]
+
+    async def test_half_a_fix_waits_for_the_other_half(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # A new latitude with the last fix's longitude is a place the car
+        # never was.
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-07T15:00:00Z")).encode()
+        )
+        latitude, longitude = fix("2026-11-07T16:00:00Z", 52.0, -1.0)
+        link._on_message(POSITION_TOPIC, json.dumps(latitude).encode())
+        assert len(positions) == 1
+        link._on_message(POSITION_TOPIC, json.dumps(longitude).encode())
+        assert len(positions) == 2
+        assert positions[-1]["latitude"] == 52.0
+        assert positions[-1]["longitude"] == -1.0
+
+    async def test_a_status_signal_is_not_a_fix(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        link._on_message(
+            POSITION_TOPIC,
+            json.dumps(fix("2026-11-07T15:00:00Z")[:1]).encode(),
+        )
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T15:00:00Z")
+        )
+        assert positions == []
+
+    async def test_an_unreadable_fix_is_not_handed_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        link._on_message(
+            POSITION_TOPIC,
+            json.dumps(fix("2026-11-07T15:00:00Z", latitude="unknown")).encode(),
+        )
+        assert positions == []
+
+    async def test_without_a_listener_a_fix_is_only_held(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-07T15:00:00Z")).encode()
+        )
+        assert link.signals[KEPT]["Vehicle.CurrentLocation.Latitude"]["value"] == 51.5

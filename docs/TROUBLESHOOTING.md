@@ -134,8 +134,13 @@ them on in the entity's settings. See [ENTITIES.md](ENTITIES.md) for why each on
 
 ## "I set up on the Data Hub and there is no location"
 
-JLR do not give location through the Data Hub to owners yet. Choose **InControl sign-in for
-location** in the integration's options; the car's location then comes from JLR's owner portal.
+JLR refuse each car's location until the car is **declared** at data.jlr.com. Open your vehicle
+list there and complete the declaration for each car, saying whether you are its **sole user** or a
+**shared user**. The next read picks it up, within the hour; diagnostics show the answer per car
+under `datahub` → `location` (`refused: …` before, `permitted` after).
+
+If you would rather not declare, choose **InControl sign-in for location** in the integration's
+options instead; the car's location then comes from JLR's owner portal.
 
 ## "The Data Hub link will not finish, or stopped working"
 

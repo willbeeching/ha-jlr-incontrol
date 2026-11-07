@@ -66,7 +66,15 @@ from .stream import (
     MqttRejected,
     run_session,
 )
-from .vss import to_attributes, to_position, to_status
+from .vss import (
+    LATITUDE,
+    LONGITUDE,
+    POSITION_SIGNALS,
+    signals_to_position,
+    to_attributes,
+    to_position,
+    to_status,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,8 +106,10 @@ STATUS_INTERVAL = 60 * 60.0
 # and it replaces a socket that pushed within minutes. Fifteen minutes is the
 # housekeeping cadence this integration already keeps, for two requests.
 STATUS_INTERVAL_UNPROVEN = 15 * 60.0
-# Location is refused for owner accounts (November 2026). Asked hourly so the
-# day JLR open it up is noticed, and no more often than that while it is not.
+# Location is refused per car until the owner declares how the car is used at
+# data.jlr.com (sole user, shared user, other drivers' consent). A refused car
+# is asked hourly, so a declaration made later is noticed, and no more often;
+# a permitted one is read with its status, as the portal's position was.
 LOCATION_INTERVAL = 60 * 60.0
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
@@ -205,7 +215,7 @@ class DataHubLink:
         self._status_ok_at: float | None = None
         # What JLR said the last time each car's location was asked for.
         self.location: dict[str, str] = {}
-        self._location_due = 0.0
+        self._location_due: dict[str, float] = {}
         # When the stream may next be tried, after a round of rejections.
         self._stream_after = 0.0
 
@@ -275,16 +285,14 @@ class DataHubLink:
     # -- the loop ---------------------------------------------------------
 
     async def _async_status_loop(self) -> None:
-        """REST status on a timer, and location now and then."""
+        """REST status on a timer, and location with it."""
         while not self.signed_out:
             wait = (
                 STATUS_INTERVAL if self.stats["messages"] else STATUS_INTERVAL_UNPROVEN
             )
             try:
                 await self._async_read_status()
-                if time.monotonic() >= self._location_due:
-                    self._location_due = time.monotonic() + LOCATION_INTERVAL
-                    await self._async_probe_location()
+                await self._async_probe_location()
             except DataHubAuthError as err:
                 self._signed_out(err)
                 return
@@ -430,8 +438,12 @@ class DataHubLink:
 
     async def _async_probe_location(self) -> None:
         """Ask for each car's location, and hand on any that is given."""
+        now = time.monotonic()
+        due = [v for v in self.vehicles if now >= self._location_due.get(v, 0.0)]
+        if not due:
+            return
         token = await self._async_access_token()
-        for vin in self.vehicles:
+        for vin in due:
             try:
                 body = await self.client.async_location(vin, token)
             except DataHubForbidden as err:
@@ -449,6 +461,9 @@ class DataHubLink:
                     answer,
                 )
             self.location[vin] = answer
+            self._location_due[vin] = (
+                0.0 if answer.startswith("permitted") else now + LOCATION_INTERVAL
+            )
 
     def _emit(self, vin: str) -> None:
         """Hand the car's current signals on, in the socket's shape."""
@@ -618,7 +633,24 @@ class DataHubLink:
         vins = self.vehicles
         if not vins:
             return [("whole account", [f"account/{account}/#"])]
+        # The two that name exact categories go first: wildcards were measured
+        # to cost a dropped connection, and every restart would pay for them
+        # again. Position comes before status alone because AWS IoT drops the
+        # connection over any filter it does not allow, and a car not declared
+        # for location may be one, so status alone is the fallback.
         return [
+            (
+                "each car, status and position",
+                [
+                    f"account/{account}/vehicles/{v}/{category}"
+                    for v in vins
+                    for category in ("status", "position")
+                ],
+            ),
+            (
+                "each car, status",
+                [f"account/{account}/vehicles/{v}/status" for v in vins],
+            ),
             (
                 "each car, all categories",
                 [f"account/{account}/vehicles/{v}/#" for v in vins],
@@ -626,10 +658,6 @@ class DataHubLink:
             (
                 "each car, no category",
                 [f"account/{account}/vehicles/{v}" for v in vins],
-            ),
-            (
-                "each car, status",
-                [f"account/{account}/vehicles/{v}/status" for v in vins],
             ),
             ("whole account", [f"account/{account}/#"]),
             (
@@ -711,6 +739,7 @@ class DataHubLink:
             return
         items = decoded if isinstance(decoded, list) else [decoded]
         changed = False
+        moved = False
         for item in items:
             if not isinstance(item, dict) or vin is None:
                 continue
@@ -725,6 +754,7 @@ class DataHubLink:
             }
             if when and self._note_report(vin, when):
                 changed = True
+            moved = moved or name in POSITION_SIGNALS
             _LOGGER.debug(
                 "Data Hub %s %s at %s", vehicle_label(vin), name, item.get("timestamp")
             )
@@ -732,6 +762,30 @@ class DataHubLink:
             self._notify()
         if vin is not None and vin in self.signals:
             self._emit(vin)
+            if moved:
+                self._emit_position(vin)
+
+    def _emit_position(self, vin: str) -> None:
+        """Hand on a fix the stream delivered, once both halves agree.
+
+        Latitude and longitude are separate signals, and may come in separate
+        messages; a new latitude paired with the last fix's longitude would be
+        a place the car never was. They are one reading, so they carry one
+        time, and a fix is handed on only when the two times match.
+        """
+        if self._on_position is None:
+            return
+        held = self.signals[vin]
+        latitude, longitude = held.get(LATITUDE), held.get(LONGITUDE)
+        if latitude is None or longitude is None:
+            return
+        if latitude["time"] != longitude["time"]:
+            return
+        when = latitude["time"]
+        values = {name: entry["value"] for name, entry in held.items()}
+        position = signals_to_position(values, when.isoformat() if when else None)
+        if position is not None:
+            self._on_position(vin, position)
 
     # -- reporting --------------------------------------------------------
 
