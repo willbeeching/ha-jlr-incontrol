@@ -120,18 +120,22 @@ folder and restart.
 Go to **Settings → Devices & Services → Add Integration** and search for **Jaguar Land Rover
 InControl**. It asks how to connect:
 
-- **JLR Data Hub (recommended)**, for the UK and the EU. No InControl password: you create a
-  client at [data.jlr.com](https://data.jlr.com), paste the certificate Home Assistant shows, and
-  approve the link on your phone. The steps are in [docs/DATA_HUB.md](docs/DATA_HUB.md). For location,
-  declare each car at data.jlr.com as having a **sole user** or **shared user**; JLR refuse a
-  car's location until it is declared.
-- **InControl sign-in (older)**, for owners JLR do not offer the Data Hub to. Enter your InControl
-  email and password, then the verification code JLR email you (it expires quickly, so have your
-  inbox open). This connection is reverse-engineered from the app, and stays for owners the Data
-  Hub does not reach.
+- **JLR Data Hub (recommended in the UK and EU).** JLR's official API for owners. No InControl
+  password: you create a client at [data.jlr.com](https://data.jlr.com), paste the certificate Home
+  Assistant shows, and approve the link on your phone. Status is read every 15 minutes, and arrives
+  as it happens once JLR's stream is delivering. For location, declare each car at data.jlr.com as
+  having a **sole user** or **shared user**; JLR refuse a car's location until it is declared. A
+  beta. The steps are in [docs/DATA_HUB.md](docs/DATA_HUB.md).
+- **InControl sign-in (anywhere else).** The connection JLR's own app uses, worked out from the app
+  rather than documented. For owners outside the UK and EU, or anyone who cannot use the Data Hub,
+  and for now the tested route for electric cars. Enter your InControl email and password, then the
+  verification code JLR email you (it expires quickly, so have your inbox open). Status is pushed
+  within minutes; location and car names come from JLR's owner portal. JLR could change it or
+  switch it off without notice.
 
-Each vehicle appears as a device with its own sensors. An existing InControl entry can move to the
-Data Hub without losing anything: link it from the options and the same entities switch source.
+Both give the same entities. An entry started on the InControl sign-in can link the Data Hub later
+from its options, keeping every entity and its history.
+Each vehicle appears as a device with its own sensors.
 
 ### Options
 
