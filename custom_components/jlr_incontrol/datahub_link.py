@@ -84,6 +84,11 @@ HEALTHY_SESSION = 60.0
 # REST status, alongside the stream. The stream carries changes; this is the
 # full snapshot, and the only source while the stream is switched off.
 STATUS_INTERVAL = 60 * 60.0
+# After every way of logging in has been turned down. The broker answered and
+# said no five times; asking again in minutes would only add to the refusals.
+# Measured in November 2026: the stream refused every login for owner
+# accounts, and the broker the portal names was not yet in public DNS.
+REJECTED_RETRY = 6 * 60 * 60.0
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,8 @@ class DataHubLink:
             "last_error": None,
         }
         self._last_status_read = 0.0
+        # When the stream may next be tried, after a round of rejections.
+        self._stream_after = 0.0
 
     # -- lifecycle --------------------------------------------------------
 
@@ -212,11 +219,16 @@ class DataHubLink:
                     not self._last_status_read
                 ):
                     await self._async_read_status()
-                if self.stream_enabled is False:
-                    # Nothing to connect to until the owner flips the toggle;
-                    # asking for a stream token every hour finds out when.
+                if (
+                    self.stream_enabled is False
+                    or time.monotonic() < self._stream_after
+                ):
+                    # Nothing to connect to until the owner flips the toggle,
+                    # or the broker turned every login down; status carries on
+                    # hourly meanwhile, and that is what this wait paces.
                     await self._pause(STATUS_INTERVAL)
-                    self.stream_enabled = None
+                    if self.stream_enabled is False:
+                        self.stream_enabled = None
                     continue
                 lasted = await self._async_stream_once()
                 delay = (
@@ -232,6 +244,16 @@ class DataHubLink:
                     "Data Hub asked us to slow down for %.0fs", err.retry_after
                 )
                 delay = max(err.retry_after, RECONNECT_FLOOR)
+            except MqttRejected as err:
+                self.stats["last_error"] = str(err)
+                self._stream_after = time.monotonic() + REJECTED_RETRY
+                _LOGGER.warning(
+                    "Data Hub stream turned down every way of logging in (%s); "
+                    "trying again in %.0f hours. Status still updates hourly",
+                    err,
+                    REJECTED_RETRY / 3600,
+                )
+                continue
             except (DataHubError, MqttError) as err:
                 self.stats["last_error"] = str(err)
                 delay = min(delay * 2, RECONNECT_CEILING)

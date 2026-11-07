@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from typing import Any
 
 import pytest
@@ -350,7 +351,7 @@ class TestTheLoop:
     ) -> None:
         # Bad credentials are bad on both brokers; trying the second host would
         # only add to the refusals JLR see.
-        link, _ = bare_link(hass, linked, 1)
+        link, pause = bare_link(hass, linked, 1)
         broker.sessions += [([], MqttRefused(5))] + [([], MqttDropped("login"))] * 4
         await run(link)
         seen = [
@@ -365,6 +366,10 @@ class TestTheLoop:
             (443, "dsas-0123456789ab", False),
         ]
         assert "443" in link.stats["last_rejection"]
+        # Then the stream is left for hours, not minutes: the next wait is
+        # the hourly status, with the stream not due again until much later.
+        assert pause.waits == [datahub_link.STATUS_INTERVAL]
+        assert link._stream_after - time.monotonic() > 5 * 3600
         # The 443 attempt asks for "mqtt" in the handshake on a context of its
         # own; the shared one every other connection uses is left alone.
         assert broker.calls[-1]["ssl_context"] is not broker.calls[0]["ssl_context"]

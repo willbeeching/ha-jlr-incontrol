@@ -51,7 +51,8 @@ client at data.jlr.com.
 - **Status**: one REST read per car when the link starts, then hourly.
 - **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
   the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
-  least 30 seconds, and backs off to 15 minutes when connections keep failing.
+  least 30 seconds, and backs off to 15 minutes when connections keep failing. If the broker
+  turns every way of logging in down, it waits six hours before asking again.
 
 ## What JLR's docs get wrong
 
@@ -79,6 +80,9 @@ Also measured:
   Location keeps coming from the owner portal.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
+- With it switched on, the broker in the docs accepts the connection and then hangs up on every
+  login tried, and the broker the portal names does not resolve. As of 1.9.0-beta.3 the stream has
+  not been seen to connect for an owner account; the link reads status hourly meanwhile.
 
 ## If it is not working
 
@@ -89,7 +93,8 @@ Also measured:
   means exactly this. If it is on, diagnostics show `last_rejection`: which way of logging in was
   tried last and where the broker hung up (before the login was accepted, or before the
   subscription was confirmed). Until one works the link tries five, once each: the username as
-  issued and in capitals, each with its own client id and as the client id, then port 443.
+  issued and in capitals, each with its own client id and as the client id, then port 443. If all
+  five are turned down it leaves the stream for six hours before trying again.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
   or consent withdrawn. Link it again from the options; a new certificate is made each time.
 - Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the
