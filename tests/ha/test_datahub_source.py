@@ -19,6 +19,7 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 from doubles import KEPT, Doubles, FakeDataHub  # noqa: E402
 from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
@@ -453,3 +454,153 @@ class TestAnEntryOnTheDataHubAlone:
         await hass.async_block_till_done()
         assert hub_only.runtime_data.data["vehicles"] == {}
         assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+
+@pytest.fixture
+def sign_in(monkeypatch: pytest.MonkeyPatch) -> type:
+    from doubles import FakeSignIn
+
+    from custom_components.jlr_incontrol import config_flow
+
+    monkeypatch.setattr(FakeSignIn, "begin_error", None)
+    monkeypatch.setattr(FakeSignIn, "complete_error", None)
+    monkeypatch.setattr(config_flow, "JlrLogin", FakeSignIn)
+    return FakeSignIn
+
+
+async def open_location(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    assert menu["menu_options"] == ["settings", "datahub", "location"]
+    return await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "location"}
+    )
+
+
+class TestLocationFromAnInControlSignIn:
+    async def test_it_keeps_the_portal_session_and_nothing_else(
+        self,
+        hass: HomeAssistant,
+        hub_only: MockConfigEntry,
+        hub: Doubles,
+        sign_in: type,
+    ) -> None:
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        result = await open_location(hass, hub_only)
+        assert result["step_id"] == "location"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"username": "someone@example.com", "password": "pw"}
+        )
+        assert result["step_id"] == "location_code"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"code": " 123456 "}
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        assert hub_only.data["sso_cookies"] == {
+            "iPlanetDirectoryPro": "a-forgerock-session"
+        }
+        assert hub_only.data["username"] == "someone@example.com"
+        # Not the password, and not the old API's token: status stays on the
+        # Data Hub and nothing reaches the old API.
+        assert "password" not in hub_only.data
+        assert "refresh_token" not in hub_only.data
+        coordinator = hub_only.runtime_data
+        assert not coordinator.has_incontrol
+        assert coordinator.status_source == "datahub"
+        assert coordinator.portal.configured
+        assert hub.client.calls == []
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_a_refused_password_is_said_on_the_form(
+        self,
+        hass: HomeAssistant,
+        hub_only: MockConfigEntry,
+        hub: Doubles,
+        sign_in: type,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from custom_components.jlr_incontrol.auth import (
+            JlrInvalidCode,
+            JlrLoginError,
+        )
+
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        for error, code in (
+            (JlrInvalidCode("no"), "invalid_auth"),
+            (JlrLoginError("password rejected"), "invalid_auth"),
+            (RuntimeError("bug"), "cannot_connect"),
+        ):
+            monkeypatch.setattr(sign_in, "begin_error", error)
+            result = await open_location(hass, hub_only)
+            result = await hass.config_entries.options.async_configure(
+                result["flow_id"], {"username": "a@b.c", "password": "x"}
+            )
+            assert result["errors"] == {"base": code}
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_a_wrong_code_can_be_typed_again_and_a_dead_journey_ends(
+        self,
+        hass: HomeAssistant,
+        hub_only: MockConfigEntry,
+        hub: Doubles,
+        sign_in: type,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from custom_components.jlr_incontrol.auth import (
+            JlrInvalidCode,
+            JlrSessionExpired,
+        )
+
+        assert await hass.config_entries.async_setup(hub_only.entry_id)
+        await hass.async_block_till_done()
+        result = await open_location(hass, hub_only)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"username": "a@b.c", "password": "x"}
+        )
+        monkeypatch.setattr(sign_in, "complete_error", JlrInvalidCode("no"))
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"code": "1"}
+        )
+        assert result["errors"] == {"base": "invalid_code"}
+        monkeypatch.setattr(sign_in, "complete_error", JlrSessionExpired("gone"))
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], {"code": "2"}
+        )
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "location_failed"
+        assert "sso_cookies" not in hub_only.data
+        assert await hass.config_entries.async_unload(hub_only.entry_id)
+
+    async def test_signing_in_again_from_reconfigure_keeps_it_location_only(
+        self,
+        hass: HomeAssistant,
+        hub_only: MockConfigEntry,
+        hub: Doubles,
+        sign_in: type,
+    ) -> None:
+        # The portal's "sign in again" repair points at Reconfigure.
+        hass.config_entries.async_update_entry(
+            hub_only,
+            data={
+                **hub_only.data,
+                "username": "someone@example.com",
+                "portal_cookies": {"JSESSIONID": "stale"},
+            },
+        )
+        result = await hub_only.start_reconfigure_flow(hass)
+        assert result["step_id"] == "reconfigure"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"password": "pw"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": "123456"}
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reconfigure_successful"
+        assert hub_only.data["sso_cookies"]
+        assert "portal_cookies" not in hub_only.data
+        assert "refresh_token" not in hub_only.data
+        assert hub.client.calls == []

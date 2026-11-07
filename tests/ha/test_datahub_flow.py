@@ -304,9 +304,10 @@ class TestSettingUpOnTheDataHub:
         # And it runs, on the Data Hub alone.
         assert entry.runtime_data.status_source == "datahub"
         assert hub.client.calls == []
-        # Nothing to unlink back to, so unlinking is not offered.
+        # Nothing to unlink back to, so unlinking is not offered; signing in
+        # to InControl for location is.
         menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert menu["menu_options"] == ["settings", "datahub"]
+        assert menu["menu_options"] == ["settings", "datahub", "location"]
         await hass.config_entries.options.async_configure(
             menu["flow_id"], {"next_step_id": "settings"}
         )

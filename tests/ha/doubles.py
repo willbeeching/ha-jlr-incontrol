@@ -323,3 +323,33 @@ class FakeDataHub:
     async def async_poll_device_login(self, login: Any) -> Any:
         self.calls.append("poll")
         return self._answer(self.poll_results)
+
+
+class FakeSignIn:
+    """Stands in for the interactive InControl sign-in (password, then code).
+
+    Set ``begin_error`` or ``complete_error`` on an instance's class to make
+    that step fail; the session cookies are what a real journey hands back.
+    """
+
+    begin_error: Exception | None = None
+    complete_error: Exception | None = None
+
+    def __init__(self, hass: Any, username: str) -> None:
+        self.username = username
+        self.closed = False
+
+    async def async_begin(self, password: str) -> None:
+        if self.begin_error is not None:
+            raise self.begin_error
+
+    async def async_complete(self, code: str) -> dict[str, Any]:
+        if self.complete_error is not None:
+            raise self.complete_error
+        return {"refresh_token": "never-kept"}
+
+    def session_cookies(self) -> dict[str, str]:
+        return {"iPlanetDirectoryPro": "a-forgerock-session"}
+
+    async def async_close(self) -> None:
+        self.closed = True

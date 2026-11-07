@@ -80,7 +80,8 @@
         "menu_options": {
           "settings": "Units and readings",
           "datahub": "Link the JLR Data Hub (beta)",
-          "datahub_remove": "Unlink the JLR Data Hub"
+          "datahub_remove": "Unlink the JLR Data Hub",
+          "location": "InControl sign-in for location"
         }
       },
       "settings": {
@@ -107,6 +108,21 @@
       "datahub_remove": {
         "title": "Unlink the JLR Data Hub",
         "description": "Home Assistant forgets the link and its key. The client you created at data.jlr.com stays until you delete it there, which you can now do."
+      },
+      "location": {
+        "title": "Sign in to InControl for location",
+        "description": "The Data Hub does not give location yet. JLR's owner portal does, and needs your InControl sign-in. It is used for location and your cars' names only; status keeps coming from the Data Hub, and your password is not kept.",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "location_code": {
+        "title": "Enter your verification code",
+        "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.\n\nThe code expires quickly, so enter it as soon as it arrives — if the sign-in session times out you'll be asked for your password again.",
+        "data": {
+          "code": "Verification code"
+        }
       }
     },
     "progress": {
@@ -114,13 +130,18 @@
     },
     "error": {
       "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown on this page. If you opened this step more than once, the certificate changed: paste the current one into the client again, or create a new client with it.",
-      "cannot_connect": "Could not reach JLR. Try again in a moment."
+      "cannot_connect": "Could not reach the Jaguar Land Rover servers.",
+      "invalid_auth": "Invalid email or password.",
+      "invalid_code": "That verification code was not accepted. Check the email and try again.",
+      "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details."
     },
     "abort": {
       "datahub_denied": "The link was declined on the JLR sign-in page.",
       "datahub_expired": "The code expired before it was approved. Open the options and choose **Link the JLR Data Hub** again to get a new one; the certificate will be new too, so paste it into the client again.",
       "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
-      "unknown": "The link could not be completed."
+      "unknown": "The link could not be completed.",
+      "location_failed": "The InControl sign-in did not complete. Try again from the options; status from the Data Hub is unaffected.",
+      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit."
     }
   },
   "selector": {

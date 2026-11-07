@@ -21,6 +21,7 @@ except ImportError:
 from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
+    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlowWithReload,
@@ -39,6 +40,8 @@ from .const import (
     CONF_DATAHUB,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
+    CONF_PORTAL_COOKIES,
+    CONF_PORTAL_MINTED,
     CONF_REFRESH_TOKEN,
     CONF_SSO_COOKIES,
     CONF_USER_ID,
@@ -350,6 +353,23 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         # names — authenticates against that session, and nothing headless can
         # mint another one.
         sso_cookies = self._login.session_cookies() if self._login else {}
+        location_only = self._location_only_entry()
+        if location_only is not None:
+            # An entry on the Data Hub alone signing in again for location:
+            # keep it that way. No old-API tokens, no check against that API.
+            await self._async_discard_login()
+            return self.async_update_reload_and_abort(
+                location_only,
+                data={
+                    **{
+                        key: value
+                        for key, value in location_only.data.items()
+                        if key not in (CONF_PORTAL_COOKIES, CONF_PORTAL_MINTED)
+                    },
+                    CONF_USERNAME: self._username,
+                    CONF_SSO_COOKIES: sso_cookies,
+                },
+            )
         # Reauth and reconfigure both sign an existing entry in again; only a
         # brand-new setup creates one. Updating in place matters — deleting and
         # re-adding would take every entity id, and with them every automation
@@ -402,6 +422,20 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(client.user_id or self._username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title=self._username, data=data)
+
+    def _location_only_entry(self) -> ConfigEntry | None:
+        """The entry being signed in again, if it is on the Data Hub alone."""
+        if self.source not in (SOURCE_REAUTH, SOURCE_RECONFIGURE):
+            return None
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        if (
+            entry is None
+            or not entry.data.get(CONF_DATAHUB)
+            or entry.data.get(CONF_REFRESH_TOKEN)
+            or entry.data.get(CONF_PASSWORD)
+        ):
+            return None
+        return entry
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -594,6 +628,8 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
 
     def __init__(self) -> None:
         self._linker = DataHubLinker()
+        self._signin: JlrLogin | None = None
+        self._signin_username = ""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -608,6 +644,13 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
             or self.config_entry.data.get(CONF_PASSWORD)
         ):
             menu.append("datahub_remove")
+        if self.config_entry.data.get(CONF_DATAHUB) and not (
+            self.config_entry.data.get(CONF_REFRESH_TOKEN)
+            or self.config_entry.data.get(CONF_PASSWORD)
+        ):
+            # Set up on the Data Hub alone, which gives no location. The owner
+            # portal does, and needs an InControl sign-in for it.
+            menu.append("location")
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     async def async_step_settings(
@@ -681,6 +724,92 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Say why the link was not made."""
         return self.async_abort(reason=self._linker.error)
+
+    async def async_step_location(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Sign in to InControl for the owner portal, and location, only.
+
+        The password is used for this sign-in and not kept. What is kept is
+        the portal's session, which is all location needs; nothing here
+        touches the telemetry socket or the old vehicle API.
+        """
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            await self._async_close_signin()
+            username = user_input[CONF_USERNAME]
+            login = JlrLogin(self.hass, username)
+            try:
+                await login.async_begin(user_input[CONF_PASSWORD])
+            except JlrInvalidCode:
+                errors["base"] = "invalid_auth"
+            except JlrLoginError as err:
+                errors["base"] = _login_error_code(err)
+            except Exception:  # noqa: BLE001 - surface as a connection error
+                _LOGGER.exception("Unexpected error during JLR sign-in")
+                errors["base"] = "cannot_connect"
+            if errors:
+                await login.async_close()
+            else:
+                self._signin = login
+                self._signin_username = username
+                return await self.async_step_location_code()
+        schema = self.add_suggested_values_to_schema(
+            STEP_USER_SCHEMA,
+            {CONF_USERNAME: self.config_entry.data.get(CONF_USERNAME, "")},
+        )
+        return self.async_show_form(
+            step_id="location", data_schema=schema, errors=errors
+        )
+
+    async def async_step_location_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Take the emailed code, then keep the portal session."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if self._signin is None:
+                return self.async_abort(reason="session_expired")
+            try:
+                await self._signin.async_complete(user_input["code"].strip())
+            except JlrInvalidCode:
+                errors["base"] = "invalid_code"
+            except Exception as err:  # noqa: BLE001 - the journey is over either way
+                _LOGGER.error("JLR sign-in for location failed: %s", err)
+                await self._async_close_signin()
+                return self.async_abort(reason="location_failed")
+            else:
+                cookies = self._signin.session_cookies()
+                await self._async_close_signin()
+                data = {
+                    key: value
+                    for key, value in self.config_entry.data.items()
+                    # A portal session from an earlier sign-in belongs to the
+                    # old identity session; let the new one mint its own.
+                    if key not in (CONF_PORTAL_COOKIES, CONF_PORTAL_MINTED)
+                }
+                data[CONF_USERNAME] = self._signin_username
+                data[CONF_SSO_COOKIES] = cookies
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry, data=data
+                )
+                self.hass.config_entries.async_schedule_reload(
+                    self.config_entry.entry_id
+                )
+                return self.async_create_entry(
+                    title="", data=dict(self.config_entry.options)
+                )
+        return self.async_show_form(
+            step_id="location_code",
+            data_schema=STEP_CODE_SCHEMA,
+            errors=errors,
+            description_placeholders={"email": self._signin_username},
+        )
+
+    async def _async_close_signin(self) -> None:
+        if self._signin is not None:
+            await self._signin.async_close()
+            self._signin = None
 
     async def async_step_datahub_remove(
         self, user_input: dict[str, Any] | None = None
