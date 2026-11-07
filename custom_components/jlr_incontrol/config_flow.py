@@ -89,6 +89,12 @@ STEP_REAUTH_SCHEMA = vol.Schema({vol.Required(CONF_PASSWORD): str})
 
 STEP_CODE_SCHEMA = vol.Schema({vol.Required("code"): str})
 
+# Passed in rather than written into strings.json: hassfest rejects a URL in
+# a translation string, and failed the 1.9.0-beta.4 build on exactly this.
+GUIDE_URL = (
+    "https://github.com/willbeeching/ha-jlr-incontrol/blob/master/docs/DATA_HUB.md"
+)
+
 STEP_DATAHUB_SCHEMA = vol.Schema({vol.Required(DATAHUB_CLIENT_ID): str})
 
 
@@ -493,6 +499,7 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
             errors=errors,
             description_placeholders={
                 "portal": PORTAL_URL,
+                "guide": GUIDE_URL,
                 "certificate": self._credentials.certificate.strip(),
             },
         )

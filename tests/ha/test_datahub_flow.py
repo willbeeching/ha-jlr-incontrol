@@ -112,6 +112,7 @@ class TestLinking:
         placeholders = result["description_placeholders"]
         assert placeholders["certificate"] == credentials().certificate.strip()
         assert placeholders["portal"] == "https://data.jlr.com"
+        assert placeholders["guide"].endswith("/docs/DATA_HUB.md")
         assert "PRIVATE KEY" not in str(result)
 
     async def test_approving_it_on_the_phone_links_it(

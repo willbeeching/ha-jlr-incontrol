@@ -29,6 +29,15 @@ class TestTheFilesAgree:
         assert load("strings.json") == load("translations/en.json")
 
 
+class TestNoLinksInStrings:
+    def test_urls_arrive_as_placeholders(self) -> None:
+        # Hassfest rejects a URL written into a translation string, and it
+        # runs only in CI: the 1.9.0-beta.4 build failed there on a link to
+        # the setup guide that every local check had passed.
+        text = json.dumps(load("strings.json"))
+        assert re.findall(r"https?://", text) == []
+
+
 class TestIcons:
     def test_every_icon_is_an_mdi_name(self) -> None:
         for platform in load("icons.json")["entity"].values():
