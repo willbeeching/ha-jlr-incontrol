@@ -132,6 +132,32 @@ Re-deriving these has cost days. They are documented at length in
   and resubscribe — and the resubscribe is what makes JLR redeliver its
   retained snapshot.
 
+## The JLR Data Hub
+
+JLR's documented owner API (developer.jlr.com), and where the integration is
+heading: the reverse-engineered InControl connection is deprecated and kept
+only for owners JLR do not offer the Data Hub to. `docs/DATA_HUB.md` has the
+user-facing detail; what matters when changing the code:
+
+- `datahub.py` is the client (private_key_jwt sign-in, DPoP on REST),
+  `stream.py` a minimal MQTT client, `datahub_link.py` the running link, and
+  `vss.py` maps Data Hub signal names onto the socket's status keys so the
+  entities do not change. Laid side by side on real cars every value matched;
+  keep it a renaming.
+- A linked entry takes cars, details and status from the Data Hub and never
+  calls the old vehicle API. An entry set up on the Data Hub alone has no
+  InControl tokens at all; an optional InControl sign-in on it keeps only the
+  portal's session cookies, for location. Do not let either path start
+  writing InControl tokens into such an entry.
+- Measured, not documented: access tokens last 5 minutes, the refresh token
+  is offline with no expiry, the broker in the portal does not resolve, and
+  the broker in the docs accepts only the client id as both MQTT username and
+  client id, and only exact `/status` topics (no wildcards). Location and
+  journeys are refused to owners.
+- Every key, token, client id and account id stays in the config entry;
+  `redact.py` covers them. Never put a real owner's readings in tests or
+  comments — use made-up values of the same shape.
+
 ## Code conventions
 
 - Comments explain **why**, usually by naming the thing that went wrong. If a

@@ -4,22 +4,25 @@ JLR now publish an official API for owners, the **JLR Data Hub**, under the EU D
 documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started), and it is
 available in the UK as well as the EU.
 
-From 1.9.0 the integration can link to it, and once linked, **vehicle status comes from the Data
-Hub** instead of the InControl telemetry socket: doors, locks, windows, tyres, fuel, mileage,
+From 1.9.0 the integration can be set up on it from **Add integration**, with no InControl email or
+password, and an existing InControl entry can be linked to it from the options. Either way,
+**vehicle status comes from the Data Hub** instead of the InControl telemetry socket: doors, locks, windows, tyres, fuel, mileage,
 warnings, the 12 V battery and the rest. The entities are the same ones, with the same ids and
 history; only where their values come from changes. Linking is optional, and an install that does
 not link carries on exactly as before.
 
-- **Location** still comes from the owner portal. JLR refuse location to owner accounts on the
-  Data Hub for now; the link asks hourly, and uses it from the day they allow it.
-- **The InControl sign-in** is still needed for the owner portal (location and vehicle names) and
-  the vehicle list.
+- **The cars and their details** (brand, model, year, fuel type) come from the Data Hub too: the
+  cars are the ones selected on the client at data.jlr.com. The older vehicle list is not used.
+- **Location** is the one thing the Data Hub does not give owners yet; the link asks hourly, and
+  uses it from the day JLR allow it. Until then it comes from JLR's owner portal, which needs an
+  InControl sign-in: on an entry set up on the Data Hub, choose **InControl sign-in for location**
+  in the options. Only the portal's session is kept, not your password, and it is used for location
+  and car names only.
 - **If the link stops working** (the client deleted, its certificate replaced, consent
-  withdrawn), a repair says so and status falls back to the telemetry socket by itself, so the
-  sensors keep working while you link it again.
-- **All or nothing**: the Data Hub only takes over when the client at data.jlr.com covers every
-  car on the account. If one is missing, status stays on the socket for all of them, and the log
-  says why.
+  withdrawn), a repair says so. An entry that also has an InControl sign-in falls back to the
+  telemetry socket by itself, so the sensors keep working while you link it again; one set up on
+  the Data Hub alone keeps its last readings until you link it again from the options.
+- **Select every car** on the client at data.jlr.com. A car left off it is not on the integration.
 
 Linking also adds two entities to each car, and a `datahub` section in diagnostics:
 

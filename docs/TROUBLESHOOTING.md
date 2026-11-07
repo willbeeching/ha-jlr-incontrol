@@ -132,6 +132,18 @@ for the integration *before* the restart that will do the removing.
 Three are off by default — 12V battery charge, EVCC status and the charge-now override. Switch
 them on in the entity's settings. See [ENTITIES.md](ENTITIES.md) for why each one is off.
 
+## "A repair says I use the older InControl connection"
+
+That entry reads your cars through the connection the InControl app uses, which JLR do not
+document and have changed without notice before. If you are in the UK or the EU, link the JLR Data
+Hub from the integration's options; the entities stay the same. If JLR do not offer the Data Hub
+where you are, ignore the repair.
+
+## "I set up on the Data Hub and there is no location"
+
+JLR do not give location through the Data Hub to owners yet. Choose **InControl sign-in for
+location** in the integration's options; the car's location then comes from JLR's owner portal.
+
 ## "The Data Hub link will not finish, or stopped working"
 
 See [DATA_HUB.md](DATA_HUB.md#if-it-is-not-working). The two usual causes are the stream not

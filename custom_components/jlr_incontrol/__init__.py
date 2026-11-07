@@ -10,7 +10,13 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, ISSUE_DATAHUB_SIGNED_OUT, ISSUE_PORTAL_SIGNED_OUT, PLATFORMS
+from .const import (
+    DOMAIN,
+    ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_INCONTROL_DEPRECATED,
+    ISSUE_PORTAL_SIGNED_OUT,
+    PLATFORMS,
+)
 from .coordinator import JlrCoordinator
 
 # The coordinator lives on the entry rather than in hass.data: typed, tied
@@ -41,7 +47,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     # no-op then.
     if coordinator.datahub:
         coordinator.datahub.async_start()
+    _async_note_deprecation(hass, entry)
     return True
+
+
+def _async_note_deprecation(hass: HomeAssistant, entry: JlrConfigEntry) -> None:
+    """Suggest the Data Hub to an entry still on the old connection alone."""
+    issue_id = f"{ISSUE_INCONTROL_DEPRECATED}_{entry.entry_id}"
+    if entry.runtime_data.datahub is None:
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_INCONTROL_DEPRECATED,
+            translation_placeholders={"title": entry.title},
+        )
+    else:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 # Platforms that existed only to send remote commands. JLR gate those behind app
@@ -87,7 +111,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None
     would have cleared it no longer exists, so the warning stays in Repairs
     pointing at an account the user has already removed.
     """
-    for issue in (ISSUE_PORTAL_SIGNED_OUT, ISSUE_DATAHUB_SIGNED_OUT):
+    for issue in (
+        ISSUE_PORTAL_SIGNED_OUT,
+        ISSUE_DATAHUB_SIGNED_OUT,
+        ISSUE_INCONTROL_DEPRECATED,
+    ):
         ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
 
 

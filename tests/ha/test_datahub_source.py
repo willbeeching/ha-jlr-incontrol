@@ -604,3 +604,36 @@ class TestLocationFromAnInControlSignIn:
         assert "portal_cookies" not in hub_only.data
         assert "refresh_token" not in hub_only.data
         assert hub.client.calls == []
+
+
+class TestTheOldConnectionIsDeprecated:
+    async def test_an_entry_on_it_alone_is_told_about_the_data_hub(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        issue = ir.async_get(hass).async_get_issue(
+            "jlr_incontrol", f"incontrol_deprecated_{entry.entry_id}"
+        )
+        assert issue is not None
+        assert issue.translation_key == "incontrol_deprecated"
+        # Removing the entry takes it with it.
+        await hass.config_entries.async_remove(entry.entry_id)
+        assert (
+            ir.async_get(hass).async_get_issue(
+                "jlr_incontrol", f"incontrol_deprecated_{entry.entry_id}"
+            )
+            is None
+        )
+
+    async def test_linking_the_data_hub_clears_it(
+        self, hass: HomeAssistant, entry: MockConfigEntry, on_datahub: Doubles
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        assert (
+            ir.async_get(hass).async_get_issue(
+                "jlr_incontrol", f"incontrol_deprecated_{entry.entry_id}"
+            )
+            is None
+        )

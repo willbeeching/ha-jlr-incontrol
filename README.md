@@ -8,7 +8,11 @@
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20AI%20tokens-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/willbeeching)
 
 Get your Jaguar or Land Rover into Home Assistant. Fuel level, doors, windows, tyre pressures and
-where you parked it. All you need is the email and password you use for the InControl app.
+where you parked it.
+
+In the UK and the EU it uses the **JLR Data Hub**, JLR's official API for owners (beta, from
+1.9.0). Elsewhere it falls back on the older connection the InControl app uses, which needs your
+InControl email and password.
 
 There's no third-party cloud in the middle and nothing to plug into the car. The integration talks
 to JLR's own backend, so it runs anywhere Home Assistant does.
@@ -109,20 +113,33 @@ folder and restart.
 
 ## Setup
 
-1. Go to **Settings → Devices & Services → Add Integration** and search for
-   **Jaguar Land Rover InControl**.
-2. Enter your InControl email and password.
-3. Enter the verification code JLR emails you. It expires quickly, so have your inbox open.
+Go to **Settings → Devices & Services → Add Integration** and search for **Jaguar Land Rover
+InControl**. It asks how to connect:
 
-Each vehicle appears as a device with its own sensors.
+- **JLR Data Hub (recommended)**, for the UK and the EU. No InControl password: you create a
+  client at [data.jlr.com](https://data.jlr.com), paste the certificate Home Assistant shows, and
+  approve the link on your phone. The steps are in [docs/DATA_HUB.md](docs/DATA_HUB.md). JLR do not
+  offer location through the Data Hub yet, so add **InControl sign-in for location** from the
+  options afterwards if you want the car's location.
+- **InControl sign-in (older)**, for owners JLR do not offer the Data Hub to. Enter your InControl
+  email and password, then the verification code JLR email you (it expires quickly, so have your
+  inbox open). This connection is reverse-engineered from the app and deprecated; an entry using
+  it shows a repair suggesting the Data Hub, which you can ignore if the Data Hub is not offered
+  where you are.
+
+Each vehicle appears as a device with its own sensors. An existing InControl entry can move to the
+Data Hub without losing anything: link it from the options and the same entities switch source.
 
 ### Options
 
 **Settings → Devices & Services → Jaguar Land Rover InControl → Configure** opens a menu:
 
 - **Units and readings**: the settings below.
-- **Link the JLR Data Hub (beta)**: connects JLR's official owner API alongside everything else.
-  See [docs/DATA_HUB.md](docs/DATA_HUB.md).
+- **Link the JLR Data Hub (beta)**: moves the entry onto JLR's official owner API. See
+  [docs/DATA_HUB.md](docs/DATA_HUB.md).
+- **InControl sign-in for location**: on an entry set up on the Data Hub, signs in to JLR's owner
+  portal for location and car names only.
+- **Unlink the JLR Data Hub**: on an entry that also has an InControl sign-in, goes back to it.
 
 The two unit settings are purely about display; neither changes what is fetched or how often.
 
