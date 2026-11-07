@@ -177,7 +177,7 @@ def to_status(signals: Mapping[str, Any], reported: str | None) -> dict[str, str
     metres = _number(signals.get("Vehicle.TraveledDistance"))
     if metres is not None:
         # The socket carried metres under both names, and whole miles
-        # truncated: 58,328,000 m arrived as 36243, not 36244.
+        # truncated: 12,345,000 m is 7,670.86 miles, and arrived as 7670.
         status["ODOMETER"] = status["ODOMETER_METER"] = str(int(metres))
         status["ODOMETER_MILES"] = str(int(metres // METRES_PER_MILE))
 

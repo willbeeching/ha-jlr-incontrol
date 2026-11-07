@@ -91,10 +91,10 @@ class TestRenaming:
 
 class TestDerived:
     def test_the_odometer_in_metres_and_whole_miles(self) -> None:
-        # The socket truncated: 58,328,000 m arrived as 36243 miles, not 36244.
-        status = to_status({"Vehicle.TraveledDistance": 58328000}, None)
-        assert status["ODOMETER"] == status["ODOMETER_METER"] == "58328000"
-        assert status["ODOMETER_MILES"] == "36243"
+        # The socket truncated rather than rounded: 12,345,000 m is 7,670.86 miles.
+        status = to_status({"Vehicle.TraveledDistance": 12345000}, None)
+        assert status["ODOMETER"] == status["ODOMETER_METER"] == "12345000"
+        assert status["ODOMETER_MILES"] == "7670"
 
     def test_an_unreadable_odometer_is_left_out(self) -> None:
         for value in ("not a number", True, None):
