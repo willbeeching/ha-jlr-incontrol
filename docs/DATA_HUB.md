@@ -63,7 +63,8 @@ Measured on a UK account in November 2026. The integration follows what was meas
 | Refresh token | 14 days | An "Offline" token with no expiry |
 | `Vehicle.TraveledDistance` | km | metres |
 | Rate limits | Headers on every response | No rate-limit headers on any response |
-| Stream broker | `stream-data.jlr-vcdp.com` | The portal shows `stream-data.b2b-prod.jlr-vcdp.com`. Both are tried. |
+| Stream broker | `stream-data.jlr-vcdp.com` | The portal shows `stream-data.b2b-prod.jlr-vcdp.com`, which does not resolve. The docs' host is used, and the portal's tried if it fails. |
+| Stream username | from the portal | The portal shows it in capitals, but shows that whole panel in capitals. The client ID as issued is tried first. |
 
 Also measured:
 
@@ -84,8 +85,11 @@ Also measured:
 - **Last report (Data Hub) stays unknown**: the car has not been allowed status, or the link has
   not read it yet. Download diagnostics and look at `datahub`.
 - **Data Hub stream stays off**: check **Toggle your stream** is on at data.jlr.com. With it off
-  the link reads status hourly and asks again each hour. `stream_enabled: false` in diagnostics
-  means exactly this.
+  the link reads status hourly and asks again each hour; `stream_enabled: false` in diagnostics
+  means exactly this. If it is on, diagnostics show `last_rejection`: which way of logging in was
+  tried last and where the broker hung up (before the login was accepted, or before the
+  subscription was confirmed). Until one works the link tries five, once each: the username as
+  issued and in capitals, each with its own client id and as the client id, then port 443.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
   or consent withdrawn. Link it again from the options; a new certificate is made each time.
 - Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the

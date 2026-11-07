@@ -36,7 +36,11 @@ from custom_components.jlr_incontrol.datahub_link import DataHubLink  # noqa: E4
 from custom_components.jlr_incontrol.diagnostics import (  # noqa: E402
     async_get_config_entry_diagnostics,
 )
-from custom_components.jlr_incontrol.stream import MqttError, MqttRefused  # noqa: E402
+from custom_components.jlr_incontrol.stream import (  # noqa: E402
+    MqttDropped,
+    MqttError,
+    MqttRefused,
+)
 
 SETTINGS = {
     "client_id": "dsas-0123456789ab",
@@ -341,33 +345,45 @@ class TestTheLoop:
         assert datahub_link.STATUS_INTERVAL in pause.waits
         assert broker.calls == []
 
-    async def test_a_refused_connect_is_not_retried_on_the_other_broker(
+    async def test_a_rejected_login_tries_each_way_once_on_one_broker(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
     ) -> None:
-        # Bad credentials are bad on both; trying the second host would only
-        # add to the refusals JLR see. The capitalised username is tried once.
+        # Bad credentials are bad on both brokers; trying the second host would
+        # only add to the refusals JLR see.
         link, _ = bare_link(hass, linked, 1)
-        broker.sessions += [([], MqttRefused(5)), ([], MqttRefused(5))]
+        broker.sessions += [([], MqttRefused(5))] + [([], MqttDropped("login"))] * 4
         await run(link)
-        assert [(c["host"], c["username"]) for c in broker.calls] == [
-            (datahub_link.BROKERS[0], "dsas-0123456789ab"),
-            (datahub_link.BROKERS[0], "DSAS-0123456789AB"),
+        seen = [
+            (c["host"], c["port"], c["username"], c["client_id"]) for c in broker.calls
         ]
-        assert "not authorised" in link.stats["last_error"]
+        assert {host for host, _, _, _ in seen} == {datahub_link.BROKERS[0]}
+        assert [(port, user, cid == user) for _, port, user, cid in seen] == [
+            (8883, "dsas-0123456789ab", False),
+            (8883, "dsas-0123456789ab", True),
+            (8883, "DSAS-0123456789AB", False),
+            (8883, "DSAS-0123456789AB", True),
+            (443, "dsas-0123456789ab", False),
+        ]
+        assert "443" in link.stats["last_rejection"]
+        # The 443 attempt asks for "mqtt" in the handshake on a context of its
+        # own; the shared one every other connection uses is left alone.
+        assert broker.calls[-1]["ssl_context"] is not broker.calls[0]["ssl_context"]
 
-    async def test_the_username_that_worked_is_the_one_kept(
+    async def test_the_login_that_worked_is_the_one_kept(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
     ) -> None:
         link, _ = bare_link(hass, linked, 2)
         broker.sessions += [
-            ([], MqttRefused(4)),
+            ([], MqttDropped("login")),
             ([], "time limit"),
             ([], "time limit"),
         ]
         await run(link)
-        assert link.username == "DSAS-0123456789AB"
-        assert [c["username"] for c in broker.calls][-1] == "DSAS-0123456789AB"
         assert len(broker.calls) == 3
+        last = broker.calls[-1]
+        assert last["client_id"] == last["username"] == "dsas-0123456789ab"
+        diagnostics = link.diagnostics()
+        assert diagnostics["login"] == "username as issued, as client id"
 
     async def test_an_unreachable_broker_falls_back_to_the_other(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker

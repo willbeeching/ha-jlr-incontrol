@@ -47,12 +47,33 @@ class MqttError(Exception):
     """The session ended abnormally."""
 
 
-class MqttRefused(MqttError):
-    """The broker answered CONNECT with a refusal."""
+class MqttRejected(MqttError):
+    """The broker was reached and turned this session down.
+
+    As distinct from not reaching it at all: a different username or client
+    id might be accepted where a different host would not help.
+    """
+
+
+class MqttRefused(MqttRejected):
+    """The broker answered CONNECT with a refusal code."""
 
     def __init__(self, code: int) -> None:
         super().__init__(_REFUSALS.get(code, f"refused ({code})"))
         self.code = code
+
+
+class MqttDropped(MqttRejected):
+    """The broker hung up before confirming a stage.
+
+    How AWS IoT, which carries the Data Hub stream, turns down a login or a
+    subscription its policy does not allow: no refusal code, just a closed
+    connection. Which stage it was is the clue to what it disliked.
+    """
+
+    def __init__(self, stage: str) -> None:
+        super().__init__(f"closed by the broker before {stage}")
+        self.stage = stage
 
 
 def _string(value: str) -> bytes:
@@ -155,6 +176,9 @@ async def run_session(
     # timeout instead could abandon a packet half-consumed — its header byte
     # gone, its body left — and every packet after it misframed.
     reading: asyncio.Future[tuple[int, bytes]] | None = None
+    # What the broker has yet to confirm. A hang-up before it is a rejection;
+    # after it, the normal end of a session.
+    stage = "the login was accepted"
     try:
         writer.write(
             connect_packet(client_id, username, password, max(1, round(keepalive)))
@@ -166,6 +190,7 @@ async def run_session(
         if body[1]:
             raise MqttRefused(body[1])
 
+        stage = "the subscription was confirmed"
         writer.write(subscribe_packet(1, topics))
         await writer.drain()
         awaiting_ping = False
@@ -204,11 +229,14 @@ async def run_session(
                 # would sit connected and silent forever, which looks like a
                 # parked car rather than a fault.
                 if all(code == 0x80 for code in body[2:]):
-                    raise MqttError("subscription refused")
+                    raise MqttRejected("subscription refused")
                 subscribed = True
+                stage = ""
                 if on_subscribed:
                     on_subscribed()
     except asyncio.IncompleteReadError:
+        if stage:
+            raise MqttDropped(stage) from None
         return "closed by broker"
     except (ConnectionError, ssl.SSLError) as err:
         raise MqttError(f"connection lost: {err!r}") from err

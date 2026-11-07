@@ -19,8 +19,10 @@ import pytest
 
 from custom_components.jlr_incontrol import stream
 from custom_components.jlr_incontrol.stream import (
+    MqttDropped,
     MqttError,
     MqttRefused,
+    MqttRejected,
     connect_packet,
     parse_publish,
     run_session,
@@ -284,7 +286,29 @@ class TestASession:
 
         broker = Broker(script)
         async with broker:
-            with pytest.raises(MqttError, match="subscription refused"):
+            with pytest.raises(MqttRejected, match="subscription refused"):
+                await session(broker)
+
+    async def test_a_hang_up_before_connack_is_a_rejected_login(self) -> None:
+        # How AWS IoT turns a login down: no refusal code, just a close.
+        async def script(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            await broker.take(r)
+
+        broker = Broker(script)
+        async with broker:
+            with pytest.raises(MqttDropped, match="login") as raised:
+                await session(broker)
+        assert isinstance(raised.value, MqttRejected)
+
+    async def test_a_hang_up_before_suback_is_a_rejected_subscription(self) -> None:
+        async def script(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            await broker.take(r)
+            w.write(CONNACK_OK)
+            await broker.take(r)
+
+        broker = Broker(script)
+        async with broker:
+            with pytest.raises(MqttDropped, match="subscription"):
                 await session(broker)
 
     async def test_one_filter_refused_of_several_is_not_a_fault(self) -> None:

@@ -25,6 +25,7 @@ import logging
 import random
 import ssl
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -55,16 +56,20 @@ from .datahub import (
     Tokens,
 )
 from .redact import vehicle_label
-from .stream import MqttError, MqttRefused, run_session
+from .stream import MqttError, MqttRejected, run_session
 
 _LOGGER = logging.getLogger(__name__)
 
-# The portal names the first; the developer docs name the second. They are
-# not the same host, and only one may be live for a given account — so the
-# portal's is tried first, as the more specific, and whichever connects is
-# remembered.
-BROKERS = ("stream-data.b2b-prod.jlr-vcdp.com", "stream-data.jlr-vcdp.com")
+# The developer docs name the first; the portal shows the second, which did
+# not resolve in public DNS when this was written (November 2026). Both are
+# kept because the portal is JLR's own word on it and may yet go live;
+# whichever connects is remembered.
+BROKERS = ("stream-data.jlr-vcdp.com", "stream-data.b2b-prod.jlr-vcdp.com")
 BROKER_PORT = 8883
+# AWS IoT, which carries the stream, also takes a username and password on
+# 443 when the TLS handshake asks for the "mqtt" protocol. Tried only after
+# every login on the documented port has been turned down.
+ALPN_PORT = 443
 
 # The broker closes a session at one hour. Leaving at 55 minutes reconnects on
 # our schedule rather than mid-message on theirs.
@@ -79,6 +84,22 @@ HEALTHY_SESSION = 60.0
 # REST status, alongside the stream. The stream carries changes; this is the
 # full snapshot, and the only source while the stream is switched off.
 STATUS_INTERVAL = 60 * 60.0
+
+
+@dataclass(frozen=True)
+class _Login:
+    """One way of presenting ourselves to the broker."""
+
+    username: str
+    own_id: bool
+    label: str
+    port: int = BROKER_PORT
+
+    def client_id(self, entry_id: str, started: float) -> str:
+        """The username itself, or an id of our own unique to this session."""
+        if self.own_id:
+            return self.username
+        return f"ha-{entry_id[:8]}-{int(started)}"
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -124,7 +145,8 @@ class DataHubLink:
         # had it switched on, which is a setting the owner can change.
         self.stream_enabled: bool | None = None
         self.broker: str | None = None
-        self.username: str | None = None
+        self._login: _Login | None = None
+        self._alpn_context: ssl.SSLContext | None = None
         # The newest time the car itself reported, per VIN, from either source.
         self.reports: dict[str, datetime] = {}
         # Latest value and vehicle time per signal, per VIN. Names and times go
@@ -330,16 +352,6 @@ class DataHubLink:
         if not account:
             raise DataHubError("the stream token names no account")
         context: ssl.SSLContext = client_context()
-        client_id = self.client.client_id
-        # The portal shows the username in capitals, but it shows everything
-        # in that panel in capitals, the broker's hostname included. The
-        # client id as issued is tried first; the capitalised form only if
-        # that is refused, and whichever works is kept.
-        names = (
-            (self.username,)
-            if self.username
-            else tuple(dict.fromkeys((client_id, client_id.upper())))
-        )
         hosts = (self.broker,) if self.broker else BROKERS
         # One filter per car, as in JLR's own example, rather than the whole
         # account: the narrowest thing that delivers everything wanted.
@@ -348,26 +360,29 @@ class DataHubLink:
         ]
         last_error: MqttError | None = None
         for host in hosts:
-            for name in names:
+            for login in self._logins():
                 started = time.monotonic()
                 try:
                     reason = await run_session(
                         host=host,
-                        port=BROKER_PORT,
-                        ssl_context=context,
-                        client_id=f"ha-{self.entry.entry_id[:8]}-{int(started)}",
-                        username=name,
+                        port=login.port,
+                        ssl_context=(
+                            context if login.port == BROKER_PORT else await self._alpn()
+                        ),
+                        client_id=login.client_id(self.entry.entry_id, started),
+                        username=login.username,
                         password=stream.access_token,
                         topics=topics,
                         on_message=self._on_message,
-                        on_subscribed=partial(self._on_subscribed, host, name),
+                        on_subscribed=partial(self._on_subscribed, host, login),
                         max_seconds=SESSION_SECONDS,
                     )
-                except MqttRefused as err:
-                    # The broker is there and said no to these credentials:
-                    # the next name, not the next host.
+                except MqttRejected as err:
+                    # The broker is there and said no: the next way of
+                    # logging in, not the next host.
                     last_error = err
-                    _LOGGER.debug("Data Hub broker %s refused: %s", host, err)
+                    self.stats["last_rejection"] = f"{login.label}: {err}"
+                    _LOGGER.debug("Data Hub broker %s, %s: %s", host, login.label, err)
                     continue
                 except MqttError as err:
                     last_error = err
@@ -384,18 +399,65 @@ class DataHubLink:
                     "Data Hub stream session ended after %.0fs: %s", lasted, reason
                 )
                 return lasted
-            if isinstance(last_error, MqttRefused):
-                # Refused on a broker that answered: the other host would only
-                # be one more refusal for JLR to count.
+            if isinstance(last_error, MqttRejected):
+                # Turned down by a broker that answered: the other host would
+                # only be more refusals for JLR to count.
                 break
         assert last_error is not None
         raise last_error
 
-    def _on_subscribed(self, host: str, username: str) -> None:
-        if self.broker != host:
-            _LOGGER.info("Data Hub stream connected (%s)", host)
+    def _logins(self) -> list[_Login]:
+        """The ways of logging in to try, best guess first.
+
+        The docs give a username and say to keep whatever client id a tool
+        generates. The portal shows the username in capitals — but it shows
+        that whole panel in capitals, the broker's hostname included — and AWS
+        IoT policies commonly tie the client id to the identity. So four
+        combinations, then the other port AWS IoT accepts a password on, each
+        tried once until one works, after which only that one is used.
+        """
+        if self._login is not None:
+            return [self._login]
+        issued = self.client.client_id
+        logins = [
+            _Login(issued, own_id=False, label="username as issued"),
+            _Login(issued, own_id=True, label="username as issued, as client id"),
+        ]
+        if issued.upper() != issued:
+            logins += [
+                _Login(issued.upper(), own_id=False, label="username in capitals"),
+                _Login(
+                    issued.upper(),
+                    own_id=True,
+                    label="username in capitals, as client id",
+                ),
+            ]
+        logins.append(
+            _Login(issued, own_id=False, label="port 443 with ALPN", port=ALPN_PORT)
+        )
+        return logins
+
+    async def _alpn(self) -> ssl.SSLContext:
+        """A context that asks for "mqtt" in the handshake, made once.
+
+        Its own, not the shared client context: setting ALPN on that one
+        would change every other TLS connection Home Assistant makes.
+        """
+        if self._alpn_context is None:
+
+            def build() -> ssl.SSLContext:
+                context = ssl.create_default_context()
+                context.set_alpn_protocols(["mqtt"])
+                return context
+
+            self._alpn_context = await self.hass.async_add_executor_job(build)
+        return self._alpn_context
+
+    def _on_subscribed(self, host: str, login: _Login) -> None:
+        if self.broker != host or self._login != login:
+            _LOGGER.info("Data Hub stream connected (%s, %s)", host, login.label)
         self.broker = host
-        self.username = username
+        self._login = login
         self.stats["sessions"] += 1
         self._set_connected(True)
 
@@ -440,6 +502,7 @@ class DataHubLink:
             "signed_out": self.signed_out,
             "stream_enabled": self.stream_enabled,
             "broker": self.broker,
+            "login": self._login.label if self._login else None,
             "stats": dict(self.stats),
             "vehicles": {
                 vehicle_label(vin): {
