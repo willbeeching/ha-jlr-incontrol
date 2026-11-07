@@ -481,6 +481,13 @@ class TestTheApi:
             await client.async_status(VIN, "t")
         assert VIN not in str(raised.value)
 
+    async def test_location_asks_the_location_path(
+        self, credentials: datahub.Credentials
+    ) -> None:
+        client, session = make(credentials, FakeResponse(200, {"Vehicle": {}}))
+        assert await client.async_location(VIN, "t") == {"Vehicle": {}}
+        assert session.calls[0][1].endswith(f"/v1/vehicles/{VIN}/location")
+
     async def test_a_network_failure_is_an_error(
         self, credentials: datahub.Credentials
     ) -> None:

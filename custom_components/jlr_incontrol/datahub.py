@@ -442,3 +442,7 @@ class DataHubClient:
     async def async_status(self, vin: str, access_token: str) -> dict[str, Any]:
         """The latest status snapshot for one vehicle."""
         return await self.async_get(f"/v1/vehicles/{vin}/status", access_token)
+
+    async def async_location(self, vin: str, access_token: str) -> dict[str, Any]:
+        """The current location for one vehicle, where JLR allow it."""
+        return await self.async_get(f"/v1/vehicles/{vin}/location", access_token)

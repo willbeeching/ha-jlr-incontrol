@@ -143,8 +143,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # JLR's documented Data Hub, when the owner has linked it. Optional and
         # alongside everything else: nothing here depends on it.
         self.datahub: DataHubLink | None = (
-            DataHubLink(hass, entry) if entry.data.get(CONF_DATAHUB) else None
+            DataHubLink(
+                hass,
+                entry,
+                on_status=self._handle_datahub_status,
+                on_position=self._handle_datahub_position,
+                on_signed_out=self._datahub_signed_out,
+            )
+            if entry.data.get(CONF_DATAHUB)
+            else None
         )
+        # Where vehicle status comes from: "socket", or "datahub" once setup
+        # has found a link that covers every car on the account.
+        self.status_source = "socket"
         # What the options looked like at setup, so the update listener can tell
         # an options change (reload) from a token rotation (do not reload).
         # Change detection for the last-updated signal: some cars (I-Pace)
@@ -283,6 +294,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """
         self._awaiting = set(self._vehicles)
         self._snapshots_ready.clear()
+        if self._datahub_covers_account():
+            await self._async_start_datahub_status()
+            return
+        if self.datahub is not None:
+            _LOGGER.info(
+                "the Data Hub link does not cover every car on this account, so "
+                "status keeps coming from the telemetry socket"
+            )
         self.telemetry.async_set_vehicles(self._vehicles)
         await self.telemetry.async_start()
         try:
@@ -304,6 +323,100 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
                 FIRST_SNAPSHOT_TIMEOUT,
             )
+
+    def _datahub_covers_account(self) -> bool:
+        """Whether the Data Hub can be the status source for every car.
+
+        All or nothing. A car the owner left out of the client at data.jlr.com
+        would otherwise have no status source at all, and running the socket
+        alongside for one car would bring back exactly the sign-in it needs.
+        """
+        return (
+            self.datahub is not None
+            and bool(self._vehicles)
+            and set(self._vehicles) <= set(self.datahub.vehicles)
+        )
+
+    async def _async_start_datahub_status(self) -> None:
+        """Take status from the Data Hub, waiting for every car's first read.
+
+        The same wait, and for the same reason, as the socket's: entities are
+        created from the status keys a car reports, so a car whose first
+        snapshot lands after setup would get none.
+        """
+        assert self.datahub is not None
+        self.status_source = "datahub"
+        self.datahub.async_start()
+        try:
+            async with asyncio.timeout(FIRST_SNAPSHOT_TIMEOUT):
+                await self._snapshots_ready.wait()
+        except TimeoutError as err:
+            if not self._status:
+                await self.datahub.async_stop()
+                raise ConfigEntryNotReady(
+                    translation_domain=DOMAIN,
+                    translation_key="no_telemetry",
+                    translation_placeholders={"seconds": str(FIRST_SNAPSHOT_TIMEOUT)},
+                ) from err
+            _LOGGER.warning(
+                "no Data Hub status from %s within %ss; their entities will be "
+                "created once it arrives",
+                ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
+                FIRST_SNAPSHOT_TIMEOUT,
+            )
+
+    def _handle_datahub_status(self, vin: str, status: dict[str, Any]) -> None:
+        """Adopt status from the Data Hub, newest by the car's own clock.
+
+        The socket has to order snapshots by odometer because it carries no
+        time. The Data Hub stamps every one, so an older snapshot arriving
+        late is recognised directly.
+        """
+        if self.status_source != "datahub":
+            return
+        held = dt_util.parse_datetime(
+            self._status.get(vin, {}).get("LAST_UPDATED_TIME") or ""
+        )
+        arriving = dt_util.parse_datetime(status.get("LAST_UPDATED_TIME") or "")
+        if held and arriving and arriving < held:
+            return
+        self._handle_status(vin, status, None)
+
+    def _handle_datahub_position(self, vin: str, position: dict[str, Any]) -> None:
+        """Adopt a location from the Data Hub when it is newer than the held one."""
+        held = dt_util.parse_datetime(
+            str(self._position.get(vin, {}).get("timestamp") or "")
+        )
+        arriving = dt_util.parse_datetime(str(position.get("timestamp") or ""))
+        if held and (arriving is None or arriving < held):
+            return
+        self._position[vin] = position
+        self._position_read_at[vin] = dt_util.utcnow()
+        self._push()
+
+    def _datahub_signed_out(self) -> None:
+        """Fall back to the socket when JLR stop accepting the link.
+
+        So a revoked link costs the owner a repair to read, not a house of
+        unavailable sensors while they get round to it.
+        """
+        if self.status_source != "datahub":
+            return
+        self.status_source = "socket"
+        _LOGGER.warning(
+            "falling back to the telemetry socket for vehicle status until the "
+            "Data Hub is linked again"
+        )
+        self.entry.async_create_background_task(
+            self.hass, self._async_start_socket(), f"{DOMAIN} socket fallback"
+        )
+
+    async def _async_start_socket(self) -> None:
+        async with self._socket_lock:
+            if self._stop_requested():
+                return
+            self.telemetry.async_set_vehicles(self._vehicles)
+            await self.telemetry.async_start()
 
     def _stop_requested(self) -> bool:
         """Whether the entry has started going down.
@@ -355,6 +468,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             return Resubscription.TOO_SOON
         self._resubscribed_at = now
+        if self.status_source == "datahub":
+            assert self.datahub is not None
+            # The Data Hub answers a status request directly; there is no
+            # subscription to cycle.
+            ok = await self.datahub.async_read_now()
+            return Resubscription.DONE if ok else Resubscription.FAILED
         arrived = self._snapshot_event(vin)
         # Under the lock, and only the lifecycle: the wait below does not
         # touch the socket, and holding it across fifteen seconds would make
@@ -1150,6 +1269,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         short-lived token), so a momentary drop must not flap every entity in
         the house. A drop that outlasts the grace period is a real outage.
         """
+        if self.status_source == "datahub":
+            assert self.datahub is not None
+            return self.datahub.healthy
         if self.telemetry.connected:
             return True
         if self._disconnected_since is None:

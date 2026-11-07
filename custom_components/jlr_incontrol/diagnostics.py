@@ -29,6 +29,8 @@ async def async_get_config_entry_diagnostics(
         # Where the data is actually coming from. Without this a dump of empty
         # vehicles looks the same whether the socket is down or the car is.
         "telemetry": {
+            # Where status is coming from: the socket, or the Data Hub.
+            "source": getattr(coordinator, "status_source", "socket"),
             "connected": coordinator.telemetry.connected,
             "trusted": coordinator.telemetry_ok,
             "vehicles_subscribed": len(data.get("vehicles", {})),

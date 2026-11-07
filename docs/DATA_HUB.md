@@ -4,18 +4,33 @@ JLR now publish an official API for owners, the **JLR Data Hub**, under the EU D
 documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started), and it is
 available in the UK as well as the EU.
 
-From 1.9.0 the integration can link to it. Linking is optional, and nothing else changes: all
-the sensors carry on coming from where they come from now. What the link adds today:
+From 1.9.0 the integration can link to it, and once linked, **vehicle status comes from the Data
+Hub** instead of the InControl telemetry socket: doors, locks, windows, tyres, fuel, mileage,
+warnings, the 12 V battery and the rest. The entities are the same ones, with the same ids and
+history; only where their values come from changes. Linking is optional, and an install that does
+not link carries on exactly as before.
 
-- **Last report (Data Hub)** for each car: the time the car actually sent its latest reading.
-  Nothing else in JLR's data has ever carried that. Every other time this integration shows is
-  when a message reached us, or is worked out from the odometer.
-- **Data Hub stream** for each car: whether the live stream is connected.
-- A `datahub` section in diagnostics, with every signal the link has seen and when the car sent
-  it (names and times only, never values).
+- **Location** still comes from the owner portal. JLR refuse location to owner accounts on the
+  Data Hub for now; the link asks hourly, and uses it from the day they allow it.
+- **The InControl sign-in** is still needed for the owner portal (location and vehicle names) and
+  the vehicle list.
+- **If the link stops working** (the client deleted, its certificate replaced, consent
+  withdrawn), a repair says so and status falls back to the telemetry socket by itself, so the
+  sensors keep working while you link it again.
+- **All or nothing**: the Data Hub only takes over when the client at data.jlr.com covers every
+  car on the account. If one is missing, status stays on the socket for all of them, and the log
+  says why.
 
-The plan is to move the sensors themselves onto the Data Hub once the stream has been watched on
-real cars. This beta exists to do that watching.
+Linking also adds two entities to each car, and a `datahub` section in diagnostics:
+
+- **Last report (Data Hub)**: the time the car itself sent its latest reading. Nothing else in
+  JLR's data has ever carried that.
+- **Data Hub stream**: whether the live stream is connected.
+
+How the Data Hub's signals map onto the socket's keys is in
+[`vss.py`](../custom_components/jlr_incontrol/vss.py). Side by side on two cars, every value
+matched exactly, so the mapping is a renaming. The electric signals are the exception: they come
+from JLR's catalog and have not yet been checked against an electric car.
 
 ## Linking it
 
@@ -48,7 +63,13 @@ client at data.jlr.com.
 
 - **Sign-in**: once, with the device code you approve on your phone. After that a refresh token
   keeps the link alive without you. JLR's refresh token for this has no expiry of its own.
-- **Status**: one REST read per car when the link starts, then hourly.
+- **Status**: one REST read per car when the link starts, then every 15 minutes until the stream
+  has delivered a message, and hourly after that. Fifteen minutes is the cadence the integration's
+  housekeeping already keeps; it is there because the REST read is the only source of change
+  until the stream is shown to work. The **Refresh** button reads status on demand, at most once a
+  minute.
+- **Location**: asked for once an hour per car. Refused for owner accounts so far; the answer is
+  in diagnostics under `location`.
 - **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
   the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
   least 30 seconds, and backs off to 15 minutes when connections keep failing. If the broker

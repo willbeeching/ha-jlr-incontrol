@@ -141,6 +141,11 @@ def bare_link(
     return link, pause
 
 
+async def run_status(link: DataHubLink) -> None:
+    with contextlib.suppress(asyncio.CancelledError):
+        await link._async_status_loop()
+
+
 async def run(link: DataHubLink) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await link._async_run()
@@ -182,7 +187,10 @@ class TestSetUp:
         # The streamed signal is newer than the REST snapshot, and wins.
         assert report.state == "2026-11-07T15:00:00+00:00"
         assert stream.state == "on"
-        assert hub.datahub.calls[:3] == ["refresh offline-1", "status", "stream token"]
+        # Status first, then the location probe, then the stream; the two
+        # loops run side by side, so only membership is fixed beyond the first.
+        assert hub.datahub.calls[:2] == ["refresh offline-1", "status"]
+        assert {"location", "stream token"} <= set(hub.datahub.calls)
         call = broker.calls[0]
         # As issued; the portal's capitals are only how it displays it.
         assert call["username"] == "dsas-0123456789ab"
@@ -315,7 +323,7 @@ class TestTheLoop:
         updates: list[bool] = []
         link.async_add_listener(lambda: updates.append(True))
         hub.datahub.refresh_result = DataHubAuthError("invalid_grant")
-        await run(link)
+        await run_status(link)
         assert link.signed_out
         assert pause.waits == []  # no retrying an answer that cannot change
         assert updates
@@ -329,7 +337,7 @@ class TestTheLoop:
     ) -> None:
         link, _ = bare_link(hass, linked, 1)
         hub.datahub.refresh_result = DataHubAuthError("invalid_grant")
-        await run(link)
+        await run_status(link)
         hub.datahub.refresh_result = hub.datahub.tokens
         link._tokens = None
         await link._async_access_token()

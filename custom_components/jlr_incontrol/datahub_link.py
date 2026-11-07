@@ -1,13 +1,15 @@
 """The running link to the JLR Data Hub, for an entry that has one set up.
 
-Optional and additive. Everything the integration already does carries on
-exactly as before; this runs alongside, and for now what it adds is the thing
-nothing else in JLR's data has ever had — the time the car actually reported.
+Optional. When it is set up and covers every car on the account, it is where
+vehicle status comes from, in place of the telemetry socket: the coordinator
+hands it a callback and it delivers socket-shaped status (see vss.py), so the
+entities neither know nor care which one is talking. Location still comes from
+the owner portal; the link asks JLR for it hourly in case that changes.
 
 Two sources, both JLR's documented API:
 
-- REST status, read when the link starts and then hourly. Cheap insurance, and
-  the only source until the owner turns the stream on in the portal.
+- REST status, read when the link starts and then on a timer: every fifteen
+  minutes until the stream has shown it delivers, hourly after that.
 - The MQTT stream, held open continuously. JLR push signals as the car sends
   them, each stamped with when it sent them.
 
@@ -25,6 +27,7 @@ import logging
 import random
 import ssl
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
@@ -63,6 +66,7 @@ from .stream import (
     MqttRejected,
     run_session,
 )
+from .vss import to_position, to_status
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +94,16 @@ HEALTHY_SESSION = 60.0
 # REST status, alongside the stream. The stream carries changes; this is the
 # full snapshot, and the only source while the stream is switched off.
 STATUS_INTERVAL = 60 * 60.0
+# Until the stream has delivered a message, REST is the only source of change,
+# and it replaces a socket that pushed within minutes. Fifteen minutes is the
+# housekeeping cadence this integration already keeps, for two requests.
+STATUS_INTERVAL_UNPROVEN = 15 * 60.0
+# Location is refused for owner accounts (November 2026). Asked hourly so the
+# day JLR open it up is noticed, and no more often than that while it is not.
+LOCATION_INTERVAL = 60 * 60.0
+# How long without a good status read before the link stops vouching for the
+# readings. Three missed hourly reads: one failure is not an outage.
+HEALTHY_FOR = 3 * 60 * 60.0
 # After every way of logging in has been turned down. The broker answered and
 # said no five times; asking again in minutes would only add to the refusals.
 # Measured in November 2026: the stream refused every login for owner
@@ -135,9 +149,20 @@ def _flatten(tree: Any, prefix: str = "") -> dict[str, Any]:
 class DataHubLink:
     """Sign-in upkeep, REST status and the stream, for one config entry."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        *,
+        on_status: Callable[[str, dict[str, str]], None] | None = None,
+        on_position: Callable[[str, dict[str, Any]], None] | None = None,
+        on_signed_out: Callable[[], None] | None = None,
+    ) -> None:
         self.hass = hass
         self.entry = entry
+        self._on_status = on_status
+        self._on_position = on_position
+        self._on_signed_out = on_signed_out
         settings: dict[str, Any] = entry.data[CONF_DATAHUB]
         self.client = DataHubClient(
             async_get_clientsession(hass),
@@ -148,6 +173,7 @@ class DataHubLink:
         self.account_id: str | None = settings.get(DATAHUB_ACCOUNT_ID)
         self._tokens: Tokens | None = None
         self._task: asyncio.Task[None] | None = None
+        self._status_task: asyncio.Task[None] | None = None
         self._listeners: list[CALLBACK_TYPE] = []
 
         self.connected = False
@@ -175,7 +201,11 @@ class DataHubLink:
             "last_session_end": None,
             "last_error": None,
         }
-        self._last_status_read = 0.0
+        # When a status read last succeeded, on the monotonic clock.
+        self._status_ok_at: float | None = None
+        # What JLR said the last time each car's location was asked for.
+        self.location: dict[str, str] = {}
+        self._location_due = 0.0
         # When the stream may next be tried, after a round of rejections.
         self._stream_after = 0.0
 
@@ -183,20 +213,43 @@ class DataHubLink:
 
     @callback
     def async_start(self) -> None:
-        """Start the background loop. Returns at once."""
+        """Start the status timer and the stream. Returns at once.
+
+        Safe to call twice: the second call finds both running and leaves
+        them alone, so setup can start it early when it is the status source
+        and again unconditionally once the platforms are up.
+        """
+        if self._task is not None:
+            return
+        self._status_task = self.entry.async_create_background_task(
+            self.hass, self._async_status_loop(), f"{DOMAIN} data hub status"
+        )
         self._task = self.entry.async_create_background_task(
             self.hass, self._async_run(), f"{DOMAIN} data hub"
         )
 
     async def async_stop(self) -> None:
-        """Stop the loop and close the stream."""
-        if self._task is None:
-            return
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        self._task = None
+        """Stop both loops and close the stream."""
+        for task in (self._task, self._status_task):
+            if task is not None:
+                task.cancel()
+                # Whatever the task died of, an unload must still finish.
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await task
+        self._task = self._status_task = None
         self._set_connected(False)
+
+    @property
+    def healthy(self) -> bool:
+        """Whether the readings this link delivered can still be vouched for."""
+        if self.signed_out:
+            return False
+        if self.connected:
+            return True
+        return (
+            self._status_ok_at is not None
+            and time.monotonic() - self._status_ok_at < HEALTHY_FOR
+        )
 
     @callback
     def async_add_listener(self, update: CALLBACK_TYPE) -> CALLBACK_TYPE:
@@ -221,21 +274,43 @@ class DataHubLink:
 
     # -- the loop ---------------------------------------------------------
 
-    async def _async_run(self) -> None:
-        delay = RECONNECT_FLOOR
-        while True:
+    async def _async_status_loop(self) -> None:
+        """REST status on a timer, and location now and then."""
+        while not self.signed_out:
+            wait = (
+                STATUS_INTERVAL if self.stats["messages"] else STATUS_INTERVAL_UNPROVEN
+            )
             try:
-                if time.monotonic() - self._last_status_read >= STATUS_INTERVAL or (
-                    not self._last_status_read
-                ):
-                    await self._async_read_status()
+                await self._async_read_status()
+                if time.monotonic() >= self._location_due:
+                    self._location_due = time.monotonic() + LOCATION_INTERVAL
+                    await self._async_probe_location()
+            except DataHubAuthError as err:
+                self._signed_out(err)
+                return
+            except DataHubRateLimited as err:
+                _LOGGER.warning(
+                    "Data Hub asked us to slow down for %.0fs", err.retry_after
+                )
+                wait = max(err.retry_after, wait)
+            except DataHubError as err:
+                _LOGGER.warning("Data Hub status read failed: %s", err)
+            except Exception:  # noqa: BLE001 - a background loop must not die
+                _LOGGER.exception("unexpected failure reading Data Hub status")
+            await self._pause(wait)
+
+    async def _async_run(self) -> None:
+        """The stream: connect, hold, reconnect politely."""
+        delay = RECONNECT_FLOOR
+        while not self.signed_out:
+            try:
                 if (
                     self.stream_enabled is False
                     or time.monotonic() < self._stream_after
                 ):
                     # Nothing to connect to until the owner flips the toggle,
-                    # or the broker turned every login down; status carries on
-                    # hourly meanwhile, and that is what this wait paces.
+                    # or the broker turned every login down. Status carries
+                    # on on its own timer meanwhile.
                     await self._pause(STATUS_INTERVAL)
                     if self.stream_enabled is False:
                         self.stream_enabled = None
@@ -259,7 +334,7 @@ class DataHubLink:
                 self._stream_after = time.monotonic() + REJECTED_RETRY
                 _LOGGER.warning(
                     "Data Hub stream turned down every way of logging in (%s); "
-                    "trying again in %.0f hours. Status still updates hourly",
+                    "trying again in %.0f hours. Status still updates on a timer",
                     err,
                     REJECTED_RETRY / 3600,
                 )
@@ -268,6 +343,9 @@ class DataHubLink:
                 self.stats["last_error"] = str(err)
                 delay = min(delay * 2, RECONNECT_CEILING)
                 _LOGGER.warning("Data Hub stream: %s; retrying in %.0fs", err, delay)
+            except Exception:  # noqa: BLE001 - a background loop must not die
+                delay = min(delay * 2, RECONNECT_CEILING)
+                _LOGGER.exception("unexpected failure in the Data Hub stream")
             # Jitter, so a fleet of installations that all lost the broker at
             # the same moment do not all come back at the same moment.
             await self._pause(delay * random.uniform(1.0, 1.2))
@@ -284,6 +362,8 @@ class DataHubLink:
         )
         self.signed_out = True
         self._set_connected(False)
+        if self._on_signed_out is not None:
+            self._on_signed_out()
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -331,15 +411,60 @@ class DataHubLink:
                 self.entry, data={**self.entry.data, CONF_DATAHUB: updated}
             )
 
+    async def async_read_now(self) -> bool:
+        """One status read on demand, for the Refresh button. True if it worked."""
+        try:
+            await self._async_read_status()
+        except DataHubAuthError as err:
+            self._signed_out(err)
+            return False
+        except DataHubError as err:
+            _LOGGER.debug("Data Hub status read on demand failed: %s", err)
+            return False
+        return True
+
+    async def _async_probe_location(self) -> None:
+        """Ask for each car's location, and hand on any that is given."""
+        token = await self._async_access_token()
+        for vin in self.vehicles:
+            try:
+                body = await self.client.async_location(vin, token)
+            except DataHubForbidden as err:
+                answer = f"refused: {err}"
+            else:
+                position = to_position(body)
+                answer = "permitted" if position else "permitted, no fix"
+                if position and self._on_position is not None:
+                    self._on_position(vin, position)
+            if answer != self.location.get(vin):
+                _LOGGER.log(
+                    logging.INFO if answer.startswith("permitted") else logging.DEBUG,
+                    "Data Hub location for %s: %s",
+                    vehicle_label(vin),
+                    answer,
+                )
+            self.location[vin] = answer
+
+    def _emit(self, vin: str) -> None:
+        """Hand the car's current signals on, in the socket's shape."""
+        if self._on_status is None:
+            return
+        reported = self.reports.get(vin)
+        values = {name: entry["value"] for name, entry in self.signals[vin].items()}
+        self._on_status(
+            vin, to_status(values, reported.isoformat() if reported else None)
+        )
+
     async def _async_read_status(self) -> None:
         token = await self._async_access_token()
-        self._last_status_read = time.monotonic()
+        answered = False
         for vin in self.vehicles:
             try:
                 body = await self.client.async_status(vin, token)
             except DataHubForbidden as err:
                 _LOGGER.debug("Data Hub status for %s: %s", vehicle_label(vin), err)
                 continue
+            answered = True
             snapshot = _parse_time(body.get("timestamp"))
             signals = self.signals.setdefault(vin, {})
             for name, value in _flatten(body.get("Vehicle"), "Vehicle").items():
@@ -358,6 +483,9 @@ class DataHubLink:
                 snapshot,
                 len(signals),
             )
+            self._emit(vin)
+        if answered:
+            self._status_ok_at = time.monotonic()
         self._notify()
 
     def _note_report(self, vin: str, when: datetime) -> bool:
@@ -597,6 +725,8 @@ class DataHubLink:
             )
         if changed:
             self._notify()
+        if vin is not None and vin in self.signals:
+            self._emit(vin)
 
     # -- reporting --------------------------------------------------------
 
@@ -606,6 +736,8 @@ class DataHubLink:
             "connected": self.connected,
             "signed_out": self.signed_out,
             "stream_enabled": self.stream_enabled,
+            "healthy": self.healthy,
+            "location": {vehicle_label(v): a for v, a in self.location.items()},
             "broker": self.broker,
             "login": self._login.label if self._login else None,
             "accepted_login": self._accepted.label if self._accepted else None,

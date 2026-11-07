@@ -37,6 +37,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     _async_drop_removed_platforms(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # After the platforms, so its entities are listening before it reports.
+    # Already running when it is the status source; starting it again is a
+    # no-op then.
     if coordinator.datahub:
         coordinator.datahub.async_start()
     return True

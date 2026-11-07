@@ -234,9 +234,36 @@ class FakeDataHub:
             "Vehicle": {
                 "VehicleIdentification": {"VIN": KEPT},
                 "TraveledDistance": 12345000,
-                "Body": {"Trunk": {"Rear": {"IsOpen": "CLOSED"}}},
+                "Body": {
+                    "Trunk": {"Rear": {"IsOpen": "CLOSED", "IsLocked": "TRUE"}},
+                    "Door": {"Lock": {"Status": "TRUE"}},
+                    "Security": {"Alarm": {"Mode": "ALARM_ARMED"}},
+                },
+                "Cabin": {
+                    "Door": {
+                        "Row1": {
+                            "DriverSide": {
+                                "IsLocked": "LOCKED",
+                                "Window": {"Position": "CLOSED"},
+                            }
+                        }
+                    }
+                },
+                "Chassis": {
+                    "Axle": {"Row1": {"Wheel": {"Left": {"Tire": {"Pressure": 2400}}}}}
+                },
+                "Powertrain": {
+                    "FuelSystem": {"RelativeLevel": 42, "Range": 500},
+                    "CombustionEngine": {"EngineCoolant": {"Temperature": 89}},
+                },
             },
         }
+        # What JLR answered for location in November 2026, for both cars.
+        from custom_components.jlr_incontrol.datahub import DataHubForbidden
+
+        self.location_result: Any = DataHubForbidden(
+            "Access to category is not permitted for this vehicle: position"
+        )
         self.login_result: Any = None
         self.poll_results: list[Any] = []
 
@@ -255,6 +282,10 @@ class FakeDataHub:
     async def async_status(self, vin: str, access_token: str) -> Any:
         self.calls.append("status")
         return self._answer(self.status_result)
+
+    async def async_location(self, vin: str, access_token: str) -> Any:
+        self.calls.append("location")
+        return self._answer(self.location_result)
 
     async def async_stream_token(self) -> Any:
         self.calls.append("stream token")

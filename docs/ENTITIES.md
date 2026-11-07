@@ -11,12 +11,13 @@ judgement otherwise rests on a heuristic and deleting is not undoable.
 
 ## Where the data comes from
 
-There are three sources, on three different clocks. Knowing which one an entity uses tells you
+There are three sources, on three different clocks, plus the Data Hub when it is linked. Knowing which one an entity uses tells you
 how fresh it can be and what happens when that source is down.
 
 | Source | What it feeds | How often | If it fails |
 | --- | --- | --- | --- |
 | Telemetry socket (STOMP over websocket) | every sensor and binary sensor below | pushed by the car; a full snapshot on each connection, then updates as the car reports | entities go unavailable after a 30-minute grace, because a value nobody can refresh is not a reading |
+| JLR Data Hub, when [linked](DATA_HUB.md) | replaces the telemetry socket for every sensor and binary sensor below | REST every 15 minutes (hourly once the stream delivers), plus the stream as the car reports | entities go unavailable after three hours without a good read; a revoked link falls back to the socket |
 | Owner web portal | `device_tracker`, and the vehicle's real name and registration | location every 30 minutes; names once a day | location holds its last fix and reports `trusted: false`; Home Assistant asks you to sign in again if the session has gone |
 | IF9 REST API | the vehicle list, and the account housekeeping | every 15 minutes | setup retries; nothing already on screen is lost |
 
@@ -117,7 +118,10 @@ snapshot as central locking, so they are exactly as stale as it is — switch th
 detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
 whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
 
-The two Data Hub entities exist only once the [Data Hub is linked](DATA_HUB.md). **Last report
+With the [Data Hub linked](DATA_HUB.md), every entity above that reads a status key gets its value
+from the Data Hub instead of the telemetry socket: same entity, same key, different source.
+
+The two Data Hub entities exist only once the Data Hub is linked. **Last report
 (Data Hub)** is the time the car sent its latest reading, as JLR stamp it: the newest of the
 hourly status snapshot and every signal the stream delivers. **Data Hub stream** is on while the
 stream is connected; it is one connection for the account, so every linked car shows the same.
