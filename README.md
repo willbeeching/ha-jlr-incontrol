@@ -118,8 +118,13 @@ Each vehicle appears as a device with its own sensors.
 
 ### Options
 
-**Settings → Devices & Services → Jaguar Land Rover InControl → Configure.** There are two, both
-purely about display; neither changes what is fetched or how often.
+**Settings → Devices & Services → Jaguar Land Rover InControl → Configure** opens a menu:
+
+- **Units and readings**: the settings below.
+- **Link the JLR Data Hub (beta)**: connects JLR's official owner API alongside everything else.
+  See [docs/DATA_HUB.md](docs/DATA_HUB.md).
+
+The two unit settings are purely about display; neither changes what is fetched or how often.
 
 | Option | Values | Default | What it does |
 | --- | --- | --- | --- |

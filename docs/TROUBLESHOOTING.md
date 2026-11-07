@@ -132,6 +132,12 @@ for the integration *before* the restart that will do the removing.
 Three are off by default — 12V battery charge, EVCC status and the charge-now override. Switch
 them on in the entity's settings. See [ENTITIES.md](ENTITIES.md) for why each one is off.
 
+## "The Data Hub link will not finish, or stopped working"
+
+See [DATA_HUB.md](DATA_HUB.md#if-it-is-not-working). The two usual causes are the stream not
+switched on for the client at data.jlr.com, and a certificate at data.jlr.com that is not the one
+Home Assistant showed — a new one is made each time you start linking, so paste the latest.
+
 ## Turning on debug logging
 
 **Settings → Devices & Services → Jaguar Land Rover InControl → Enable debug logging**, reproduce,

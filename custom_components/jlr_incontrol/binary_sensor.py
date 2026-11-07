@@ -12,14 +12,19 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.const import Platform
+from homeassistant.const import EntityCategory, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import JlrConfigEntry
 from .const import CLIMATE_ACTIVE_STATES
 from .coordinator import JlrCoordinator
-from .entity import JlrVehicleEntity, async_add_vehicle_entities, is_electrified
+from .entity import (
+    JlrDataHubEntity,
+    JlrVehicleEntity,
+    async_add_vehicle_entities,
+    is_electrified,
+)
 from .redact import vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
@@ -246,7 +251,7 @@ async def async_setup_entry(
     """
     coordinator = entry.runtime_data
 
-    def build(vin: str) -> list[JlrBinarySensor]:
+    def build(vin: str) -> list[BinarySensorEntity]:
         vehicle = coordinator.data.get("vehicles", {}).get(vin, {})
         status = vehicle.get("status", {})
         attributes = vehicle.get("attributes", {})
@@ -254,13 +259,16 @@ async def async_setup_entry(
             # Every one of these is gated on a status key, so without a
             # snapshot the answer is "none" rather than "this car has none".
             return []
-        return [
+        entities: list[BinarySensorEntity] = [
             JlrBinarySensor(coordinator, vin, description)
             for description in VEHICLE_BINARY_SENSORS
             if description.status_key in status
             and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
             and (not description.requires_ev or is_electrified(attributes, status))
         ]
+        if coordinator.datahub and vin in coordinator.datahub.vehicles:
+            entities.append(JlrDataHubStreamSensor(coordinator, vin))
+        return entities
 
     def protect(vin: str) -> set[str]:
         """Ids withheld from the prune because the EV judgement is a guess.
@@ -358,3 +366,24 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         if not self._vehicle.get("readings_provisional"):
             return False
         return state is description.insecure_when_on
+
+
+class JlrDataHubStreamSensor(JlrDataHubEntity, BinarySensorEntity):
+    """Whether the Data Hub stream is connected.
+
+    Per vehicle, though the stream is one connection for the account, because
+    entities here belong to a car; every car on the link shows the same state.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "datahub_stream"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_datahub_stream"
+
+    @property
+    def is_on(self) -> bool:
+        link = self.coordinator.datahub
+        return bool(link and link.connected)

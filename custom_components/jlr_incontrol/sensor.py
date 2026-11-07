@@ -49,6 +49,7 @@ from .const import (
 )
 from .coordinator import JlrCoordinator
 from .entity import (
+    JlrDataHubEntity,
     JlrVehicleEntity,
     async_add_vehicle_entities,
     is_electric,
@@ -484,6 +485,8 @@ async def async_setup_entry(
             if _should_create_sensor(description, status, attributes)
         )
         entities.append(JlrLastUpdatedSensor(coordinator, vin))
+        if coordinator.datahub and vin in coordinator.datahub.vehicles:
+            entities.append(JlrDataHubReportSensor(coordinator, vin))
         entities.append(JlrAllInfoSensor(coordinator, vin))
         if is_electrified(attributes, status) and "EV_CHARGING_METHOD" in status:
             entities.append(JlrEvccStatusSensor(coordinator, vin))
@@ -651,6 +654,28 @@ class JlrLastUpdatedSensor(JlrVehicleEntity, SensorEntity):
         # so a car sending telemetry every few minutes from a spot it parked in
         # three days ago showed a timestamp from moments ago marked stale.
         return {"stale": self._vehicle.get("status_stale", False)}
+
+
+class JlrDataHubReportSensor(JlrDataHubEntity, SensorEntity):
+    """When the car last reported, as the JLR Data Hub stamps it.
+
+    The first vehicle-side time anything here has had. Every other timestamp
+    is when a message reached us — measured three hours after the car sent it,
+    once — or inferred from the odometer.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_translation_key = "datahub_last_report"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_datahub_last_report"
+
+    @property
+    def native_value(self) -> datetime | None:
+        link = self.coordinator.datahub
+        return link.reports.get(self._vin) if link else None
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):

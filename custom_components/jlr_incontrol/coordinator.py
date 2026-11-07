@@ -36,6 +36,7 @@ from .const import (
     ATTRIBUTES_RETRY,
     ATTRIBUTES_TTL,
     CONF_ATTRIBUTES,
+    CONF_DATAHUB,
     CONF_DECAYED_SEEN,
     CONF_DECAYED_SINCE,
     CONF_DEVICE_ID,
@@ -69,6 +70,7 @@ from .const import (
     VOLATILE_STATUS_KEYS,
     VOLATILE_STATUS_KEYS_1_7,
 )
+from .datahub_link import DataHubLink
 from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
 from .redact import scrub, vehicle_label
 from .telemetry import JlrTelemetry
@@ -138,6 +140,11 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=SCAN_INTERVAL_HOUSEKEEPING,
         )
         self.entry = entry
+        # JLR's documented Data Hub, when the owner has linked it. Optional and
+        # alongside everything else: nothing here depends on it.
+        self.datahub: DataHubLink | None = (
+            DataHubLink(hass, entry) if entry.data.get(CONF_DATAHUB) else None
+        )
         # What the options looked like at setup, so the update listener can tell
         # an options change (reload) from a token rotation (do not reload).
         # Change detection for the last-updated signal: some cars (I-Pace)

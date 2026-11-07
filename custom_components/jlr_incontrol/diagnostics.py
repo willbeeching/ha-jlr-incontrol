@@ -40,6 +40,10 @@ async def async_get_config_entry_diagnostics(
         },
         "vehicles": {},
     }
+    # The optional Data Hub link: whether it is up, and which signals it has
+    # seen with the times the car sent them. Never the values.
+    datahub = getattr(coordinator, "datahub", None)
+    diagnostics["datahub"] = datahub.diagnostics() if datahub else None
     for vin, vehicle in data.get("vehicles", {}).items():
         diagnostics["vehicles"][vehicle_label(vin)] = {
             "role": vehicle.get("role"),

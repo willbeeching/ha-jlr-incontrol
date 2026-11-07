@@ -28,7 +28,13 @@ from custom_components.jlr_incontrol.config_flow import (  # noqa: E402
 
 
 async def open_options(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
+    """Open the dialog and go to the settings, past the menu it starts on."""
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.MENU
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     await hass.async_block_till_done()
     return result
 
@@ -37,9 +43,18 @@ class TestTheDialog:
     async def test_it_opens(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        assert result["type"] is FlowResultType.MENU
+        assert result["step_id"] == "init"
+        # Unlinking is only offered when there is a link to undo.
+        assert result["menu_options"] == ["settings", "datahub"]
+
+    async def test_the_settings_are_one_step_in(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
         result = await open_options(hass, entry)
         assert result["type"] is FlowResultType.FORM
-        assert result["step_id"] == "init"
+        assert result["step_id"] == "settings"
 
     async def test_a_choice_is_stored(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles

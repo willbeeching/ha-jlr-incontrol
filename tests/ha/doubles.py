@@ -7,6 +7,7 @@ availability, diagnostics — depends on any of the three being real.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -186,6 +187,7 @@ class Doubles:
     client: FakeClient
     telemetry: FakeTelemetry
     portal: FakePortal
+    datahub: FakeDataHub
 
     def builder(self, attribute: str, cls: type) -> Any:
         """A drop-in for a collaborator class that remembers what it made."""
@@ -196,3 +198,72 @@ class Doubles:
             return made
 
         return build
+
+
+class FakeDataHub:
+    """Stands in for the Data Hub client: scripted answers, recorded calls.
+
+    Each ``*_result`` is returned, or raised if it is an exception. A list is
+    consumed one answer per call, for a sequence such as a sign-in that is
+    pending twice and then approved.
+    """
+
+    def __init__(self, session: Any, client_id: str, private_key: str) -> None:
+        from custom_components.jlr_incontrol.datahub import Tokens
+
+        self.client_id = client_id
+        self.private_key = private_key
+        self.calls: list[str] = []
+        self.tokens = Tokens(
+            access_token="access",
+            refresh_token="offline-2",
+            expires_at=time.time() + 300,
+            vehicles=[KEPT],
+            account_id="acct-1",
+            categories=["status"],
+        )
+        self.refresh_result: Any = self.tokens
+        self.stream_result: Any = Tokens(
+            access_token="stream",
+            refresh_token=None,
+            expires_at=time.time() + 300,
+            account_id="acct-1",
+        )
+        self.status_result: Any = {
+            "timestamp": "2026-11-07T09:00:00.000Z",
+            "Vehicle": {
+                "VehicleIdentification": {"VIN": KEPT},
+                "TraveledDistance": 12345000,
+                "Body": {"Trunk": {"Rear": {"IsOpen": "CLOSED"}}},
+            },
+        }
+        self.login_result: Any = None
+        self.poll_results: list[Any] = []
+
+    @staticmethod
+    def _answer(result: Any) -> Any:
+        if isinstance(result, list):
+            result = result.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    async def async_refresh(self, refresh_token: str) -> Any:
+        self.calls.append(f"refresh {refresh_token}")
+        return self._answer(self.refresh_result)
+
+    async def async_status(self, vin: str, access_token: str) -> Any:
+        self.calls.append("status")
+        return self._answer(self.status_result)
+
+    async def async_stream_token(self) -> Any:
+        self.calls.append("stream token")
+        return self._answer(self.stream_result)
+
+    async def async_start_device_login(self) -> Any:
+        self.calls.append("start")
+        return self._answer(self.login_result)
+
+    async def async_poll_device_login(self, login: Any) -> Any:
+        self.calls.append("poll")
+        return self._answer(self.poll_results)

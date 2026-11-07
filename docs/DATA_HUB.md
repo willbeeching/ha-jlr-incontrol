@@ -1,0 +1,93 @@
+# JLR Data Hub (beta)
+
+JLR now publish an official API for owners, the **JLR Data Hub**, under the EU Data Act. It is
+documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started), and it is
+available in the UK as well as the EU.
+
+From 1.9.0 the integration can link to it. Linking is optional, and nothing else changes: all
+the sensors carry on coming from where they come from now. What the link adds today:
+
+- **Last report (Data Hub)** for each car: the time the car actually sent its latest reading.
+  Nothing else in JLR's data has ever carried that. Every other time this integration shows is
+  when a message reached us, or is worked out from the odometer.
+- **Data Hub stream** for each car: whether the live stream is connected.
+- A `datahub` section in diagnostics, with every signal the link has seen and when the car sent
+  it (names and times only, never values).
+
+The plan is to move the sensors themselves onto the Data Hub once the stream has been watched on
+real cars. This beta exists to do that watching.
+
+## Linking it
+
+You need a JLR account whose cars appear at [data.jlr.com](https://data.jlr.com), and a few
+minutes with your phone to hand.
+
+1. In Home Assistant, open **Settings → Devices & Services → Jaguar Land Rover InControl →
+   Configure → Link the JLR Data Hub**. It shows a certificate. Leave the page open.
+2. At [data.jlr.com](https://data.jlr.com), sign in and create a client:
+   - credential type **device-based**
+   - select your vehicles
+   - select **all** data categories
+   - when it asks for a public certificate, paste the whole block Home Assistant showed, from
+     `-----BEGIN CERTIFICATE-----` to `-----END CERTIFICATE-----`.
+3. On the client's page, turn **Toggle your stream** on.
+4. Copy the client ID it shows (it looks like `dsas-0123456789ab`) into Home Assistant and
+   submit.
+5. Home Assistant shows a link and a code. Open the link on your phone, sign in with your JLR
+   account and approve it. The page in Home Assistant moves on by itself, and the integration
+   reloads with the link in place.
+
+The certificate is public. The private key that matches it was made inside Home Assistant, is
+stored only in the integration's config entry, and is never shown or sent anywhere. It signs
+every request to JLR, which is why the link cannot be used by anyone who only has a token.
+
+To remove the link, choose **Unlink the JLR Data Hub** in the same options, then delete the
+client at data.jlr.com.
+
+## How it talks to JLR
+
+- **Sign-in**: once, with the device code you approve on your phone. After that a refresh token
+  keeps the link alive without you. JLR's refresh token for this has no expiry of its own.
+- **Status**: one REST read per car when the link starts, then hourly.
+- **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
+  the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
+  least 30 seconds, and backs off to 15 minutes when connections keep failing.
+
+## What JLR's docs get wrong
+
+Measured on a UK account in November 2026. The integration follows what was measured.
+
+| | The docs say | What happens |
+| --- | --- | --- |
+| Access token lifetime | 1 hour | 5 minutes |
+| Refresh token | 14 days | An "Offline" token with no expiry |
+| `Vehicle.TraveledDistance` | km | metres |
+| Rate limits | Headers on every response | No rate-limit headers on any response |
+| Stream broker | `stream-data.jlr-vcdp.com` | The portal shows `stream-data.b2b-prod.jlr-vcdp.com`. Both are tried. |
+
+Also measured:
+
+- Tyre pressures are in hPa (2278 is about 33 psi).
+- REST status has one `timestamp` for the whole snapshot, not one per signal. Stream messages
+  carry one each.
+- The status values are the same as the existing integration's (the same frozen coolant
+  temperature, the same `KEY_ON_ENGINE_OFF`), so everything in [DATA_MODEL.md](DATA_MODEL.md)
+  still applies.
+- **Position** is refused per car ("Access to category is not permitted for this vehicle"), and
+  **journeys** are refused for owner accounts altogether, even with both categories selected.
+  Location keeps coming from the owner portal.
+- The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
+  stream is switched on for the client in the portal.
+
+## If it is not working
+
+- **Last report (Data Hub) stays unknown**: the car has not been allowed status, or the link has
+  not read it yet. Download diagnostics and look at `datahub`.
+- **Data Hub stream stays off**: check **Toggle your stream** is on at data.jlr.com. With it off
+  the link reads status hourly and asks again each hour. `stream_enabled: false` in diagnostics
+  means exactly this.
+- **A repair says the link stopped working**: the client was deleted, its certificate replaced,
+  or consent withdrawn. Link it again from the options; a new certificate is made each time.
+- Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the
+  stream delivers, with the time the car sent it. Car identities are replaced with a stable
+  label in those lines.

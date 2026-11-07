@@ -63,6 +63,9 @@ async def test_the_options_form_with_its_current_values(
     # Goes through add_suggested_values_to_schema, which on 2026.10 is core's
     # probatio code copying a schema this integration built.
     result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "settings"}
+    )
     fields = render(result["data_schema"])
     assert len(fields) == len(config_flow.OPTIONS_SCHEMA.schema)
     assert all("suggested_value" in field.get("description", {}) for field in fields)

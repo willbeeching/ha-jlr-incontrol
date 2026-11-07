@@ -116,6 +116,22 @@ PORTAL_RETRY_AFTER = timedelta(hours=6)
 # Repair issue raised when only an interactive sign-in can restore location.
 ISSUE_PORTAL_SIGNED_OUT = "portal_signed_out"
 
+# ---- JLR Data Hub (optional) ----
+# JLR's documented API (developer.jlr.com). Set up from the options, and held
+# in the entry under one key so that removing it is removing one key. The
+# private key and the refresh token are secrets: redact.py treats both, and the
+# client id, as such.
+CONF_DATAHUB = "datahub"
+DATAHUB_CLIENT_ID = "client_id"
+DATAHUB_PRIVATE_KEY = "private_key"
+DATAHUB_CERTIFICATE = "certificate"
+DATAHUB_REFRESH_TOKEN = "refresh_token"
+DATAHUB_VEHICLES = "vehicles"
+DATAHUB_ACCOUNT_ID = "account_id"
+# Raised when JLR stop accepting the link (client deleted, certificate
+# replaced, consent withdrawn). Only setting it up again can fix that.
+ISSUE_DATAHUB_SIGNED_OUT = "datahub_signed_out"
+
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
 # every path, with or without credentials), killing the password grant this

@@ -10,7 +10,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from .const import DOMAIN, ISSUE_PORTAL_SIGNED_OUT, PLATFORMS
+from .const import DOMAIN, ISSUE_DATAHUB_SIGNED_OUT, ISSUE_PORTAL_SIGNED_OUT, PLATFORMS
 from .coordinator import JlrCoordinator
 
 # The coordinator lives on the entry rather than in hass.data: typed, tied
@@ -36,6 +36,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     entry.runtime_data = coordinator
     _async_drop_removed_platforms(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # After the platforms, so its entities are listening before it reports.
+    if coordinator.datahub:
+        coordinator.datahub.async_start()
     return True
 
 
@@ -82,7 +85,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None
     would have cleared it no longer exists, so the warning stays in Repairs
     pointing at an account the user has already removed.
     """
-    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{entry.entry_id}")
+    for issue in (ISSUE_PORTAL_SIGNED_OUT, ISSUE_DATAHUB_SIGNED_OUT):
+        ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
@@ -99,4 +103,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool
         # a fresh supervisor on an entry that has already gone.
         await coordinator.async_stop_telemetry()
         await coordinator.portal.async_close()
+        if coordinator.datahub:
+            await coordinator.datahub.async_stop()
     return unloaded

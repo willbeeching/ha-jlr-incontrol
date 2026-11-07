@@ -223,3 +223,19 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
             name=name,
             serial_number=self._vin,
         )
+
+
+class JlrDataHubEntity(JlrVehicleEntity):
+    """An entity fed by the optional Data Hub link rather than the socket.
+
+    Still a coordinator entity, for the device and for the vehicle list; its
+    values come from the link, which tells it when they change.
+    """
+
+    _requires_telemetry = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        link = self.coordinator.datahub
+        if link is not None:
+            self.async_on_remove(link.async_add_listener(self.async_write_ha_state))

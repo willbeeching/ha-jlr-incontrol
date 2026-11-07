@@ -51,6 +51,14 @@
     "step": {
       "init": {
         "title": "Jaguar Land Rover InControl options",
+        "menu_options": {
+          "settings": "Units and readings",
+          "datahub": "Link the JLR Data Hub (beta)",
+          "datahub_remove": "Unlink the JLR Data Hub"
+        }
+      },
+      "settings": {
+        "title": "Jaguar Land Rover InControl options",
         "data": {
           "distance_unit": "Distance unit",
           "pressure_unit": "Pressure unit",
@@ -59,7 +67,34 @@
         "data_description": {
           "unsettled_minutes": "When a car is caught mid-use — the key still in it, the alarm not yet armed — the doors and windows in that snapshot are where they were at that moment, not where the car was left. If no newer reading arrives within this long, those sensors report unknown instead of a figure that is probably wrong. Everything else keeps its last value."
         }
+      },
+      "datahub": {
+        "title": "Link the JLR Data Hub",
+        "description": "JLR's Data Hub is their official API for owners. Linking it adds the time each car last reported, and receives updates as the car sends them. Everything else keeps working as it does now.\n\n1. Sign in at [{portal}]({portal}) and create a client. Choose **device-based**, select your vehicles and all data categories.\n2. When it asks for a public certificate, paste this. The private key that matches it was made here and never leaves Home Assistant.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client, so updates can arrive as they happen.\n4. Copy the client ID it shows and enter it below.",
+        "data": {
+          "client_id": "Client ID"
+        },
+        "data_description": {
+          "client_id": "Shown on the client's page at data.jlr.com, and looks like dsas-0123456789ab."
+        }
+      },
+      "datahub_remove": {
+        "title": "Unlink the JLR Data Hub",
+        "description": "Home Assistant forgets the link and its key. The client you created at data.jlr.com stays until you delete it there, which you can now do."
       }
+    },
+    "progress": {
+      "datahub_link": "Open [{url}]({url}) on your phone and approve the link with your JLR account. If it asks for a code, enter **{code}**. This page moves on by itself once you have approved it."
+    },
+    "error": {
+      "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown here.",
+      "cannot_connect": "Could not reach JLR. Try again in a moment."
+    },
+    "abort": {
+      "datahub_denied": "The link was declined on the JLR sign-in page.",
+      "datahub_expired": "The code expired before it was approved. Start again to get a new one.",
+      "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
+      "unknown": "The link could not be completed."
     }
   },
   "selector": {
@@ -177,6 +212,9 @@
       },
       "all_info": {
         "name": "All info"
+      },
+      "datahub_last_report": {
+        "name": "Last report (Data Hub)"
       }
     },
     "binary_sensor": {
@@ -260,6 +298,9 @@
       },
       "ev_preconditioning": {
         "name": "Preconditioning"
+      },
+      "datahub_stream": {
+        "name": "Data Hub stream"
       }
     },
     "device_tracker": {
@@ -291,6 +332,10 @@
     "portal_signed_out": {
       "title": "Sign in again to restore vehicle location",
       "description": "Jaguar Land Rover's sign-in session has expired. Live vehicle status is unaffected and keeps working, but location and vehicle names cannot be refreshed until you sign in again — and the location is reported as unknown rather than showing a position that may be out of date.\n\nGo to the Jaguar Land Rover InControl entry, open the menu on it and choose **Reconfigure**, then enter your password and the code JLR emails you. Your entities, history and automations are kept."
+    },
+    "datahub_signed_out": {
+      "title": "JLR Data Hub link stopped working for {title}",
+      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub**."
     }
   }
 }

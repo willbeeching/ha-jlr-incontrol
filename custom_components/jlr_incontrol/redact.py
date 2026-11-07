@@ -35,6 +35,10 @@ _SENSITIVE_SUFFIXES = (
     "USERNAME",
     "USERID",
     "DEVICEID",
+    # The Data Hub's handles on the same account: the client an owner created
+    # at data.jlr.com, and the account its stream topics are addressed to.
+    "CLIENTID",
+    "ACCOUNTID",
 )
 # These are unambiguous wherever they appear in a name.
 _SENSITIVE_FRAGMENTS = (
@@ -44,6 +48,10 @@ _SENSITIVE_FRAGMENTS = (
     "AUTHORIZATION",
     "SECRET",
     "EMAIL",
+    # The Data Hub link's key pair. The private key is the credential; the
+    # certificate is public, but it is paired with this one account.
+    "PRIVATEKEY",
+    "CERTIFICATE",
 )
 
 # A VIN is exactly 17 characters and never uses I, O or Q — they are excluded

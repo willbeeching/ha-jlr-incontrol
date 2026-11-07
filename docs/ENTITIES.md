@@ -63,6 +63,7 @@ that is.
 | EVCC status | derived | EV/PHEV | — | **off** |
 | Charge-now override | `EV_CHARGE_NOW_SETTING` | EV/PHEV | — | **off** |
 | Last updated | — | any | diagnostic | on |
+| Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
 | All info | — | any | diagnostic | **off** |
 
 **Engine coolant temperature** reads unknown once the figure has stood unchanged for longer
@@ -105,6 +106,7 @@ any of them on in the entity settings.
 | Charging | `EV_CHARGING_STATUS` | EV/PHEV |
 | Plugged in | `EV_CHARGING_METHOD` | EV/PHEV |
 | Preconditioning | `EV_PRECONDITION_OPERATING_STATUS` | EV/PHEV |
+| Data Hub stream (diagnostic) | — | cars on a linked Data Hub |
 
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or
 "warning active". Those map to *unknown* rather than to a state.
@@ -114,6 +116,11 @@ driver's door alone, leaving one door unlocked and the rest locked. They come fr
 snapshot as central locking, so they are exactly as stale as it is — switch them on for the
 detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
 whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
+
+The two Data Hub entities exist only once the [Data Hub is linked](DATA_HUB.md). **Last report
+(Data Hub)** is the time the car sent its latest reading, as JLR stamp it: the newest of the
+hourly status snapshot and every signal the stream delivers. **Data Hub stream** is on while the
+stream is connected; it is one connection for the account, so every linked car shows the same.
 
 ## Other platforms
 
