@@ -13,7 +13,6 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     DOMAIN,
     ISSUE_DATAHUB_SIGNED_OUT,
-    ISSUE_INCONTROL_DEPRECATED,
     ISSUE_PORTAL_SIGNED_OUT,
     PLATFORMS,
 )
@@ -47,25 +46,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     # no-op then.
     if coordinator.datahub:
         coordinator.datahub.async_start()
-    _async_note_deprecation(hass, entry)
     return True
-
-
-def _async_note_deprecation(hass: HomeAssistant, entry: JlrConfigEntry) -> None:
-    """Suggest the Data Hub to an entry still on the old connection alone."""
-    issue_id = f"{ISSUE_INCONTROL_DEPRECATED}_{entry.entry_id}"
-    if entry.runtime_data.datahub is None:
-        ir.async_create_issue(
-            hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=ISSUE_INCONTROL_DEPRECATED,
-            translation_placeholders={"title": entry.title},
-        )
-    else:
-        ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 # Platforms that existed only to send remote commands. JLR gate those behind app
@@ -114,7 +95,6 @@ async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None
     for issue in (
         ISSUE_PORTAL_SIGNED_OUT,
         ISSUE_DATAHUB_SIGNED_OUT,
-        ISSUE_INCONTROL_DEPRECATED,
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
 

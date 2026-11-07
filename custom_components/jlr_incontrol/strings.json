@@ -383,10 +383,6 @@
     "datahub_signed_out": {
       "title": "JLR Data Hub link stopped working for {title}",
       "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub**."
-    },
-    "incontrol_deprecated": {
-      "title": "{title} uses the older InControl connection",
-      "description": "This entry reads your cars through the InControl app's connection, which JLR do not document and have changed without notice before. JLR now publish an official API for owners, the JLR Data Hub, in the UK and the EU. To move over, open the integration's options and choose **Link the JLR Data Hub (beta)**; your entities stay the same.\n\nIf JLR do not offer the Data Hub where you are, ignore this: the older connection keeps working for as long as JLR allow it."
     }
   }
 }

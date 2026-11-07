@@ -102,6 +102,10 @@ Also measured:
 - **Position** is refused per car ("Access to category is not permitted for this vehicle"), and
   **journeys** are refused for owner accounts altogether, even with both categories selected.
   Location keeps coming from the owner portal.
+  The portal has a per-car **declaration** (region, whether you are the sole user, whether other
+  drivers have agreed), and its own code treats undeclared cars differently. Location is personal
+  data about whoever is driving, so completing that declaration may be what unlocks it; this is
+  being tested. Look for each car's status and class in your vehicle list at data.jlr.com.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
 - With it switched on, the broker the portal names does not resolve, and the broker in the docs

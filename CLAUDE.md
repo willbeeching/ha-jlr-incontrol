@@ -135,8 +135,9 @@ Re-deriving these has cost days. They are documented at length in
 ## The JLR Data Hub
 
 JLR's documented owner API (developer.jlr.com), and where the integration is
-heading: the reverse-engineered InControl connection is deprecated and kept
-only for owners JLR do not offer the Data Hub to. `docs/DATA_HUB.md` has the
+heading. The reverse-engineered InControl connection stays alongside it, with
+no deprecation notice, until owners outside the UK and EU have tested what the
+Data Hub offers them. `docs/DATA_HUB.md` has the
 user-facing detail; what matters when changing the code:
 
 - `datahub.py` is the client (private_key_jwt sign-in, DPoP on REST),
@@ -153,7 +154,9 @@ user-facing detail; what matters when changing the code:
   is offline with no expiry, the broker in the portal does not resolve, and
   the broker in the docs accepts only the client id as both MQTT username and
   client id, and only exact `/status` topics (no wildcards). Location and
-  journeys are refused to owners.
+  journeys were refused to owners; location is suspected to need the per-car
+  declaration at data.jlr.com (user class, other drivers' consent), which the
+  portal's own code gates on — unconfirmed.
 - Every key, token, client id and account id stays in the config entry;
   `redact.py` covers them. Never put a real owner's readings in tests or
   comments — use made-up values of the same shape.

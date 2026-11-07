@@ -131,10 +131,6 @@ DATAHUB_ACCOUNT_ID = "account_id"
 # Raised when JLR stop accepting the link (client deleted, certificate
 # replaced, consent withdrawn). Only setting it up again can fix that.
 ISSUE_DATAHUB_SIGNED_OUT = "datahub_signed_out"
-# Raised on an entry still reading through the reverse-engineered InControl
-# connection with no Data Hub link. Ignorable: JLR do not offer the Data Hub
-# everywhere, and for those owners the old connection is the only one.
-ISSUE_INCONTROL_DEPRECATED = "incontrol_deprecated"
 
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on

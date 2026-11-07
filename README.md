@@ -123,9 +123,8 @@ InControl**. It asks how to connect:
   options afterwards if you want the car's location.
 - **InControl sign-in (older)**, for owners JLR do not offer the Data Hub to. Enter your InControl
   email and password, then the verification code JLR email you (it expires quickly, so have your
-  inbox open). This connection is reverse-engineered from the app and deprecated; an entry using
-  it shows a repair suggesting the Data Hub, which you can ignore if the Data Hub is not offered
-  where you are.
+  inbox open). This connection is reverse-engineered from the app, and stays for owners the Data
+  Hub does not reach.
 
 Each vehicle appears as a device with its own sensors. An existing InControl entry can move to the
 Data Hub without losing anything: link it from the options and the same entities switch source.
