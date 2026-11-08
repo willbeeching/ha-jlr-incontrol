@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from typing import Any
 
 import pytest
@@ -688,3 +689,62 @@ class TestStartingUpWithAStreamThatSpeaksFirst:
         state = hass.states.get(fuel)
         assert state is not None and float(state.state) == 42
         await hass.config_entries.async_unload(entry.entry_id)
+
+
+EV_ANSWER = {
+    "timestamp": "2026-11-07T09:00:00.000Z",
+    "Vehicle": {
+        "Powertrain": {
+            "TractionBattery": {
+                "StateOfCharge": {"Current": 64},
+                "Range": 40,
+                "Charging": {"IsCharging": True, "IsPlugConnected": True},
+            }
+        }
+    },
+}
+
+
+class TestBatteryFromTheEvEndpoint:
+    async def test_a_plug_in_car_is_read_with_every_status_read(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        seen: list[dict[str, str]] = []
+        link, _ = bare(hass, entry, 3, on_status=lambda _, s: seen.append(s))
+        hub.datahub.ev_result = EV_ANSWER
+        await status_loop(link)
+        assert hub.datahub.calls.count("ev") == 3
+        # Out with the car's first status, not after it: entities are built
+        # from that one, and a battery missing from it was a battery gone.
+        assert seen[0]["EV_STATE_OF_CHARGE"] == "64"
+        assert seen[0]["EV_CHARGING_STATUS"] == "CHARGING"
+        assert seen[0]["FUEL_LEVEL_PERC"] == "42"
+        assert list(link.diagnostics()["ev"].values()) == ["permitted"]
+
+    async def test_a_car_without_a_charge_port_is_asked_daily_not_every_read(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare(hass, entry, 3)
+        await status_loop(link)
+        assert hub.datahub.calls.count("status") == 3
+        assert hub.datahub.calls.count("ev") == 1
+        (answer,) = link.ev.values()
+        assert answer.startswith("refused")
+        assert link._ev_due[KEPT] - time.monotonic() > 23 * 3600
+
+    async def test_a_failure_on_the_ev_endpoint_does_not_cost_the_status(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        seen: list[dict[str, str]] = []
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        hub.datahub.ev_result = DataHubError("GET ev answered 500")
+        await status_loop(link)
+        assert seen and seen[0]["FUEL_LEVEL_PERC"] == "42"
+
+    async def test_a_sign_out_on_the_ev_endpoint_is_a_sign_out(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare(hass, entry, 1)
+        hub.datahub.ev_result = DataHubAuthError("revoked")
+        await status_loop(link)
+        assert link.signed_out

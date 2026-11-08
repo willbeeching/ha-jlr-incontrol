@@ -166,6 +166,12 @@ The bonnet lock is off by default and not part of the security readings: it is a
 central locking, and reads locked with every door open. `DOOR_IS_BOOT_LOCKED` and the kilometre electric
 range have no entity of their own: they say what the boot lock and electric range already say.
 
+On the Data Hub, a plug-in car's battery and charging come from JLR's EV endpoint, which has no
+charging status of its own. **Charging status** is then made from its charging and plugged-in flags:
+charging, not connected, a fault, or **Plugged in, not charging** when it is plugged in and not
+charging, since the endpoint does not say whether that is paused, waiting or full. See
+[DATA_HUB.md](DATA_HUB.md).
+
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or
 "warning active". Those map to *unknown* rather than to a state.
 

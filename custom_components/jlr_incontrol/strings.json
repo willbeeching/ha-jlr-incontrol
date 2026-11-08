@@ -234,7 +234,8 @@
           "paused": "Paused",
           "not_connected": "Not connected",
           "fault": "Fault",
-          "no_message": "No message"
+          "no_message": "No message",
+          "not_charging": "Plugged in, not charging"
         }
       },
       "ev_precondition_remaining": {

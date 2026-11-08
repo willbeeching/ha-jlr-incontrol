@@ -285,6 +285,10 @@ class FakeDataHub:
                 "Powertrain": {"FuelType": "diesel"},
             }
         }
+        # What JLR answer for a car without a charge port.
+        self.ev_result: Any = DataHubForbidden(
+            "Access to category is not permitted for this vehicle: ev"
+        )
         self.login_result: Any = None
         self.poll_results: list[Any] = []
 
@@ -311,6 +315,10 @@ class FakeDataHub:
     async def async_location(self, vin: str, access_token: str) -> Any:
         self.calls.append("location")
         return self._answer(self.location_result)
+
+    async def async_ev(self, vin: str, access_token: str) -> Any:
+        self.calls.append("ev")
+        return self._answer(self.ev_result)
 
     async def async_stream_token(self) -> Any:
         self.calls.append("stream token")

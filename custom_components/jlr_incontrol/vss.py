@@ -169,6 +169,9 @@ RENAMES: dict[str, str] = {
     "Powertrain.TractionBattery.Charging.IsCharging": "EV_IS_CHARGING",
     "Powertrain.TractionBattery.Charging.ChargingPort.AnyPosition."
     "IsChargingCableConnected": "EV_IS_PLUGGED_IN",
+    # The same answer under the name the EV endpoint uses.
+    "Powertrain.TractionBattery.Charging.IsPlugConnected": "EV_IS_PLUGGED_IN",
+    "Powertrain.TractionBattery.Charging.Mode": "EV_CHARGING_MODE",
     "Powertrain.TractionBattery.Charging.TimeToComplete": (
         "EV_MINUTES_TO_FULLY_CHARGED"
     ),
@@ -268,9 +271,46 @@ def to_status(signals: Mapping[str, Any], reported: str | None) -> dict[str, str
         status["EV_RANGE_ON_BATTERY_KM"] = str(int(range_km))
         status["EV_RANGE_ON_BATTERY_MILES"] = str(round(range_km / KM_PER_MILE))
 
+    _charging_in_socket_terms(status)
+
     if reported:
         status["LAST_UPDATED_TIME"] = reported
     return status
+
+
+def _charging_in_socket_terms(status: dict[str, str]) -> None:
+    """Fill the socket's charging keys from the EV endpoint, where it lacks them.
+
+    The EV endpoint has no charging status, no displayed charge and no
+    charging method; it has the true charge, a plugged-in flag, a charging
+    flag and a mode. The entities, and the check that decides whether a car
+    has a charge port at all, read the socket's three keys. So where the car
+    did not send them, they are put into the socket's words from what it did
+    send — each only from a value that says the same thing, never a guess:
+
+    - the charge shown is the true charge when no displayed one comes;
+    - plugged in is WIRED and unplugged NOTCONNECTED, as the socket said;
+    - charging is CHARGING, a fault is FAULT, unplugged is NOTCONNECTED, and
+      plugged in without charging is NOTCHARGING, its own word, because the
+      socket's nearer ones (paused, waiting, fully charged) each say why and
+      the EV endpoint does not.
+    """
+    if "EV_STATE_OF_CHARGE" not in status and "EV_STATE_OF_CHARGE_ACTUAL" in status:
+        status["EV_STATE_OF_CHARGE"] = status["EV_STATE_OF_CHARGE_ACTUAL"]
+    plugged = status.get("EV_IS_PLUGGED_IN")
+    if "EV_CHARGING_METHOD" not in status and plugged in ("TRUE", "FALSE"):
+        status["EV_CHARGING_METHOD"] = "WIRED" if plugged == "TRUE" else "NOTCONNECTED"
+    if "EV_CHARGING_STATUS" in status:
+        return
+    charging = status.get("EV_IS_CHARGING")
+    if status.get("EV_CHARGING_MODE", "").upper() == "FAULT":
+        status["EV_CHARGING_STATUS"] = "FAULT"
+    elif charging == "TRUE":
+        status["EV_CHARGING_STATUS"] = "CHARGING"
+    elif plugged == "FALSE":
+        status["EV_CHARGING_STATUS"] = "NOTCONNECTED"
+    elif plugged == "TRUE" and charging == "FALSE":
+        status["EV_CHARGING_STATUS"] = "NOTCHARGING"
 
 
 def to_position(body: Mapping[str, Any]) -> dict[str, Any] | None:

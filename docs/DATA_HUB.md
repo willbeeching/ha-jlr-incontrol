@@ -81,6 +81,11 @@ client at data.jlr.com.
   asking every 15 minutes in the meantime. The answer per car is in diagnostics under `location`.
   The stream also subscribes to each car's `position` topic alongside `status`; if the broker will
   not allow it, the link falls back to status alone.
+- **Battery and charging**: from their own endpoint (`/ev`), read with each status read for a car
+  that has a charge port. The status snapshot carries none of it, so without this a plug-in car had
+  no battery readings until the stream delivered. A car without a charge port is refused there,
+  and is asked again once a day rather than every read. The answer per car is in diagnostics under
+  `ev`.
 - **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
   the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
   least 30 seconds, and backs off to 15 minutes when connections keep failing. If the broker
@@ -113,6 +118,14 @@ Also measured:
   the docs do not say this. Confirmed on two cars: both refused, both declared as sole user, both
   permitted at the next read. Look for each car's status and class in your vehicle list at
   data.jlr.com.
+- **Electric cars, not yet checked against one.** The EV endpoint gives the true charge, a
+  plugged-in flag, a charging flag and a mode, but no charging status, displayed charge or charging
+  method, which the entities and the charge-port check read. Those are filled in from what it does
+  give, word for word where the meaning is the same; plugged in and not charging reads **Plugged
+  in, not charging**, because the endpoint does not say whether that is paused, waiting or full.
+  JLR's own documents disagree on two units: the signal catalog gives time to full charge in
+  minutes and charging rate in km of range per hour, the API spec gives seconds and kW. The
+  catalog's are used. If either reads wrong on your car, please open an issue.
 - **Journeys** are refused for owner accounts altogether, even with the category selected and the
   car declared.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the

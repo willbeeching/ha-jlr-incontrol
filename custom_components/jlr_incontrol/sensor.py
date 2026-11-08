@@ -157,6 +157,9 @@ _CHARGING_STATES = {
     "NOTCONNECTED": "not_connected",
     "FAULT": "fault",
     "NOMESSAGE": "no_message",
+    # Not the socket's: what the Data Hub's EV endpoint can say for a car
+    # plugged in and not charging, which does not say why. See vss.
+    "NOTCHARGING": "not_charging",
 }
 
 

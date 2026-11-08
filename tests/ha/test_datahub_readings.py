@@ -193,6 +193,12 @@ def body() -> str:
 
 
 @pytest.fixture
+def ev_answer() -> dict[str, Any] | None:
+    """What the EV endpoint answers; None keeps the fake's refusal."""
+    return None
+
+
+@pytest.fixture
 def every_entity_on(monkeypatch: pytest.MonkeyPatch) -> None:
     # Most of these are off by default, and an entity that is off has no
     # state to read. Core's own tests switch them on the same way.
@@ -211,6 +217,7 @@ async def car(
     snapshot: dict[str, Any],
     fuel: str,
     body: str,
+    ev_answer: dict[str, Any] | None,
 ) -> AsyncIterator[None]:
     """A car on the Data Hub, every entity switched on, holding ``snapshot``."""
 
@@ -224,6 +231,8 @@ async def car(
             self.vehicle_result["Vehicle"]["Powertrain"] = {"FuelType": fuel}
             self.vehicle_result["Vehicle"]["Exterior"] = {"Colour": "Santorini Black"}
             self.vehicle_result["Vehicle"]["VehicleIdentification"]["BodyType"] = body
+            if ev_answer is not None:
+                self.ev_result = ev_answer
 
     monkeypatch.setattr(datahub_link, "DataHubClient", doubles.builder("datahub", Hub))
 
@@ -417,3 +426,56 @@ class TestAnElectricCar:
 
     def test_a_fuel_reading_is_not_made_for_it(self, hass: HomeAssistant) -> None:
         assert state(hass, "sensor", "fuel_volume") is None
+
+
+def ev_endpoint(charging: bool, plugged: bool) -> dict[str, Any]:
+    """The EV endpoint's answer, in the shape JLR's API spec gives it."""
+    return {
+        "timestamp": "2026-11-07T09:00:00Z",
+        "Vehicle": {
+            "Powertrain": {
+                "TractionBattery": {
+                    "StateOfCharge": {"Current": 64},
+                    "Range": 40,
+                    "Charging": {
+                        "IsCharging": charging,
+                        "IsPlugConnected": plugged,
+                        "ChargeLimit": 80,
+                    },
+                }
+            }
+        },
+    }
+
+
+@pytest.mark.usefixtures("car")
+@pytest.mark.parametrize("fuel", ["petrol plug-in hybrid"])
+class TestAPlugInHybridOnTheEvEndpoint:
+    """The battery from the EV endpoint, the status snapshot having none.
+
+    What an owner on a Range Rover Sport plug-in hybrid reported: on the Data
+    Hub the battery, charging status and time to full were gone, because the
+    status snapshot carries none of them and nothing asked the EV endpoint.
+    """
+
+    @pytest.mark.parametrize("ev_answer", [ev_endpoint(True, True)])
+    def test_charging(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "ev_battery") == "64.0"
+        assert state(hass, "sensor", "ev_charging_status") == "charging"
+        assert state(hass, "sensor", "ev_charge_limit") == "80.0"
+        assert state(hass, "binary_sensor", "ev_charging") == "on"
+        assert state(hass, "binary_sensor", "ev_plugged_in") == "on"
+        assert state(hass, "sensor", "evcc_status") == "C"
+
+    @pytest.mark.parametrize("ev_answer", [ev_endpoint(False, True)])
+    def test_plugged_in_and_not_charging(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "ev_charging_status") == "not_charging"
+        assert state(hass, "binary_sensor", "ev_charging") == "off"
+        assert state(hass, "binary_sensor", "ev_plugged_in") == "on"
+        assert state(hass, "sensor", "evcc_status") == "B"
+
+    @pytest.mark.parametrize("ev_answer", [ev_endpoint(False, False)])
+    def test_unplugged(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "ev_charging_status") == "not_connected"
+        assert state(hass, "binary_sensor", "ev_plugged_in") == "off"
+        assert state(hass, "sensor", "evcc_status") == "A"

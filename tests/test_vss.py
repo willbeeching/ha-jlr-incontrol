@@ -8,6 +8,8 @@ not those cars' readings.
 
 from __future__ import annotations
 
+import pytest
+
 from custom_components.jlr_incontrol.vss import (
     signals_to_position,
     to_attributes,
@@ -235,3 +237,57 @@ class TestDetails:
     def test_nothing_usable_is_nothing(self) -> None:
         assert to_attributes({}) == {}
         assert to_attributes({"Vehicle": {"VehicleIdentification": "x"}}) == {}
+
+
+EV = "Vehicle.Powertrain.TractionBattery."
+
+
+class TestTheEvEndpointInSocketTerms:
+    """The EV endpoint's answer, put into the keys the entities read."""
+
+    def ev(self, **charging: object) -> dict[str, object]:
+        signals: dict[str, object] = {f"{EV}StateOfCharge.Current": 78.5}
+        signals.update({f"{EV}Charging.{k}": v for k, v in charging.items()})
+        return signals
+
+    def test_the_true_charge_stands_in_for_the_shown_one(self) -> None:
+        status = to_status(self.ev(), None)
+        assert status["EV_STATE_OF_CHARGE"] == "78.5"
+        assert status["EV_STATE_OF_CHARGE_ACTUAL"] == "78.5"
+
+    def test_the_shown_charge_wins_when_it_comes(self) -> None:
+        signals = {**self.ev(), f"{EV}StateOfCharge.Displayed": 80}
+        assert to_status(signals, None)["EV_STATE_OF_CHARGE"] == "80"
+
+    @pytest.mark.parametrize(
+        ("charging", "status", "method"),
+        [
+            ({"IsCharging": True, "IsPlugConnected": True}, "CHARGING", "WIRED"),
+            (
+                {"IsCharging": False, "IsPlugConnected": False},
+                "NOTCONNECTED",
+                "NOTCONNECTED",
+            ),
+            ({"IsCharging": False, "IsPlugConnected": True}, "NOTCHARGING", "WIRED"),
+            ({"IsPlugConnected": True, "Mode": "fault"}, "FAULT", "WIRED"),
+        ],
+    )
+    def test_charging_in_the_sockets_words(
+        self, charging: dict[str, object], status: str, method: str
+    ) -> None:
+        result = to_status(self.ev(**charging), None)
+        assert result["EV_CHARGING_STATUS"] == status
+        assert result["EV_CHARGING_METHOD"] == method
+
+    def test_a_charging_status_the_car_sent_is_not_overwritten(self) -> None:
+        signals = {
+            **self.ev(IsCharging=False, IsPlugConnected=True),
+            f"{EV}Charging.Status": "FULLYCHARGED",
+        }
+        assert to_status(signals, None)["EV_CHARGING_STATUS"] == "FULLYCHARGED"
+
+    def test_nothing_is_said_when_nothing_was_sent(self) -> None:
+        # Plugged in, with no word on whether it is charging: no status.
+        result = to_status(self.ev(IsPlugConnected=True), None)
+        assert "EV_CHARGING_STATUS" not in result
+        assert to_status({}, None) == {}

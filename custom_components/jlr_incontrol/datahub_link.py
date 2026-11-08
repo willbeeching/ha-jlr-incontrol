@@ -111,6 +111,11 @@ STATUS_INTERVAL_UNPROVEN = 15 * 60.0
 # is asked hourly, so a declaration made later is noticed, and no more often;
 # a permitted one is read with its status, as the portal's position was.
 LOCATION_INTERVAL = 60 * 60.0
+# Battery and charging come from their own endpoint, which JLR refuse for a car
+# without a charge port. Read with each status read for a car that answers; a
+# car that is refused is asked again daily rather than every read, since what
+# it is refused for is its hardware, not anything an owner can change.
+EV_REFUSED_RETRY = 24 * 60 * 60.0
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
 HEALTHY_FOR = 3 * 60 * 60.0
@@ -216,6 +221,8 @@ class DataHubLink:
         # What JLR said the last time each car's location was asked for.
         self.location: dict[str, str] = {}
         self._location_due: dict[str, float] = {}
+        self.ev: dict[str, str] = {}
+        self._ev_due: dict[str, float] = {}
         # Cars with a full REST snapshot behind their signals. Until a car has
         # one, what the stream has sent is a few signals, not its status.
         self._read_in_full: set[str] = set()
@@ -495,29 +502,61 @@ class DataHubLink:
                 _LOGGER.debug("Data Hub status for %s: %s", vehicle_label(vin), err)
                 continue
             answered = True
-            snapshot = _parse_time(body.get("timestamp"))
-            signals = self.signals.setdefault(vin, {})
-            for name, value in _flatten(body.get("Vehicle"), "Vehicle").items():
-                if name == "Vehicle.VehicleIdentification.VIN":
-                    continue
-                seen = signals.get(name, {}).get("time")
-                # A streamed value stamped later than this snapshot is newer.
-                if seen and snapshot and seen > snapshot:
-                    continue
-                signals[name] = {"value": value, "time": snapshot}
-            if snapshot:
-                self._note_report(vin, snapshot)
+            self._merge(vin, body)
+            await self._async_read_ev(vin, token)
             self._read_in_full.add(vin)
             _LOGGER.debug(
                 "Data Hub status for %s: reported %s, %d signals",
                 vehicle_label(vin),
-                snapshot,
-                len(signals),
+                self.reports.get(vin),
+                len(self.signals.get(vin, {})),
             )
             self._emit(vin)
         if answered:
             self._status_ok_at = time.monotonic()
         self._notify()
+
+    def _merge(self, vin: str, body: dict[str, Any]) -> None:
+        """A REST answer's signals into what is held, newer values kept."""
+        snapshot = _parse_time(body.get("timestamp"))
+        signals = self.signals.setdefault(vin, {})
+        for name, value in _flatten(body.get("Vehicle"), "Vehicle").items():
+            if name == "Vehicle.VehicleIdentification.VIN":
+                continue
+            seen = signals.get(name, {}).get("time")
+            # A value stamped later than this answer is newer.
+            if seen and snapshot and seen > snapshot:
+                continue
+            signals[name] = {"value": value, "time": snapshot}
+        if snapshot:
+            self._note_report(vin, snapshot)
+
+    async def _async_read_ev(self, vin: str, token: str) -> None:
+        """Battery and charging, from the endpoint that carries them.
+
+        The status snapshot has none of it: JLR's catalog marks every traction
+        battery signal stream-only, so a plug-in car read from REST alone had
+        no charge, range or charging state until the stream delivered, and its
+        battery entities were pruned as no longer reported. An owner on a
+        Range Rover Sport plug-in hybrid reported exactly that.
+        """
+        now = time.monotonic()
+        if now < self._ev_due.get(vin, 0.0):
+            return
+        try:
+            body = await self.client.async_ev(vin, token)
+        except (DataHubAuthError, DataHubRateLimited):
+            raise
+        except DataHubError as err:
+            answer = f"refused: {err}"
+            self._ev_due[vin] = now + EV_REFUSED_RETRY
+        else:
+            self._merge(vin, body)
+            answer = "permitted"
+            self._ev_due[vin] = 0.0
+        if answer != self.ev.get(vin):
+            _LOGGER.debug("Data Hub EV data for %s: %s", vehicle_label(vin), answer)
+        self.ev[vin] = answer
 
     def _note_report(self, vin: str, when: datetime) -> bool:
         if vin not in self.reports or when > self.reports[vin]:
@@ -820,6 +859,7 @@ class DataHubLink:
             "stream_enabled": self.stream_enabled,
             "healthy": self.healthy,
             "location": {vehicle_label(v): a for v, a in self.location.items()},
+            "ev": {vehicle_label(v): a for v, a in self.ev.items()},
             "broker": self.broker,
             "login": self._login.label if self._login else None,
             "accepted_login": self._accepted.label if self._accepted else None,

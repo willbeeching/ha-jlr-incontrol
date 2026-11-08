@@ -447,6 +447,10 @@ class DataHubClient:
         """The current location for one vehicle, where JLR allow it."""
         return await self.async_get(f"/v1/vehicles/{vin}/location", access_token)
 
+    async def async_ev(self, vin: str, access_token: str) -> dict[str, Any]:
+        """Battery and charging for one vehicle; refused for a car without."""
+        return await self.async_get(f"/v1/vehicles/{vin}/ev", access_token)
+
     async def async_vehicle(self, vin: str, access_token: str) -> dict[str, Any]:
         """The vehicle's details: brand, model, year, body, fuel type."""
         return await self.async_get(f"/v1/vehicles/{vin}", access_token)
