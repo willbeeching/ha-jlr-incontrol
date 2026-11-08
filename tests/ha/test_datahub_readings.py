@@ -195,6 +195,24 @@ ELECTRIC: dict[str, Any] = {
 }
 
 
+# A diesel the Data Hub calls petrol, as it did a 2019 Range Rover SDV8: its
+# AdBlue service countdown is the car's own word that it has AdBlue.
+MISLABELLED_DIESEL: dict[str, Any] = {
+    **VEHICLE,
+    "Powertrain": {
+        **VEHICLE["Powertrain"],
+        "CombustionEngine": {
+            **VEHICLE["Powertrain"]["CombustionEngine"],
+            "DieselExhaustFluid": {"Level": 0, "IsLevelLow": "NORMAL"},
+            "Diesel": {
+                "ParticulateFilter": {"IsLevelLow": "CLEAR"},
+                "ExhaustFluid": {"Service": {"DistanceToService": 8400}},
+            },
+        },
+    },
+}
+
+
 @pytest.fixture
 def snapshot() -> dict[str, Any]:
     return VEHICLE
@@ -395,6 +413,13 @@ class TestWhatIsLeftOff:
         # It sends the AdBlue keys all the same.
         assert state(hass, "sensor", "adblue_to_refill") is None
         assert state(hass, "binary_sensor", "particulate_filter_warning") is not None
+
+    @pytest.mark.parametrize("fuel", ["petrol"])
+    @pytest.mark.parametrize("snapshot", [MISLABELLED_DIESEL])
+    def test_a_diesel_called_petrol_keeps_its_adblue(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "adblue_range") == "8400.0"
+        assert state(hass, "sensor", "adblue_to_refill") == "0.0"
+        assert state(hass, "binary_sensor", "adblue_warning") == "off"
 
     @pytest.mark.parametrize("fuel", ["petrol plug-in hybrid"])
     def test_a_hybrid_has_its_combined_range(self, hass: HomeAssistant) -> None:

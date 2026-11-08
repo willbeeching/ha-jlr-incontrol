@@ -144,16 +144,28 @@ def has_no_engine(attributes: dict[str, Any], status: dict[str, Any]) -> bool:
     return "EV_STATE_OF_CHARGE" in status and "FUEL_LEVEL_PERC" not in status
 
 
-def is_not_diesel(attributes: dict[str, Any]) -> bool:
+def is_not_diesel(attributes: dict[str, Any], status: dict[str, Any]) -> bool:
     """True only when the car is known to burn something other than diesel.
 
     For AdBlue, which only a diesel has. Petrol cars still send its keys, so
     presence alone put an AdBlue range on a petrol car. A car whose fuel type
     is not known keeps them: hiding a diesel's warnings on a guess is worse
     than a petrol car showing an AdBlue reading it does not need.
+
+    The car's own AdBlue outranks the fuel type. The Data Hub called a 2019
+    Range Rover SDV8 petrol while it counted down 8400 km to its AdBlue
+    service, and 2.0.0 hid that diesel's AdBlue on JLR's word.
     """
     fuel = str(attributes.get("fuelType") or "").lower()
-    return bool(fuel) and "diesel" not in fuel
+    if not fuel or "diesel" in fuel:
+        return False
+    try:
+        counting_down = float(
+            status.get("EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM", "")
+        )
+    except (TypeError, ValueError):
+        counting_down = 0.0
+    return counting_down <= 0
 
 
 def is_convertible(attributes: dict[str, Any]) -> bool:

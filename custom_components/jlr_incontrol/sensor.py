@@ -955,7 +955,7 @@ def _should_create_sensor(
         return False
     if description.suppress_for_ev and has_no_engine(attributes, status):
         return False
-    if description.requires_diesel and is_not_diesel(attributes):
+    if description.requires_diesel and is_not_diesel(attributes, status):
         return False
     if description.requires_ev:
         return is_electrified(attributes, status)

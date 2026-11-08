@@ -353,14 +353,24 @@ class TestWhichCarsGetWhat:
     def test_adblue_is_hidden_on_a_car_known_not_to_be_a_diesel(
         self, fuel: str, hidden: bool
     ) -> None:
-        assert is_not_diesel({"fuelType": fuel}) is hidden
+        assert is_not_diesel({"fuelType": fuel}, {}) is hidden
 
     @pytest.mark.parametrize("attributes", [{"fuelType": "DIESEL"}, {}])
     def test_a_diesel_or_a_car_that_does_not_say_keeps_it(
         self, attributes: dict[str, Any]
     ) -> None:
         # Hiding a diesel's AdBlue warning on a guess is the worse mistake.
-        assert not is_not_diesel(attributes)
+        assert not is_not_diesel(attributes, {})
+
+    @pytest.mark.parametrize(
+        ("distance", "hidden"), [("8400", False), ("0", True), ("UNKNOWN", True)]
+    )
+    def test_a_car_counting_down_to_its_adblue_service_is_a_diesel(
+        self, distance: str, hidden: bool
+    ) -> None:
+        # The Data Hub called an SDV8 Range Rover petrol.
+        status = {"EXT_EXHAUST_FLUID_DISTANCE_TO_SERVICE_KM": distance}
+        assert is_not_diesel({"fuelType": "petrol"}, status) is hidden
 
     @pytest.mark.parametrize(
         ("body", "soft_top"),

@@ -441,7 +441,7 @@ async def async_setup_entry(
             if description.status_key in status
             and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
             and (not description.requires_ev or is_electrified(attributes, status))
-            and not (description.requires_diesel and is_not_diesel(attributes))
+            and not (description.requires_diesel and is_not_diesel(attributes, status))
             and not (description.suppress_for_ev and has_no_engine(attributes, status))
             and (description.key not in CONVERTIBLE_KEYS or is_convertible(attributes))
         ]

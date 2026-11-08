@@ -47,7 +47,9 @@ ids made before it are kept, and so is their history.
 - **PHEV** — plug-in hybrids only.
 - **diesel** — hidden on a car whose fuel type is known and is not diesel. Petrol cars send the
   AdBlue keys too, so presence alone is not enough. A car whose fuel type is not known keeps them:
-  hiding a diesel's AdBlue warning on a guess would be the worse mistake.
+  hiding a diesel's AdBlue warning on a guess would be the worse mistake. So does a car counting
+  down to an AdBlue service, whatever its fuel type says: the Data Hub has called a diesel Range
+  Rover petrol.
 - **soft-top** — only when the body type from the Data Hub says convertible or cabriolet. Every car
   sends the convertible roof key, hard-tops included.
 
