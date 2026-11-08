@@ -80,7 +80,8 @@ client at data.jlr.com.
   stops working. A link that is working is not offered it, since linking again only replaces a
   good key.
 - **Status**: one REST read per car when the link starts, then every 15 minutes until the stream
-  has delivered a message, and hourly after that. Fifteen minutes is the cadence the integration's
+  has delivered a reading newer than the car's last report, and hourly after that. A message that
+  only repeats what REST already brought does not count. Fifteen minutes is the cadence the integration's
   housekeeping already keeps; it is there because the REST read is the only source of change
   until the stream is shown to work. The **Refresh** button reads status on demand, at most once a
   minute.
@@ -116,8 +117,11 @@ Measured on a UK account in November 2026. The integration follows what was meas
 Also measured:
 
 - Tyre pressures are in hPa (2278 is about 33 psi).
-- REST status has one `timestamp` for the whole snapshot, not one per signal. Stream messages
-  carry one each.
+- REST status has one `timestamp` for the whole snapshot, not one per signal. JLR's streaming
+  guide shows stream messages carrying one signal each, and flags that schema itself as
+  unconfirmed. The first drive with the stream connected brought 13 messages and no reading newer
+  than REST already had, so it reads both the documented shape and the REST snapshot's, and keeps the
+  key names (never the values) of anything else in diagnostics as `unread_shape`.
 - The status values are the same as the existing integration's (the same frozen coolant
   temperature, the same `KEY_ON_ENGINE_OFF`), so everything in [DATA_MODEL.md](DATA_MODEL.md)
   still applies.
@@ -147,8 +151,9 @@ Also measured:
   which the broker accepts. That name is not a portal typo:
   the portal reads it from JLR's own `/account/credential/stream` API. The portal also shows every
   stream detail in capitals through CSS, so the capitals are not the username's real case. The
-  stream connects and subscribes on owner accounts; whether it delivers as a car is driven had not
-  been seen by the 2.0 release, so status is read every 15 minutes until it does.
+  stream connects and subscribes on owner accounts, and delivered messages during a drive in
+  November 2026, though none with a reading newer than REST had. Status is read every 15 minutes until a
+  streamed reading is newer than what REST has.
 - The docs' Vehicle Data and Diagnostics pages list endpoints the published API spec does not:
   `/v1/vehicles/{vin}/alerts`, `/ev/hv-battery` and `/diagnostics`, and a `Capabilities` list on
   vehicle details that includes `live-data-streaming`. Neither car tested returned `Capabilities`,
@@ -177,6 +182,11 @@ Also measured:
   round ends with nothing working it leaves the stream for six hours before trying again.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
   or consent withdrawn. Link it again from the options; a new certificate is made each time.
+- **The stream is connected but nothing arrives from it**: diagnostics count, under `stats`,
+  every `messages` the broker sent, the `fresh` ones that moved a car's last report forward, and
+  the `unread` ones with no reading the link could place, with `last_message` (when one last
+  arrived) and `unread_shape` (the key names of the last unread one). A count of `unread` with
+  its shape in an issue is what is needed to read them.
 - Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the
   stream delivers, with the time the car sent it. Car identities are replaced with a stable
   label in those lines.

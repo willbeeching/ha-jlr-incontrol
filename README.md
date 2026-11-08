@@ -199,8 +199,8 @@ with that key, which never leaves Home Assistant, so a token on its own is no us
 refresh token for the link does not expire, so it keeps working without you.
 
 Status is read from JLR's REST API every 15 minutes, and the integration also holds one connection
-to JLR's stream for the whole account. Once the stream has shown it delivers, the REST read drops
-to hourly and changes arrive as the car reports them. Location is read with each status update for
+to JLR's stream for the whole account. Once the stream has delivered a reading newer than REST had,
+the REST read drops to hourly and changes arrive as the car reports them. Location is read with each status update for
 every car declared at data.jlr.com, and a car JLR refuse is asked only hourly. Each reading carries
 the time the car actually reported it, which the InControl route never had.
 

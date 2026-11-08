@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from typing import Any
 
@@ -273,7 +274,18 @@ class TestTheStatusTimer:
         link, pause = bare(hass, entry, 2)
         await status_loop(link)
         assert pause.waits[0] == datahub_link.STATUS_INTERVAL_UNPROVEN
-        link.stats["messages"] = 1
+        # Messages that bring nothing newer than REST are not the stream
+        # working: the first drive on it went hourly on thirteen of those.
+        topic = f"account/acct-1/vehicles/{KEPT}/status"
+        held = json.dumps(
+            {"name": "Vehicle.TraveledDistance", "timestamp": "2026-11-07T09:00:00Z"}
+        )
+        link._on_message(topic, held.encode())
+        pause.waits.clear()
+        await status_loop(link)
+        assert pause.waits[0] == datahub_link.STATUS_INTERVAL_UNPROVEN
+        newer = held.replace("09:00", "10:00")
+        link._on_message(topic, newer.encode())
         pause.waits.clear()
         await status_loop(link)
         assert pause.waits[0] == datahub_link.STATUS_INTERVAL

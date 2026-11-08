@@ -599,6 +599,8 @@ class TestWhatItReads:
         link._on_message(topic, payload)
         assert link.reports == {}
         assert link.stats["messages"] == 1
+        assert link.stats["unread"] == 1
+        assert link.stats["fresh"] == 0
 
     async def test_a_batch_of_signals_is_one_update(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
@@ -629,6 +631,95 @@ class TestWhatItReads:
         )
         assert link.signals[KEPT]["Vehicle.A"]["time"] is None
         assert link.reports == {}
+
+
+class TestWhatTheStreamProves:
+    """The first drive on the stream brought thirteen messages and not one
+    reading newer than REST had, and the link went hourly on the count."""
+
+    async def test_a_message_shaped_like_the_rest_snapshot_is_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        statuses: list[dict[str, str]] = []
+        link = DataHubLink(hass, linked, on_status=lambda _, s: statuses.append(s))
+        await link._async_read_status()
+        snapshot = {
+            "timestamp": "2026-11-07T10:00:00.000Z",
+            "Vehicle": {
+                "VehicleIdentification": {"VIN": KEPT},
+                "TraveledDistance": 12346000,
+            },
+        }
+        link._on_message(TOPIC, json.dumps(snapshot).encode())
+        held = link.signals[KEPT]["Vehicle.TraveledDistance"]
+        assert held["value"] == 12346000
+        assert "Vehicle.VehicleIdentification.VIN" not in link.signals[KEPT]
+        assert link.reports[KEPT].isoformat() == "2026-11-07T10:00:00+00:00"
+        assert statuses[-1]["ODOMETER_METER"] == "12346000"
+        assert link.stats["fresh"] == 1
+        assert link.stats["unread"] == 0
+
+    async def test_a_snapshot_shaped_fix_is_handed_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        snapshot = {
+            "timestamp": "2026-11-07T10:00:00Z",
+            "Vehicle": {"CurrentLocation": {"Latitude": 51.5, "Longitude": -0.12}},
+        }
+        link._on_message(POSITION_TOPIC, json.dumps(snapshot).encode())
+        assert positions[-1]["latitude"] == 51.5
+
+    async def test_a_redelivery_of_what_rest_brought_proves_nothing(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        await link._async_read_status()
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T09:00:00Z", 5)
+        )
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T08:00:00Z", 4)
+        )
+        assert link.stats["messages"] == 2
+        assert link.stats["fresh"] == 0
+        assert link.stats["unread"] == 0
+        assert link.diagnostics()["stats"]["last_message"]
+
+    async def test_a_message_before_the_first_snapshot_proves_nothing(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # What the broker holds and sends on subscribing is old, and REST
+        # has not said how old yet.
+        link = DataHubLink(hass, linked)
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T10:00:00Z")
+        )
+        assert link.stats["fresh"] == 0
+        await link._async_read_status()
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T11:00:00Z")
+        )
+        assert link.stats["fresh"] == 1
+
+    async def test_an_unread_message_is_described_by_its_keys_alone(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        odd = {"signal": "Vehicle.Speed", "ts": 1, "v": 51.5}
+        link._on_message(TOPIC, json.dumps(odd).encode())
+        link._on_message(POSITION_TOPIC, json.dumps([odd, odd]).encode())
+        link._on_message(TOPIC, b"[]")
+        stats = link.diagnostics()["stats"]
+        assert stats["unread"] == 3
+        assert stats["unread_shape"] == "[0]"
+        link._on_message(POSITION_TOPIC, json.dumps([odd]).encode())
+        stats = link.diagnostics()["stats"]
+        assert stats["unread_shape"] == "[1] {signal, ts, v}"
+        assert "51.5" not in json.dumps(link.diagnostics(), default=str)
+        link._on_message(TOPIC, b"7")
+        assert link.stats["unread_shape"] == "int"
 
 
 POSITION_TOPIC = f"account/acct-1/vehicles/{KEPT}/position"

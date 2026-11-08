@@ -113,8 +113,9 @@ HEALTHY_SESSION = 60.0
 # REST status, alongside the stream. The stream carries changes; this is the
 # full snapshot, and the only source while the stream is switched off.
 STATUS_INTERVAL = 60 * 60.0
-# Until the stream has delivered a message, REST is the only source of change,
-# and it replaces a socket that pushed within minutes. Fifteen minutes is the
+# Until the stream has delivered a reading newer than the car's last report,
+# REST is the only source of change, and it replaces a socket that pushed
+# within minutes. Fifteen minutes is the
 # housekeeping cadence this integration already keeps, for two requests.
 STATUS_INTERVAL_UNPROVEN = 15 * 60.0
 # Location is refused per car until the owner declares how the car is used at
@@ -172,6 +173,41 @@ def _flatten(tree: Any, prefix: str = "") -> dict[str, Any]:
     return flat
 
 
+def _stream_signals(decoded: Any) -> list[dict[str, Any]]:
+    """The signals in one stream message, in the documented per-signal shape.
+
+    JLR's streaming guide shows one signal per message and flags its own
+    schema as unconfirmed ("mirrors the REST signal shape"). The first drive
+    on the stream brought thirteen messages and not one reading newer than
+    REST already had, so a message shaped like the REST snapshot (a nested
+    ``Vehicle`` tree under one ``timestamp``) is read as well, and anything
+    else is described in diagnostics.
+    """
+    if isinstance(decoded, dict) and "name" not in decoded and "Vehicle" in decoded:
+        when = decoded.get("timestamp")
+        return [
+            {"name": name, "value": value, "timestamp": when}
+            for name, value in _flatten(decoded["Vehicle"], "Vehicle").items()
+            if name != "Vehicle.VehicleIdentification.VIN"
+        ]
+    items = decoded if isinstance(decoded, list) else [decoded]
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _shape(decoded: Any) -> str:
+    """What a message looked like, by key names alone, for diagnostics.
+
+    Never the values: a message the parser cannot read may still carry a
+    position or a VIN.
+    """
+    if isinstance(decoded, dict):
+        return "{" + ", ".join(sorted(str(key) for key in decoded)[:12]) + "}"
+    if isinstance(decoded, list):
+        inner = _shape(decoded[0]) if decoded else ""
+        return f"[{len(decoded)}] {inner}".strip()
+    return type(decoded).__name__
+
+
 class DataHubLink:
     """Sign-in upkeep, REST status and the stream, for one config entry."""
 
@@ -223,6 +259,15 @@ class DataHubLink:
         self.stats: dict[str, Any] = {
             "sessions": 0,
             "messages": 0,
+            # Messages that moved a car's last report forward, after its first
+            # full snapshot. Only these show the stream is ahead of REST;
+            # a redelivery of what REST already brought is not.
+            "fresh": 0,
+            # Messages with no signal the parser could place, and the key
+            # names of the last one.
+            "unread": 0,
+            "unread_shape": None,
+            "last_message": None,
             "last_session_seconds": None,
             "last_session_end": None,
             "last_error": None,
@@ -309,9 +354,7 @@ class DataHubLink:
     async def _async_status_loop(self) -> None:
         """REST status on a timer, and location with it."""
         while not self.signed_out:
-            wait = (
-                STATUS_INTERVAL if self.stats["messages"] else STATUS_INTERVAL_UNPROVEN
-            )
+            wait = STATUS_INTERVAL if self.stats["fresh"] else STATUS_INTERVAL_UNPROVEN
             try:
                 await self._async_read_status()
                 await self._async_probe_location()
@@ -896,24 +939,27 @@ class DataHubLink:
 
     def _on_message(self, topic: str, payload: bytes) -> None:
         self.stats["messages"] += 1
+        self.stats["last_message"] = dt_util.utcnow().isoformat(timespec="seconds")
         # account/{account}/vehicles/{vin}/{category}
         parts = topic.split("/")
         vin = parts[3] if len(parts) > 3 and parts[2] == "vehicles" else None
         try:
             decoded = json.loads(payload)
         except ValueError:
-            _LOGGER.debug("Data Hub message on %s was not JSON", parts[-1])
+            self._unread(parts[-1], "not JSON")
             return
-        items = decoded if isinstance(decoded, list) else [decoded]
+        snapshot_held = vin in self._read_in_full
         changed = False
         moved = False
-        for item in items:
-            if not isinstance(item, dict) or vin is None:
+        placed = False
+        for item in _stream_signals(decoded):
+            if vin is None:
                 continue
             name = item.get("name")
             when = _parse_time(item.get("timestamp"))
             if not isinstance(name, str):
                 continue
+            placed = True
             held = self.signals.get(vin, {}).get(name, {}).get("time")
             if held and (when is None or when < held):
                 # Delivered late: JLR send out of order. An "unlocked" from
@@ -932,12 +978,22 @@ class DataHubLink:
             _LOGGER.debug(
                 "Data Hub %s %s at %s", vehicle_label(vin), name, item.get("timestamp")
             )
+        if not placed:
+            self._unread(parts[-1], _shape(decoded))
+            return
         if changed:
+            if snapshot_held:
+                self.stats["fresh"] += 1
             self._notify()
         if vin is not None and vin in self.signals:
             self._emit(vin)
             if moved:
                 self._emit_position(vin)
+
+    def _unread(self, category: str, shape: str) -> None:
+        self.stats["unread"] += 1
+        self.stats["unread_shape"] = shape
+        _LOGGER.debug("Data Hub message on %s not read: %s", category, shape)
 
     def _emit_position(self, vin: str) -> None:
         """Hand on a fix the stream delivered, once both halves agree.
