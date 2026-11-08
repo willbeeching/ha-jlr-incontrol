@@ -395,3 +395,12 @@ class TestNoNegativeCharging:
     @pytest.mark.parametrize("raw", ["-1", "-1.0", "UNKNOWN"])
     def test_below_zero_is_no_reading(self, raw: str) -> None:
         assert _not_negative(raw) is None
+
+
+def test_adblue_to_refill_keeps_its_statistics() -> None:
+    # Released with a measurement state class in 1.9.0-beta.7, so owners have
+    # long-term statistics for it. Losing the state class, as beta.8 did,
+    # makes Home Assistant ask them to delete those.
+    from homeassistant.components.sensor import SensorStateClass
+
+    assert description("adblue_to_refill").state_class is SensorStateClass.MEASUREMENT
