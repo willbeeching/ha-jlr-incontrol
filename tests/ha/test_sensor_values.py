@@ -32,6 +32,7 @@ from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     _combined_range,
     _coolant_temp,
     _departure,
+    _not_negative,
     _odometer_attrs,
     _per_100,
     _tenths,
@@ -384,3 +385,13 @@ class TestHomeAssistantAcceptsEveryDescription:
         allowed = DEVICE_CLASS_UNITS.get(item.device_class)
         if allowed is not None:
             assert item.native_unit_of_measurement in allowed
+
+
+class TestNoNegativeCharging:
+    @pytest.mark.parametrize(("raw", "expected"), [("0", 0.0), ("7.5", 7.5)])
+    def test_zero_and_up_are_readings(self, raw: str, expected: float) -> None:
+        assert _not_negative(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["-1", "-1.0", "UNKNOWN"])
+    def test_below_zero_is_no_reading(self, raw: str) -> None:
+        assert _not_negative(raw) is None

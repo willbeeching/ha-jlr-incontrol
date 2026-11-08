@@ -428,7 +428,7 @@ class TestAnElectricCar:
         assert state(hass, "sensor", "fuel_volume") is None
 
 
-def ev_endpoint(charging: bool, plugged: bool) -> dict[str, Any]:
+def ev_endpoint(charging: bool, plugged: bool, **extra: Any) -> dict[str, Any]:
     """The EV endpoint's answer, in the shape JLR's API spec gives it."""
     return {
         "timestamp": "2026-11-07T09:00:00Z",
@@ -441,6 +441,7 @@ def ev_endpoint(charging: bool, plugged: bool) -> dict[str, Any]:
                         "IsCharging": charging,
                         "IsPlugConnected": plugged,
                         "ChargeLimit": 80,
+                        **extra,
                     },
                 }
             }
@@ -479,3 +480,14 @@ class TestAPlugInHybridOnTheEvEndpoint:
         assert state(hass, "sensor", "ev_charging_status") == "not_connected"
         assert state(hass, "binary_sensor", "ev_plugged_in") == "off"
         assert state(hass, "sensor", "evcc_status") == "A"
+
+    @pytest.mark.parametrize(
+        "ev_answer",
+        [ev_endpoint(False, False, ChargeRate=0, StateOfChargeRate=-1)],
+    )
+    def test_a_negative_rate_is_no_rate(self, hass: HomeAssistant) -> None:
+        # What a Range Rover Sport plug-in hybrid sent sitting full and not
+        # charging: -1 %/h, which read as the battery draining by the hour.
+        assert state(hass, "sensor", "ev_charging_rate_percent") == STATE_UNKNOWN
+        # A real zero stays a zero.
+        assert state(hass, "sensor", "ev_charging_rate") == "0.0"

@@ -82,6 +82,17 @@ def _coolant_temp(value: str) -> float | None:
     return temp
 
 
+def _not_negative(value: Any) -> float | None:
+    """A reading that cannot be below zero, with JLR's negative sentinel unknown.
+
+    A Range Rover Sport plug-in hybrid sitting full and not charging reported
+    a charging rate of -1 %/h: not a rate, the car's way of having none.
+    Shown as it came, it read as the battery draining by the hour.
+    """
+    number = _to_float(value)
+    return None if number is None or number < 0 else number
+
+
 def _combined_range(value: str) -> float | None:
     """Return combined range, treating negative sentinel as unknown."""
     val = _to_float(value)
@@ -716,6 +727,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_not_negative,
         requires_ev=True,
     ),
     JlrSensorDescription(
@@ -738,11 +750,17 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.DURATION,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_not_negative,
         requires_ev=True,
     ),
     # From here on, from JLR's Data Hub catalog: units as the catalog gives
     # them, not yet matched against an electric car's own display.
-    _minutes("ev_time_to_bulk", "EV_MINUTES_TO_BULK_CHARGED", requires_ev=True),
+    _minutes(
+        "ev_time_to_bulk",
+        "EV_MINUTES_TO_BULK_CHARGED",
+        value_fn=_not_negative,
+        requires_ev=True,
+    ),
     JlrSensorDescription(
         key="ev_energy_last_charge",
         translation_key="ev_energy_last_charge",
@@ -759,6 +777,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_not_negative,
         requires_ev=True,
     ),
     JlrSensorDescription(
@@ -768,6 +787,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_not_negative,
         requires_ev=True,
         entity_registry_enabled_default=False,
     ),
@@ -793,6 +813,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         device_class=SensorDeviceClass.SPEED,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
+        value_fn=_not_negative,
         requires_ev=True,
     ),
     JlrSensorDescription(
@@ -802,6 +823,7 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         native_unit_of_measurement="%/h",
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
+        value_fn=_not_negative,
         requires_ev=True,
     ),
     JlrSensorDescription(
