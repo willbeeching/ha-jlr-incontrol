@@ -34,7 +34,10 @@ jobs:
               body: `@${maintainer} — new issue opened.`,
             });
 
-      - name: Assign and notify on new comments
+      # Assigns only. It used to post an @-mention after every comment, which
+      # filled threads with a bot line between each reply; GitHub already
+      # notifies the maintainer of comments on issues they are assigned to.
+      - name: Assign on new comments
         if: github.event_name == 'issue_comment'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
@@ -55,15 +58,4 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               assignees: [maintainer],
-            });
-
-            if (comment.body.includes(`@${maintainer}`)) {
-              return;
-            }
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `@${maintainer} — new comment on this issue.`,
             });
