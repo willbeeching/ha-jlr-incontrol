@@ -160,8 +160,10 @@ user-facing detail; what matters when changing the code:
   car until the owner completes the car's declaration at data.jlr.com (sole
   or shared user, other drivers' consent) — confirmed on two cars, which went
   from refused to permitted straight after. Journeys stay refused to owners.
-  Whether the broker allows the `/position` topic is not yet measured, which
-  is why status alone is the fallback layout.
+  The broker accepts the exact `/position` topic and delivers fixes on it;
+  status alone stays as the fallback layout for an account that refuses it.
+  The stream delivers while a car is driven, about 16 seconds behind the car's
+  own report time (measured on two cars, November 2026).
 - The stream's messages are not the documented `{name, value, timestamp}`:
   the broker sends lists of `{dataType, description, signalName,
   signalTimestamp, signalValue, unit, vssIdentifier}`, numbers as text, and

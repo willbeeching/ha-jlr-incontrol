@@ -98,7 +98,8 @@ client at data.jlr.com.
   no battery readings until the stream delivered. A car without a charge port is refused there,
   and is asked again once a day rather than every read. The answer per car is in diagnostics under
   `ev`.
-- **Stream**: one MQTT connection for the account, held open. JLR end each session at an hour;
+- **Stream**: one MQTT connection for the account, held open, which brings status and position as
+  the car reports them, typically within about 16 seconds. JLR end each session at an hour;
   the integration reconnects at 55 minutes on its own schedule. Between attempts it waits at
   least 30 seconds, and backs off to 15 minutes when connections keep failing. If the broker
   turns every way of logging in down, it waits six hours before asking again.
@@ -161,9 +162,11 @@ Also measured:
   which the broker accepts. That name is not a portal typo:
   the portal reads it from JLR's own `/account/credential/stream` API. The portal also shows every
   stream detail in capitals through CSS, so the capitals are not the username's real case. The
-  stream connects and subscribes on owner accounts, and delivered messages during a drive in
-  November 2026, though none with a reading newer than REST had. Status is read every 15 minutes until a
-  streamed reading is newer than what REST has.
+  stream connects and subscribes on owner accounts, and delivers while the car is driven. On an
+  I-Pace with 2.0.4, six streamed readings moved the car's report forward during a five-minute
+  drive, and its parked position arrived within seconds of the journey ending. On two cars the
+  stream's message came about 16 seconds after the car's own report time. Status is read every 15
+  minutes until a streamed reading is newer than what REST has, and hourly after.
 - The docs' Vehicle Data and Diagnostics pages list endpoints the published API spec does not:
   `/v1/vehicles/{vin}/alerts`, `/ev/hv-battery` and `/diagnostics`, and a `Capabilities` list on
   vehicle details that includes `live-data-streaming`. Neither car tested returned `Capabilities`,
