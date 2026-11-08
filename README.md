@@ -13,7 +13,7 @@ warnings, timers and where you parked it.
 There are two ways in, and the integration offers both when you add it:
 
 - **The JLR Data Hub**, JLR's official API for owners, in the UK and the EU. No InControl password,
-  nothing reverse-engineered. New in 1.9.0 and still in beta.
+  nothing reverse-engineered. New in 2.0, and still being tested on more cars.
 - **The InControl sign-in**, the connection JLR's own app uses, for owners the Data Hub does not
   reach. It needs your InControl email and password.
 
@@ -102,8 +102,7 @@ useful answer, please post it in an issue.**
 2. Install **Jaguar Land Rover InControl**.
 3. Restart Home Assistant.
 
-To pick up beta releases, enable **Show beta versions** on the custom repository in HACS. The Data
-Hub is in the 1.9.0 betas.
+To pick up beta releases, enable **Show beta versions** on the custom repository in HACS.
 
 ### Manual
 

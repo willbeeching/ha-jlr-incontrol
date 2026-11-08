@@ -4,7 +4,7 @@ JLR now publish an official API for owners, the **JLR Data Hub**, under the EU D
 documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started), and it is
 available in the UK as well as the EU.
 
-From 1.9.0 the integration can be set up on it from **Add integration**, with no InControl email or
+From 2.0 the integration can be set up on it from **Add integration**, with no InControl email or
 password, and an existing InControl entry can be linked to it from the options. Either way,
 **vehicle status comes from the Data Hub** instead of the InControl telemetry socket: doors, locks, windows, tyres, fuel, mileage,
 warnings, the 12 V battery and the rest. The entities are the same ones, with the same ids and
@@ -142,12 +142,13 @@ Also measured:
 - With it switched on, the broker the portal names does not resolve, and the broker in the docs
   refuses every login except one: the client ID as issued, used as both the MQTT username and the
   MQTT client ID. With that login it then hung up on the docs' own subscription,
-  `account/{accountId}/vehicles/{vin}/#`. From 1.9.0-beta.5 the link keeps the accepted login and
-  tries the other topic layouts the docs show, once each. That name is not a portal typo:
+  `account/{accountId}/vehicles/{vin}/#`. The link keeps the accepted login and tries the other
+  topic layouts the docs show, once each, starting with the exact `status` and `position` topics,
+  which the broker accepts. That name is not a portal typo:
   the portal reads it from JLR's own `/account/credential/stream` API. The portal also shows every
-  stream detail in capitals through CSS, so the capitals are not the username's real case. As of
-  1.9.0-beta.3 the stream has not been seen to connect for an owner account; the link reads status
-  hourly meanwhile.
+  stream detail in capitals through CSS, so the capitals are not the username's real case. The
+  stream connects and subscribes on owner accounts; whether it delivers as a car is driven had not
+  been seen by the 2.0 release, so status is read every 15 minutes until it does.
 - The docs' Vehicle Data and Diagnostics pages list endpoints the published API spec does not:
   `/v1/vehicles/{vin}/alerts`, `/ev/hv-battery` and `/diagnostics`, and a `Capabilities` list on
   vehicle details that includes `live-data-streaming`. Neither car tested returned `Capabilities`,
