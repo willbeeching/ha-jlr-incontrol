@@ -181,7 +181,8 @@ def _stream_signals(decoded: Any) -> list[dict[str, Any]]:
     on the stream brought thirteen messages and not one reading newer than
     REST already had, so a message shaped like the REST snapshot (a nested
     ``Vehicle`` tree under one ``timestamp``) is read as well, and anything
-    else is described in diagnostics.
+    else is described in diagnostics. That description is how the real shape
+    was found: see _as_signal.
     """
     if isinstance(decoded, dict) and "name" not in decoded and "Vehicle" in decoded:
         when = decoded.get("timestamp")
@@ -191,7 +192,49 @@ def _stream_signals(decoded: Any) -> list[dict[str, Any]]:
             if name != "Vehicle.VehicleIdentification.VIN"
         ]
     items = decoded if isinstance(decoded, list) else [decoded]
-    return [item for item in items if isinstance(item, dict)]
+    return [_as_signal(item) for item in items if isinstance(item, dict)]
+
+
+# What the broker really sends, measured on a Defender in Australia: lists of
+# {dataType, description, signalName, signalTimestamp, signalValue, unit,
+# vssIdentifier}, none of which the documented name/value/timestamp read.
+_NUMERIC_TYPES = ("int", "long", "float", "double", "decimal", "number")
+
+
+def _as_signal(item: dict[str, Any]) -> dict[str, Any]:
+    """One streamed signal in the documented shape, whichever shape it came in."""
+    if "name" in item or not ({"vssIdentifier", "signalName"} & item.keys()):
+        return item
+    names = [item.get("vssIdentifier"), item.get("signalName")]
+    named = [n for n in names if isinstance(n, str) and n]
+    vss = [n for n in named if n.startswith("Vehicle.")]
+    chosen = vss or named
+    return {
+        "name": chosen[0] if chosen else None,
+        "value": _signal_value(item.get("signalValue"), item.get("dataType")),
+        "timestamp": _signal_time(item.get("signalTimestamp")),
+        "unit": item.get("unit"),
+    }
+
+
+def _signal_value(value: Any, data_type: Any) -> Any:
+    """A number sent as text, as the number REST would have sent."""
+    kind = str(data_type or "").lower()
+    if isinstance(value, str) and any(word in kind for word in _NUMERIC_TYPES):
+        try:
+            number = float(value)
+        except ValueError:
+            return value
+        return int(number) if number.is_integer() else number
+    return value
+
+
+def _signal_time(value: Any) -> Any:
+    """A signal's time as ISO text; epoch numbers are read as UTC."""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return value
+    seconds = value / 1000 if value > 1e11 else value
+    return datetime.fromtimestamp(seconds, dt_util.UTC).isoformat()
 
 
 def _shape(decoded: Any) -> str:

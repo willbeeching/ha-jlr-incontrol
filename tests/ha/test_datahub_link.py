@@ -722,6 +722,97 @@ class TestWhatTheStreamProves:
         assert link.stats["unread_shape"] == "int"
 
 
+def sent_by_broker(
+    vss: str | None,
+    value: Any,
+    when: Any,
+    data_type: str = "string",
+    name: str | None = "signal",
+) -> dict[str, Any]:
+    """One signal as the broker really sends it (measured, not documented)."""
+    return {
+        "dataType": data_type,
+        "description": "made up",
+        "signalName": name,
+        "signalTimestamp": when,
+        "signalValue": value,
+        "unit": None,
+        "vssIdentifier": vss,
+    }
+
+
+class TestWhatTheBrokerReallySends:
+    """Five messages on a drive in Australia, every one unread by 2.0.2."""
+
+    async def test_a_batch_in_the_brokers_shape_is_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        statuses: list[dict[str, str]] = []
+        link = DataHubLink(hass, linked, on_status=lambda _, s: statuses.append(s))
+        await link._async_read_status()
+        batch = [
+            sent_by_broker(
+                "Vehicle.TraveledDistance", "12346000", "2026-11-07T10:00:00Z", "double"
+            ),
+            sent_by_broker(
+                "Vehicle.Body.Trunk.Rear.IsOpen", "OPEN", "2026-11-07T10:00:00Z"
+            ),
+        ]
+        link._on_message(TOPIC, json.dumps(batch).encode())
+        held = link.signals[KEPT]
+        assert held["Vehicle.TraveledDistance"]["value"] == 12346000
+        assert held["Vehicle.Body.Trunk.Rear.IsOpen"]["value"] == "OPEN"
+        assert statuses[-1]["ODOMETER_METER"] == "12346000"
+        assert link.stats["fresh"] == 1
+        assert link.stats["unread"] == 0
+
+    async def test_an_epoch_time_and_a_fractional_number_are_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        # 2026-11-07T10:00:00Z in milliseconds.
+        sent = sent_by_broker("Vehicle.Speed", "51.5", 1794045600000, "float")
+        link._on_message(TOPIC, json.dumps([sent]).encode())
+        held = link.signals[KEPT]["Vehicle.Speed"]
+        assert held["value"] == 51.5
+        assert held["time"].isoformat() == "2026-11-07T10:00:00+00:00"
+
+    async def test_the_signal_name_stands_in_for_a_missing_vss_path(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        sent = sent_by_broker(None, "x", "2026-11-07T10:00:00Z", name="Vehicle.A")
+        link._on_message(TOPIC, json.dumps([sent]).encode())
+        assert "Vehicle.A" in link.signals[KEPT]
+        nameless = sent_by_broker(None, "x", "2026-11-07T10:00:00Z", name=None)
+        link._on_message(TOPIC, json.dumps([nameless]).encode())
+        assert link.stats["unread"] == 1
+
+    async def test_text_in_a_number_field_is_kept_as_sent(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        sent = sent_by_broker("Vehicle.A", "UNKNOWN", "2026-11-07T10:00:00Z", "double")
+        link._on_message(TOPIC, json.dumps([sent]).encode())
+        assert link.signals[KEPT]["Vehicle.A"]["value"] == "UNKNOWN"
+
+    async def test_a_fix_in_the_brokers_shape_is_handed_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        when = "2026-11-07T10:00:00Z"
+        batch = [
+            sent_by_broker("Vehicle.CurrentLocation.Latitude", "51.5", when, "double"),
+            sent_by_broker(
+                "Vehicle.CurrentLocation.Longitude", "-0.12", when, "double"
+            ),
+        ]
+        link._on_message(POSITION_TOPIC, json.dumps(batch).encode())
+        assert positions[-1]["latitude"] == 51.5
+        assert positions[-1]["longitude"] == -0.12
+
+
 POSITION_TOPIC = f"account/acct-1/vehicles/{KEPT}/position"
 
 

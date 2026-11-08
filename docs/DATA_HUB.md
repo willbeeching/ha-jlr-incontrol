@@ -123,7 +123,11 @@ Also measured:
   guide shows stream messages carrying one signal each, and flags that schema itself as
   unconfirmed. The first drive with the stream connected brought 13 messages and no reading newer
   than REST already had, so it reads both the documented shape and the REST snapshot's, and keeps the
-  key names (never the values) of anything else in diagnostics as `unread_shape`.
+  key names (never the values) of anything else in diagnostics as `unread_shape`. That is how the
+  real shape was found: on a drive in Australia the broker sent lists of signals keyed
+  `dataType`, `description`, `signalName`, `signalTimestamp`, `signalValue`, `unit` and
+  `vssIdentifier`, which the link now reads, taking the VSS name from `vssIdentifier` (or
+  `signalName`) and reading numbers sent as text as numbers.
 - The status values are the same as the existing integration's (the same frozen coolant
   temperature, the same `KEY_ON_ENGINE_OFF`), so everything in [DATA_MODEL.md](DATA_MODEL.md)
   still applies.
