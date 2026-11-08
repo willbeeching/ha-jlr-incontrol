@@ -352,6 +352,7 @@ def _seat(key: str, status_key: str) -> JlrSensorDescription:
         value_fn=_enum(_SEAT_FOLD),
         device_class=SensorDeviceClass.ENUM,
         options=sorted(set(_SEAT_FOLD.values())),
+        entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     )
 
@@ -562,20 +563,29 @@ CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
     ),
     # It reads 30 with the climate off: it is how long a run lasts, counting
     # down only while one is going.
-    _minutes("climate_run_time", "CLIMATE_STATUS_REMAINING_RUNTIME"),
+    _minutes(
+        "climate_run_time",
+        "CLIMATE_STATUS_REMAINING_RUNTIME",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     _minutes(
         "climate_venting_time",
         "CLIMATE_STATUS_VENTING_TIME",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
-    _minutes("heater_time_remaining", "CLIMATE_STATUS_FFH_REMAINING_RUNTIME"),
+    _minutes(
+        "heater_time_remaining",
+        "CLIMATE_STATUS_FFH_REMAINING_RUNTIME",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     JlrSensorDescription(
         key="climate_timer_1",
         translation_key="climate_timer_1",
         status_key="CLIMATE_STATUS_TIMER1_MONTH",
         device_class=SensorDeviceClass.TIMESTAMP,
         status_fn=_climate_timer(1),
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrSensorDescription(
         key="climate_timer_2",
@@ -583,6 +593,7 @@ CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
         status_key="CLIMATE_STATUS_TIMER2_MONTH",
         device_class=SensorDeviceClass.TIMESTAMP,
         status_fn=_climate_timer(2),
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrSensorDescription(
         key="departure_time",
@@ -590,6 +601,7 @@ CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
         status_key="DEPARTURE_TIMER_YEAR",
         device_class=SensorDeviceClass.TIMESTAMP,
         status_fn=_departure,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # Cabin air cleaning. Off by default: a feature few cars have and fewer
     # owners run, and the free-text fields have no documented format.
@@ -597,21 +609,25 @@ CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
         "air_cleaning_cycle_time",
         "CAC_CYCLE_TIME",
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "air_cleaning_last_cycle",
         "CAC_LAST_CYCLE_STATUS",
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "air_cleaning_started",
         "CAC_CYCLE_START_TIME",
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "air_cleaning_last_completed",
         "CAC_LAST_COMPLETED_CYCLE",
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "air_cleaning_last_error",
@@ -790,18 +806,21 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
         value_fn=_not_negative,
         requires_ev=True,
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "ev_charge_limit_one_off_mode",
         "EV_CHARGE_LIMIT_ONE_OFF_MODE",
         requires_ev=True,
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording(
         "ev_charge_limit_permanent_mode",
         "EV_CHARGE_LIMIT_PERMANENT_MODE",
         requires_ev=True,
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _wording("ev_charging_mode", "EV_CHARGING_MODE_CHOICE", requires_ev=True),
     JlrSensorDescription(

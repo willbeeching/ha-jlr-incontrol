@@ -157,8 +157,9 @@ Also measured:
 
 - **Last report (Data Hub) stays unknown**: the car has not been allowed status, or the link has
   not read it yet. Download diagnostics and look at `datahub`.
-- **Data Hub stream stays off**: check **Toggle your stream** is on at data.jlr.com. With it off
-  the link reads status hourly and asks again each hour; `stream_enabled: false` in diagnostics
+- **Data Hub stream stays off**: Home Assistant says so under **Settings → Repairs**. Check
+  **Toggle your stream** is on at data.jlr.com. With it off the link reads status every 15 minutes
+  and asks about the stream again each hour; `stream_enabled: false` in diagnostics
   means exactly this. If it is on, diagnostics show `last_rejection`: which way of logging in was
   tried last and where the broker hung up (before the login was accepted, or before the
   subscription was confirmed). Until one works the link tries five, once each: the username as

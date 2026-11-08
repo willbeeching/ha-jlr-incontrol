@@ -95,7 +95,7 @@ class TestStatusFromTheDataHub:
         # Values from the Data Hub's snapshot, under the same entities as ever.
         assert float(hass.states.get("sensor.test_car_fuel_level").state) == 42
         assert hass.states.get("sensor.test_car_odometer") is not None
-        window = hass.states.get("binary_sensor.test_car_front_left_window")
+        window = hass.states.get("binary_sensor.test_car_window_front_left")
         assert window is not None and window.state == "off"
         status = coordinator.data["vehicles"][KEPT]["status"]
         assert status["LAST_UPDATED_TIME"] == "2026-11-07T09:00:00+00:00"

@@ -194,6 +194,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         entity_registry_enabled_default=False,
         known=frozenset({"LOCKED", "UNLOCKED"}),
         is_on=lambda v: v == "UNLOCKED",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     # Every car so far reports it, convertible or not, so it is only made
     # for a body type that says soft-top; see is_convertible.
@@ -286,14 +287,23 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         "AIR_CONDITIONING_ACTIVE",
         device_class=BinarySensorDeviceClass.RUNNING,
     ),
-    _flag("climate_timer", "CLIMATE_STATUS_TIMER_ACTIVATION_STATUS"),
-    _flag("departure_timer", "DEPARTURE_TIMER_IS_SET"),
+    _flag(
+        "climate_timer",
+        "CLIMATE_STATUS_TIMER_ACTIVATION_STATUS",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    _flag(
+        "departure_timer",
+        "DEPARTURE_TIMER_IS_SET",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
     JlrBinaryDescription(
         key="heater_enabled",
         translation_key="heater_enabled",
         status_key="CLIMATE_FFH_SETTING",
         known=frozenset({"ENABLED", "DISABLED"}),
         is_on=lambda v: v == "ENABLED",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrBinaryDescription(
         key="air_cleaning",
@@ -302,6 +312,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.RUNNING,
         is_on=lambda v: v not in ("INACTIVE", "OFF"),
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     _seat_held("seat_front_right_held", "SEAT_FRONT_RIGHT_INHIBITED"),
     _seat_held("seat_rear_left_held", "SEAT_REAR_LEFT_INHIBITED"),
@@ -355,6 +366,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         is_on=lambda v: v == "TRUE",
         requires_ev=True,
         entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     JlrBinaryDescription(
         key="ev_cable_connected",

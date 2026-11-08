@@ -31,6 +31,12 @@ refresh in JLR's cache when the car next wakes on its own, so after locking with
 can read stale for hours. Treat them as "last known", and use **Last updated** to say how old
 that is.
 
+Names put the thing first (**Door front left**, **Window rear right**, **Tyre pressure front
+left**, **Charge limit one-off**), because Home Assistant lists a device's entities alphabetically
+and related readings then sit together. Readings worth checking now and then rather than at a
+glance are in the device page's **Diagnostic** section. Renaming changed the names only: entity
+ids made before it are kept, and so is their history.
+
 ## Applicability
 
 - **any** — created if the car reports the key.
@@ -61,9 +67,9 @@ that is.
 | Vehicle state | `VEHICLE_STATE_TYPE` | any | diagnostic | on |
 | Tyre pressure ×4 | `TYRE_PRESSURE_*` | any | — | on |
 | Battery | `EV_STATE_OF_CHARGE` | EV/PHEV | — | on |
-| Electric range | `EV_RANGE_ON_BATTERY_MILES` | EV/PHEV | — | on |
+| Battery range | `EV_RANGE_ON_BATTERY_MILES` | EV/PHEV | — | on |
 | Combined range | `EV_PHEV_RANGE_COMBINED_MILES` | PHEV | — | on |
-| Time to full charge | `EV_MINUTES_TO_FULLY_CHARGED` | EV/PHEV | — | on |
+| Charging time to full | `EV_MINUTES_TO_FULLY_CHARGED` | EV/PHEV | — | on |
 | Charging status | `EV_CHARGING_STATUS` | EV/PHEV | — | on |
 | Preconditioning time remaining | `EV_PRECONDITION_REMAINING_RUNTIME_MINUTES` | EV/PHEV | — | on |
 | EVCC status | derived | EV/PHEV | — | **off** |
@@ -76,18 +82,18 @@ that is.
 | 12V battery status, health, charge estimate | `BATTERY_STATUS`, `BATTERY_STATUS_12V_HEALTH`, `BATTERY_STATUS_12V_ESTIMATE` | any | diagnostic | **off** |
 | Climate mode | `CLIMATE_MODE` | any, Data Hub | — | on |
 | Climate priority | `CLIMATE_PRIORITY` | any, Data Hub | diagnostic | on |
-| Climate run time | `CLIMATE_STATUS_REMAINING_RUNTIME` | any | — | on |
+| Climate run time | `CLIMATE_STATUS_REMAINING_RUNTIME` | any | diagnostic | on |
 | Climate venting time | `CLIMATE_STATUS_VENTING_TIME` | any | diagnostic | **off** |
-| Fuel-fired heater time remaining | `CLIMATE_STATUS_FFH_REMAINING_RUNTIME` | any | — | on |
-| Climate timer 1 and 2 | `CLIMATE_STATUS_TIMER{1,2}_*` | any | — | on |
-| Departure timer | `DEPARTURE_TIMER_*` | any, Data Hub | — | on |
-| Air purification cycle time, last cycle, started, last completed, last error | `CAC_*` | any | — | **off** |
-| Seat fold position ×7 | `SEAT_*_FOLDED` | any, Data Hub | — | **off** |
+| Fuel-fired heater time remaining | `CLIMATE_STATUS_FFH_REMAINING_RUNTIME` | any | diagnostic | on |
+| Climate timer 1 and 2 | `CLIMATE_STATUS_TIMER{1,2}_*` | any | diagnostic | on |
+| Departure timer | `DEPARTURE_TIMER_*` | any, Data Hub | diagnostic | on |
+| Air purification cycle time, last cycle, started, last completed, last error | `CAC_*` | any | diagnostic | **off** |
+| Seat ×7 (fold position) | `SEAT_*_FOLDED` | any, Data Hub | diagnostic | **off** |
 | Colour | vehicle details | Data Hub | diagnostic | on |
-| Time to bulk charge | `EV_MINUTES_TO_BULK_CHARGED` | EV/PHEV | — | on |
-| Energy added last charge | `EV_ENERGY_CONSUMED_LAST_CHARGE_KWH` | EV/PHEV | — | on |
+| Charging time to bulk | `EV_MINUTES_TO_BULK_CHARGED` | EV/PHEV | — | on |
+| Charging energy last session | `EV_ENERGY_CONSUMED_LAST_CHARGE_KWH` | EV/PHEV | — | on |
 | Charge limit | `EV_CHARGE_LIMIT` | EV/PHEV, Data Hub | — | on |
-| One-off charge limit, and its mode; permanent limit mode | `EV_CHARGE_LIMIT_*` | EV/PHEV, Data Hub | — | **off** |
+| Charge limit one-off, its mode, and permanent mode | `EV_CHARGE_LIMIT_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Charging mode | `EV_CHARGING_MODE_CHOICE` | EV/PHEV, Data Hub | — | on |
 | Charging rate (range per hour, and % per hour) | `EV_CHARGING_RATE_*` | EV/PHEV, Data Hub | — | on |
 | Battery (actual) | `EV_STATE_OF_CHARGE_ACTUAL` | EV/PHEV, Data Hub | diagnostic | **off** |
@@ -126,11 +132,11 @@ any of them on in the entity settings.
 
 | Entity | Status key | Applies to |
 | --- | --- | --- |
-| Front/rear left and right doors, boot, bonnet | `DOOR_*_POSITION` | any |
-| Front/rear left and right windows | `WINDOW_*_STATUS` | any |
+| Door front/rear left/right, boot, bonnet | `DOOR_*_POSITION` | any |
+| Window front/rear left/right | `WINDOW_*_STATUS` | any |
 | Sunroof | `IS_SUNROOF_OPEN` | any |
 | Central locking | `DOOR_IS_ALL_DOORS_LOCKED` | any |
-| Front/rear left and right door locks, boot lock (off by default) | `DOOR_*_LOCK_STATUS` | cars that report them |
+| Door lock front/rear left/right, boot lock (off by default) | `DOOR_*_LOCK_STATUS` | cars that report them |
 | Alarm armed | `THEFT_ALARM_STATUS` | any |
 | Alarm triggered | `THEFT_ALARM_STATUS` | any |
 | Brake fluid / coolant / oil / washer fluid warnings | `*_WARN` | any |
@@ -138,18 +144,18 @@ any of them on in the entity settings.
 | Charging | `EV_CHARGING_STATUS` | EV/PHEV |
 | Plugged in | `EV_CHARGING_METHOD` | EV/PHEV |
 | Preconditioning | `EV_PRECONDITION_OPERATING_STATUS` | EV/PHEV |
-| Bonnet lock (off by default) | `DOOR_ENGINE_HOOD_LOCK_STATUS` | any |
+| Bonnet lock (diagnostic, off by default) | `DOOR_ENGINE_HOOD_LOCK_STATUS` | any |
 | Convertible roof | `IS_CAB_OPEN` | soft-top |
 | Headlights | `IS_HEAD_LIGHTS_ON` | any |
 | Panic alarm, airbag deployed, front impact | `IS_PANIC_ALARM_TRIGGERED`, `SRS_STATUS`, `FRONT_IMPACT_DETECTED` | any |
 | Privacy mode (diagnostic) | `PRIVACY_SWITCH` | any |
 | Particulate filter warning | `EXT_PARTICULATE_FILTER_WARN` | any: not hidden on petrol cars, many of which have one too |
-| Tyre warning ×4 | `TYRE_STATUS_*` | any |
+| Tyre warning front/rear left/right | `TYRE_STATUS_*` | any |
 | Climate, air conditioning | `CLIMATE_STATUS_OPERATING_STATUS`, `AIR_CONDITIONING_ACTIVE` | any |
-| Climate timer, departure timer set | `CLIMATE_STATUS_TIMER_ACTIVATION_STATUS`, `DEPARTURE_TIMER_IS_SET` | any |
-| Fuel-fired heater enabled | `CLIMATE_FFH_SETTING` | cars with one |
-| Air purification (off by default) | `CAC_OPERATING_STATE` | any |
-| Seat held ×7 (off by default) | `SEAT_*_INHIBITED` | any, Data Hub |
+| Climate timer, departure timer set (diagnostic) | `CLIMATE_STATUS_TIMER_ACTIVATION_STATUS`, `DEPARTURE_TIMER_IS_SET` | any |
+| Fuel-fired heater enabled (diagnostic) | `CLIMATE_FFH_SETTING` | cars with one |
+| Air purification (diagnostic, off by default) | `CAC_OPERATING_STATE` | any |
+| Seat held ×7 (diagnostic, off by default) | `SEAT_*_INHIBITED` | any, Data Hub |
 | Charging (flag, off by default), charging cable connected, battery conditioning | `EV_IS_CHARGING`, `EV_IS_PLUGGED_IN`, `EV_IS_PRECONDITIONING` | EV/PHEV |
 | Data Hub stream (diagnostic) | — | cars on a linked Data Hub |
 

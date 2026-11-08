@@ -222,13 +222,13 @@
         "name": "Battery"
       },
       "ev_range": {
-        "name": "Electric range"
+        "name": "Battery range"
       },
       "ev_range_combined": {
         "name": "Combined range"
       },
       "ev_time_to_full": {
-        "name": "Time to full charge"
+        "name": "Charging time to full"
       },
       "ev_charging_status": {
         "name": "Charging status",
@@ -347,22 +347,22 @@
         "name": "Colour"
       },
       "ev_time_to_bulk": {
-        "name": "Time to bulk charge"
+        "name": "Charging time to bulk"
       },
       "ev_energy_last_charge": {
-        "name": "Energy added last charge"
+        "name": "Charging energy last session"
       },
       "ev_charge_limit": {
         "name": "Charge limit"
       },
       "ev_charge_limit_one_off": {
-        "name": "One-off charge limit"
+        "name": "Charge limit one-off"
       },
       "ev_charge_limit_one_off_mode": {
-        "name": "One-off charge limit mode"
+        "name": "Charge limit one-off mode"
       },
       "ev_charge_limit_permanent_mode": {
-        "name": "Permanent charge limit mode"
+        "name": "Charge limit permanent mode"
       },
       "ev_charging_mode": {
         "name": "Charging mode"
@@ -377,13 +377,13 @@
         "name": "Battery (actual)"
       },
       "ev_consumption_ascent": {
-        "name": "Energy used climbing"
+        "name": "Consumption climbing"
       },
       "ev_consumption_descent": {
-        "name": "Energy regained descending"
+        "name": "Consumption descending"
       },
       "ev_consumption_standing": {
-        "name": "Standing consumption"
+        "name": "Consumption standing"
       },
       "ev_usable_energy": {
         "name": "Usable energy"
@@ -416,7 +416,7 @@
         "name": "Consumption, speed band 7"
       },
       "seat_front_right": {
-        "name": "Front passenger seat",
+        "name": "Seat front passenger",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -425,7 +425,7 @@
         }
       },
       "seat_rear_left": {
-        "name": "Rear left seat",
+        "name": "Seat rear left",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -434,7 +434,7 @@
         }
       },
       "seat_rear_right": {
-        "name": "Rear right seat",
+        "name": "Seat rear right",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -443,7 +443,7 @@
         }
       },
       "rear_armrest": {
-        "name": "Rear armrest",
+        "name": "Seat rear armrest",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -452,7 +452,7 @@
         }
       },
       "ski_hatch": {
-        "name": "Ski hatch",
+        "name": "Seat ski hatch",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -461,7 +461,7 @@
         }
       },
       "seat_third_row_left": {
-        "name": "Third row left seat",
+        "name": "Seat third row left",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -470,7 +470,7 @@
         }
       },
       "seat_third_row_right": {
-        "name": "Third row right seat",
+        "name": "Seat third row right",
         "state": {
           "unfolded": "Up",
           "folded": "Folded",
@@ -481,16 +481,16 @@
     },
     "binary_sensor": {
       "door_front_left": {
-        "name": "Front left door"
+        "name": "Door front left"
       },
       "door_front_right": {
-        "name": "Front right door"
+        "name": "Door front right"
       },
       "door_rear_left": {
-        "name": "Rear left door"
+        "name": "Door rear left"
       },
       "door_rear_right": {
-        "name": "Rear right door"
+        "name": "Door rear right"
       },
       "boot": {
         "name": "Boot"
@@ -499,16 +499,16 @@
         "name": "Bonnet"
       },
       "window_front_left": {
-        "name": "Front left window"
+        "name": "Window front left"
       },
       "window_front_right": {
-        "name": "Front right window"
+        "name": "Window front right"
       },
       "window_rear_left": {
-        "name": "Rear left window"
+        "name": "Window rear left"
       },
       "window_rear_right": {
-        "name": "Rear right window"
+        "name": "Window rear right"
       },
       "sunroof": {
         "name": "Sunroof"
@@ -517,16 +517,16 @@
         "name": "Central locking"
       },
       "door_front_left_lock": {
-        "name": "Front left door lock"
+        "name": "Door lock front left"
       },
       "door_front_right_lock": {
-        "name": "Front right door lock"
+        "name": "Door lock front right"
       },
       "door_rear_left_lock": {
-        "name": "Rear left door lock"
+        "name": "Door lock rear left"
       },
       "door_rear_right_lock": {
-        "name": "Rear right door lock"
+        "name": "Door lock rear right"
       },
       "boot_lock": {
         "name": "Boot lock"
@@ -589,16 +589,16 @@
         "name": "Particulate filter warning"
       },
       "tyre_warning_fl": {
-        "name": "Front left tyre warning"
+        "name": "Tyre warning front left"
       },
       "tyre_warning_fr": {
-        "name": "Front right tyre warning"
+        "name": "Tyre warning front right"
       },
       "tyre_warning_rl": {
-        "name": "Rear left tyre warning"
+        "name": "Tyre warning rear left"
       },
       "tyre_warning_rr": {
-        "name": "Rear right tyre warning"
+        "name": "Tyre warning rear right"
       },
       "climate": {
         "name": "Climate"
@@ -619,25 +619,25 @@
         "name": "Air purification"
       },
       "seat_front_right_held": {
-        "name": "Front passenger seat held"
+        "name": "Seat held front passenger"
       },
       "seat_rear_left_held": {
-        "name": "Rear left seat held"
+        "name": "Seat held rear left"
       },
       "seat_rear_right_held": {
-        "name": "Rear right seat held"
+        "name": "Seat held rear right"
       },
       "rear_armrest_held": {
-        "name": "Rear armrest held"
+        "name": "Seat held rear armrest"
       },
       "ski_hatch_held": {
-        "name": "Ski hatch held"
+        "name": "Seat held ski hatch"
       },
       "seat_third_row_left_held": {
-        "name": "Third row left seat held"
+        "name": "Seat held third row left"
       },
       "seat_third_row_right_held": {
-        "name": "Third row right seat held"
+        "name": "Seat held third row right"
       },
       "ev_charging_flag": {
         "name": "Charging (flag)"
@@ -681,7 +681,11 @@
     },
     "datahub_signed_out": {
       "title": "JLR Data Hub link stopped working for {title}",
-      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub**."
+      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub again**."
+    },
+    "datahub_stream_off": {
+      "title": "JLR Data Hub stream is switched off for {title}",
+      "description": "The Data Hub link works, but its stream is switched off, so your cars' readings are only read every 15 minutes instead of arriving as the car reports them.\n\nTo switch it on, sign in at data.jlr.com, open the client you created for Home Assistant and turn **Toggle your stream** on. Home Assistant notices within the hour and this notice goes away by itself."
     }
   }
 }

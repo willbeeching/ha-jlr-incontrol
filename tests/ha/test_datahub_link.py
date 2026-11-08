@@ -361,6 +361,37 @@ class TestTheLoop:
         assert datahub_link.STATUS_INTERVAL in pause.waits
         assert broker.calls == []
 
+    async def test_a_stream_switched_off_is_said_in_repairs_until_it_is_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
+    ) -> None:
+        # Nothing else tells an owner the toggle at data.jlr.com is off: the
+        # readings carry on, just a REST read at a time.
+        issues = ir.async_get(hass)
+        issue_id = f"datahub_stream_off_{linked.entry_id}"
+        link, _ = bare_link(hass, linked, 1)
+        hub.datahub.stream_result = DataHubForbidden("not enabled")
+        await link._async_stream_once()
+        assert issues.async_get_issue(DOMAIN, issue_id) is not None
+        hub.datahub.stream_result = hub.datahub.tokens
+        broker.sessions.append(([], "time limit"))
+        await link._async_stream_once()
+        assert link.stream_enabled is True
+        assert issues.async_get_issue(DOMAIN, issue_id) is None
+
+    async def test_a_link_that_has_gone_takes_the_stream_notice_with_it(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
+    ) -> None:
+        issues = ir.async_get(hass)
+        link, _ = bare_link(hass, linked, 1)
+        hub.datahub.stream_result = DataHubForbidden("not enabled")
+        await link._async_stream_once()
+        link._signed_out(DataHubAuthError("revoked"))
+        assert (
+            issues.async_get_issue(DOMAIN, f"datahub_stream_off_{linked.entry_id}")
+            is None
+        )
+        assert issues.async_get_issue(DOMAIN, f"datahub_signed_out_{linked.entry_id}")
+
     async def test_a_rejected_login_tries_each_way_once_on_one_broker(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
     ) -> None:

@@ -60,6 +60,8 @@ from .const import (
     DISTANCE_UNIT_KM,
     DISTANCE_UNIT_MILES,
     DOMAIN,
+    ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_DATAHUB_STREAM_OFF,
     ISSUE_PORTAL_SIGNED_OUT,
     OPT_DISTANCE_UNIT,
     OPT_PRESSURE_UNIT,
@@ -909,5 +911,10 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
         data = dict(self.config_entry.data)
         data.pop(CONF_DATAHUB, None)
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+        # Repairs about a link the entry no longer has.
+        for issue in (ISSUE_DATAHUB_SIGNED_OUT, ISSUE_DATAHUB_STREAM_OFF):
+            ir.async_delete_issue(
+                self.hass, DOMAIN, f"{issue}_{self.config_entry.entry_id}"
+            )
         self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
         return self.async_create_entry(title="", data=dict(self.config_entry.options))

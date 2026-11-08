@@ -13,6 +13,7 @@ from homeassistant.helpers import issue_registry as ir
 from .const import (
     DOMAIN,
     ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_DATAHUB_STREAM_OFF,
     ISSUE_PORTAL_SIGNED_OUT,
     PLATFORMS,
 )
@@ -95,6 +96,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None
     for issue in (
         ISSUE_PORTAL_SIGNED_OUT,
         ISSUE_DATAHUB_SIGNED_OUT,
+        ISSUE_DATAHUB_STREAM_OFF,
     ):
         ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
 

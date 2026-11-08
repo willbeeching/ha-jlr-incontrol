@@ -152,3 +152,35 @@ class TestExceptionsAreWorded:
     @pytest.mark.parametrize("key", ["refresh_failed", "no_telemetry", "auth_failed"])
     def test_the_three_actionable_failures_are_worded(self, key: str) -> None:
         assert load("strings.json")["exceptions"][key]["message"]
+
+
+class TestRelatedReadingsSortTogether:
+    """Home Assistant lists a device's entities alphabetically.
+
+    Named place-first ("Front left door", "Front left tyre warning") a car's
+    doors, windows and tyres were scattered among each other; named
+    thing-first they sit in blocks.
+    """
+
+    @pytest.mark.parametrize(
+        ("platform", "prefix", "count"),
+        [
+            ("binary_sensor", "Door front ", 2),
+            ("binary_sensor", "Door rear ", 2),
+            ("binary_sensor", "Door lock ", 4),
+            ("binary_sensor", "Window ", 4),
+            ("binary_sensor", "Tyre warning ", 4),
+            ("binary_sensor", "Seat held ", 7),
+            ("sensor", "Tyre pressure ", 4),
+            ("sensor", "Seat ", 7),
+            ("sensor", "Charge limit", 4),
+            ("sensor", "Consumption", 10),
+        ],
+    )
+    def test_a_family_shares_its_first_words(
+        self, platform: str, prefix: str, count: int
+    ) -> None:
+        names = [
+            entry["name"] for entry in load("strings.json")["entity"][platform].values()
+        ]
+        assert len([n for n in names if n.startswith(prefix)]) == count

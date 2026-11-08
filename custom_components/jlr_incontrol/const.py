@@ -131,6 +131,10 @@ DATAHUB_ACCOUNT_ID = "account_id"
 # Raised when JLR stop accepting the link (client deleted, certificate
 # replaced, consent withdrawn). Only setting it up again can fix that.
 ISSUE_DATAHUB_SIGNED_OUT = "datahub_signed_out"
+# The stream is a switch on the client at data.jlr.com that setup asks for and
+# nothing else checks. Off, everything still works, a reading at a time on the
+# REST timer, and an owner would not know to look.
+ISSUE_DATAHUB_STREAM_OFF = "datahub_stream_off"
 
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on

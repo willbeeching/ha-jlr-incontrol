@@ -49,6 +49,7 @@ from .const import (
     DATAHUB_VEHICLES,
     DOMAIN,
     ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_DATAHUB_STREAM_OFF,
 )
 from .datahub import (
     DataHubAuthError,
@@ -382,6 +383,10 @@ class DataHubLink:
         self._set_connected(False)
         if self._on_signed_out is not None:
             self._on_signed_out()
+        # The link itself has gone, which is the repair that matters.
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_DATAHUB_STREAM_OFF}_{self.entry.entry_id}"
+        )
         ir.async_create_issue(
             self.hass,
             DOMAIN,
@@ -575,9 +580,21 @@ class DataHubLink:
                     "on at data.jlr.com to receive updates as they happen"
                 )
             self.stream_enabled = False
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                f"{ISSUE_DATAHUB_STREAM_OFF}_{self.entry.entry_id}",
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_DATAHUB_STREAM_OFF,
+                translation_placeholders={"title": self.entry.title},
+            )
             self._notify()
             return 0.0
         self.stream_enabled = True
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_DATAHUB_STREAM_OFF}_{self.entry.entry_id}"
+        )
         account = stream.account_id or self.account_id
         if not account:
             raise DataHubError("the stream token names no account")
