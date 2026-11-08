@@ -12,8 +12,8 @@ warnings, timers and where you parked it.
 
 There are two ways in, and the integration offers both when you add it:
 
-- **The JLR Data Hub**, JLR's official API for owners, confirmed working in the UK, the EU and
-  Canada. No InControl password, nothing reverse-engineered. New in 2.0, and still being tested on
+- **The JLR Data Hub**, JLR's official API for owners, confirmed working in the UK, the EU,
+  Canada and Australia. No InControl password, nothing reverse-engineered. New in 2.0, and still being tested on
   more cars.
 - **The InControl sign-in**, the connection JLR's own app uses, for owners the Data Hub does not
   reach. It needs your InControl email and password.
@@ -42,16 +42,17 @@ meant to deliver the car's readings as it reports them. Laid side by side with t
 on real cars, every value matched. That is where this integration is going. It is the sanctioned
 route, and nothing about it depends on JLR leaving a door open by accident.
 
-It was launched under the EU Data Act, but it is not only European: an owner in Canada has it
-working, location included, with the car declared at data.jlr.com as outside the UK and the EU.
-It has not been tried anywhere else yet.
+It was launched under the EU Data Act, but it is not only European. An owner in Canada has it
+working, location included, with the car declared at data.jlr.com as outside the UK and the EU,
+and an owner in Australia has it working too. It has not been tried anywhere else yet.
 
 The InControl sign-in stays alongside it, unchanged, for anyone the Data Hub does not reach. It is
 still the reverse-engineered route it always was, and JLR could still close it without notice. If
 data.jlr.com lists your cars, use the Data Hub.
 
 **The plan is to retire the InControl sign-in once the Data Hub proves to work for owners
-everywhere it is needed.** So far that is the UK, the EU and Canada. If you are anywhere else, try
+everywhere it is needed.** So far that is the UK, the EU, Canada and Australia. If you are
+anywhere else, try
 signing in at [data.jlr.com](https://data.jlr.com) and
 [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) saying whether your cars
 are listed, or what it refuses: those answers decide it. The retirement will be announced in the
@@ -95,7 +96,7 @@ useful answer, please post it in an issue.**
 
 - Home Assistant 2025.8 or newer.
 - For the **Data Hub**: a JLR account with your cars listed at [data.jlr.com](https://data.jlr.com)
-  (confirmed in the UK, the EU and Canada), and your phone to approve the link.
+  (confirmed in the UK, the EU, Canada and Australia), and your phone to approve the link.
 - For the **InControl sign-in**: an InControl account with your cars added to it, its email and
   password, and your inbox to hand for the code JLR email you.
 
@@ -119,8 +120,8 @@ folder and restart.
 Go to **Settings → Devices & Services → Add Integration** and search for **Jaguar Land Rover
 InControl**. It asks how to connect:
 
-- **JLR Data Hub (recommended).** JLR's official API for owners, confirmed in the UK, the EU and
-  Canada. No InControl
+- **JLR Data Hub (recommended).** JLR's official API for owners, confirmed in the UK, the EU,
+  Canada and Australia. No InControl
   password: you create a client at [data.jlr.com](https://data.jlr.com), paste the certificate Home
   Assistant shows, and approve the link on your phone. Status is read every 15 minutes, and arrives
   as it happens once JLR's stream is delivering. For location, declare each car at data.jlr.com as

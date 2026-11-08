@@ -137,8 +137,9 @@ Re-deriving these has cost days. They are documented at length in
 JLR's documented owner API (developer.jlr.com), and where the integration is
 heading. The reverse-engineered InControl connection stays alongside it, with
 no deprecation notice, until owners outside the UK and EU have tested what the
-Data Hub offers them. Canada is the first: a Defender there works, location
-included (November 2026). If it holds elsewhere, the plan (stated in the README)
+Data Hub offers them. Canada was the first: a Defender there works, location
+included, declared as outside the UK and EU. Australia followed: a Defender
+works, possibly declared with a UK or EU region (both November 2026). If it holds elsewhere, the plan (stated in the README)
 is to retire the InControl connection, announced in release notes beforehand. `docs/DATA_HUB.md` has the
 user-facing detail; what matters when changing the code:
 

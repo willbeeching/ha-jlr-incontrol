@@ -2,9 +2,10 @@
 
 JLR now publish an official API for owners, the **JLR Data Hub**, under the EU Data Act. It is
 documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started). Despite the EU
-origin it is not only European: it works in the UK and the EU, and an owner in Canada has it
-working with location, the car declared as outside the UK and the EU. Nowhere else has been
-tried yet.
+origin it is not only European: it works in the UK and the EU, an owner in Canada has it
+working with location, the car declared as outside the UK and the EU, and an owner in Australia
+has it working too (they may have declared their car with a UK or EU region). Nowhere else has
+been tried yet.
 
 From 2.0 the integration can be set up on it from **Add integration**, with no InControl email or
 password, and an existing InControl entry can be linked to it from the options. Either way,
