@@ -194,7 +194,11 @@ Also measured:
   every `messages` the broker sent, the `fresh` ones that moved a car's last report forward, and
   the `unread` ones with no reading the link could place, with `last_message` (when one last
   arrived) and `unread_shape` (the key names of the last unread one). A count of `unread` with
-  its shape in an issue is what is needed to read them.
+  its shape in an issue is what is needed to read them. `untimed` counts readings whose time could
+  not be read, which never count as news, and `untimed_format` shows the last such time with every
+  digit turned to 9, so its format can be shared without the time itself. Each car's `fix_time` is
+  when its latest streamed location was taken; it sits on its own key because the signal names it
+  would otherwise appear under are redacted with the coordinates.
 - Turn on debug logging (see [TROUBLESHOOTING.md](TROUBLESHOOTING.md)) to see every signal the
   stream delivers, with the time the car sent it. Car identities are replaced with a stable
   label in those lines.

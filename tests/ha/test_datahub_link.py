@@ -37,6 +37,7 @@ from custom_components.jlr_incontrol.datahub_link import DataHubLink  # noqa: E4
 from custom_components.jlr_incontrol.diagnostics import (  # noqa: E402
     async_get_config_entry_diagnostics,
 )
+from custom_components.jlr_incontrol.redact import scrub  # noqa: E402
 from custom_components.jlr_incontrol.stream import (  # noqa: E402
     LOGIN_STAGE,
     SUBSCRIPTION_STAGE,
@@ -811,6 +812,58 @@ class TestWhatTheBrokerReallySends:
         link._on_message(POSITION_TOPIC, json.dumps(batch).encode())
         assert positions[-1]["latitude"] == 51.5
         assert positions[-1]["longitude"] == -0.12
+
+
+class TestTheTimesTheStreamSends:
+    """An I-Pace's streamed fixes went unread for want of a time."""
+
+    async def test_a_fix_timed_in_epoch_text_is_handed_on(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        positions: list[dict[str, Any]] = []
+        link = DataHubLink(hass, linked, on_position=lambda _, p: positions.append(p))
+        # 2026-11-07T10:00:00Z in milliseconds, sent as text.
+        when = "1794045600000"
+        batch = [
+            sent_by_broker("Vehicle.CurrentLocation.Latitude", "51.5", when, "double"),
+            sent_by_broker(
+                "Vehicle.CurrentLocation.Longitude", "-0.12", when, "double"
+            ),
+        ]
+        link._on_message(POSITION_TOPIC, json.dumps(batch).encode())
+        assert positions[-1]["timestamp"] == "2026-11-07T10:00:00+00:00"
+        assert link.stats["untimed"] == 0
+
+    async def test_a_time_it_cannot_read_is_counted_and_shaped(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        await link._async_read_status()
+        sent = sent_by_broker("Vehicle.A", "x", "8 Nov 2026 19:58 UTC")
+        link._on_message(TOPIC, json.dumps([sent]).encode())
+        assert link.stats["untimed"] == 1
+        assert link.stats["untimed_format"] == "9 Nov 9999 99:99 UTC"
+        assert link.stats["fresh"] == 0
+        link._on_message(
+            TOPIC, json.dumps([{**sent, "signalTimestamp": None}]).encode()
+        )
+        assert link.stats["untimed_format"] == "NoneType"
+
+    async def test_the_fix_time_survives_the_redaction(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        when = "2026-11-07T10:00:00Z"
+        batch = [
+            sent_by_broker("Vehicle.CurrentLocation.Latitude", "51.5", when, "double"),
+            sent_by_broker(
+                "Vehicle.CurrentLocation.Longitude", "-0.12", when, "double"
+            ),
+        ]
+        link._on_message(POSITION_TOPIC, json.dumps(batch).encode())
+        (car,) = scrub(link.diagnostics())["vehicles"].values()
+        assert car["fix_time"].isoformat() == "2026-11-07T10:00:00+00:00"
+        assert "51.5" not in json.dumps(scrub(link.diagnostics()), default=str)
 
 
 POSITION_TOPIC = f"account/acct-1/vehicles/{KEPT}/position"

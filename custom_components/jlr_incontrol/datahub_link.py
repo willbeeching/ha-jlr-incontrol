@@ -230,11 +230,26 @@ def _signal_value(value: Any, data_type: Any) -> Any:
 
 
 def _signal_time(value: Any) -> Any:
-    """A signal's time as ISO text; epoch numbers are read as UTC."""
+    """A signal's time as ISO text; epoch numbers are read as UTC.
+
+    Also an epoch number sent as text, which is neither a JSON number nor a
+    date: an I-Pace's streamed fixes arrived with times nothing here could
+    read, so each was stored untimed, never counted as news, and dropped
+    before the tracker.
+    """
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
     if isinstance(value, bool) or not isinstance(value, int | float):
         return value
     seconds = value / 1000 if value > 1e11 else value
     return datetime.fromtimestamp(seconds, dt_util.UTC).isoformat()
+
+
+def _time_format(value: Any) -> str:
+    """The shape of a time that could not be read, with every digit a 9."""
+    if not isinstance(value, str):
+        return type(value).__name__
+    return "".join("9" if c.isdigit() else c for c in value)[:40]
 
 
 def _shape(decoded: Any) -> str:
@@ -310,6 +325,10 @@ class DataHubLink:
             # names of the last one.
             "unread": 0,
             "unread_shape": None,
+            # Signals whose time could not be read, and the shape of the last
+            # such time. A signal without one never counts as news.
+            "untimed": 0,
+            "untimed_format": None,
             "last_message": None,
             "last_session_seconds": None,
             "last_session_end": None,
@@ -1003,6 +1022,9 @@ class DataHubLink:
             if not isinstance(name, str):
                 continue
             placed = True
+            if when is None:
+                self.stats["untimed"] += 1
+                self.stats["untimed_format"] = _time_format(item.get("timestamp"))
             held = self.signals.get(vin, {}).get(name, {}).get("time")
             if held and (when is None or when < held):
                 # Delivered late: JLR send out of order. An "unlocked" from
@@ -1079,6 +1101,9 @@ class DataHubLink:
             "vehicles": {
                 vehicle_label(vin): {
                     "last_report": self.reports.get(vin),
+                    # The latest fix's time on its own key: under the signal
+                    # names it is redacted with the coordinates it belongs to.
+                    "fix_time": self.signals.get(vin, {}).get(LATITUDE, {}).get("time"),
                     "signals": {
                         name: entry.get("time")
                         for name, entry in sorted(self.signals.get(vin, {}).items())
