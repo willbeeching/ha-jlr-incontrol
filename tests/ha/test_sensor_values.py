@@ -21,8 +21,7 @@ from custom_components.jlr_incontrol.entity import (  # noqa: E402
     is_not_diesel,
 )
 from custom_components.jlr_incontrol.sensor import (  # noqa: E402
-    EV_SENSORS,
-    TYRE_SENSORS,
+    ALL_SENSORS,
     VEHICLE_SENSORS,
     JlrAllInfoSensor,
     JlrChargeNowSettingSensor,
@@ -42,7 +41,7 @@ from custom_components.jlr_incontrol.sensor import (  # noqa: E402
     _words,
 )
 
-ALL = VEHICLE_SENSORS + TYRE_SENSORS + EV_SENSORS
+ALL = ALL_SENSORS
 
 
 class StandInCoordinator:
@@ -360,3 +359,28 @@ class TestWhichCarsGetWhat:
         self, body: str | None, soft_top: bool
     ) -> None:
         assert is_convertible({"bodyType": body}) is soft_top
+
+
+class TestHomeAssistantAcceptsEveryDescription:
+    """Home Assistant's own rules for device class, state class and unit.
+
+    It does not refuse a sensor that breaks them, it logs a warning asking
+    the owner to report a bug, which is how AdBlue to refill shipped in
+    1.9.0-beta.7 with a measurement state class on a volume.
+    """
+
+    @pytest.mark.parametrize("item", ALL, ids=lambda item: item.key)
+    def test_the_state_class_suits_the_device_class(self, item: Any) -> None:
+        from homeassistant.components.sensor import DEVICE_CLASS_STATE_CLASSES
+
+        allowed = DEVICE_CLASS_STATE_CLASSES.get(item.device_class)
+        if item.state_class is not None and allowed is not None:
+            assert item.state_class in allowed
+
+    @pytest.mark.parametrize("item", ALL, ids=lambda item: item.key)
+    def test_the_unit_suits_the_device_class(self, item: Any) -> None:
+        from homeassistant.components.sensor import DEVICE_CLASS_UNITS
+
+        allowed = DEVICE_CLASS_UNITS.get(item.device_class)
+        if allowed is not None:
+            assert item.native_unit_of_measurement in allowed

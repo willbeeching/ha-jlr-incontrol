@@ -686,16 +686,21 @@ class DataHubLink:
         that whole panel in capitals, the broker's hostname included — and AWS
         IoT policies commonly tie the client id to the identity. So four
         combinations, then the other port AWS IoT accepts a password on, each
-        tried once until one works, after which only that one is used.
+        tried once until one works, after which only that one is used. The
+        client id as both username and MQTT client id is the one that worked
+        in November 2026, and leads.
         """
         if self._login is not None:
             return [self._login]
         if self._accepted is not None:
             return [self._accepted]
         issued = self.client.client_id
+        # The one JLR's broker was measured to accept goes first. Second, it
+        # cost a refused connection on every restart, since what worked is
+        # only remembered for as long as Home Assistant is running.
         logins = [
-            _Login(issued, own_id=False, label="username as issued"),
             _Login(issued, own_id=True, label="username as issued, as client id"),
+            _Login(issued, own_id=False, label="username as issued"),
         ]
         if issued.upper() != issued:
             logins += [

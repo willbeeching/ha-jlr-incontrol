@@ -374,8 +374,8 @@ class TestTheLoop:
         ]
         assert {host for host, _, _, _ in seen} == {datahub_link.BROKERS[0]}
         assert [(port, user, cid == user) for _, port, user, cid in seen] == [
-            (8883, "dsas-0123456789ab", False),
             (8883, "dsas-0123456789ab", True),
+            (8883, "dsas-0123456789ab", False),
             (8883, "DSAS-0123456789AB", False),
             (8883, "DSAS-0123456789AB", True),
             (443, "dsas-0123456789ab", False),
@@ -400,10 +400,26 @@ class TestTheLoop:
         ]
         await run(link)
         assert len(broker.calls) == 3
-        last = broker.calls[-1]
-        assert last["client_id"] == last["username"] == "dsas-0123456789ab"
+        # The first way refused, the second worked, and the second is the
+        # only one asked again.
+        assert broker.calls[0]["client_id"] == broker.calls[0]["username"]
+        assert broker.calls[1]["client_id"] != broker.calls[1]["username"]
+        assert broker.calls[2]["client_id"] != broker.calls[2]["username"]
         diagnostics = link.diagnostics()
-        assert diagnostics["login"] == "username as issued, as client id"
+        assert diagnostics["login"] == "username as issued"
+
+    async def test_the_login_jlr_accept_is_tried_first(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
+    ) -> None:
+        # Measured in November 2026: only the client id as both username and
+        # MQTT client id gets in. Tried second, it cost a refused connection
+        # on every restart of Home Assistant.
+        link, _ = bare_link(hass, linked, 1)
+        broker.sessions.append(([], "time limit"))
+        await run(link)
+        assert len(broker.calls) == 1
+        first = broker.calls[0]
+        assert first["client_id"] == first["username"] == "dsas-0123456789ab"
 
     async def test_a_login_accepted_then_a_topic_refused_tries_other_layouts(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
@@ -413,21 +429,20 @@ class TestTheLoop:
         # own filter was then refused.
         link, _ = bare_link(hass, linked, 1)
         broker.sessions += [
-            ([], MqttDropped(LOGIN_STAGE)),
             ([], MqttDropped(SUBSCRIPTION_STAGE)),
             ([], "time limit"),
         ]
         await run(link)
         # Position with status first; a car not declared for location may
         # make the broker drop that, so status alone comes next.
-        assert [c["topics"] for c in broker.calls[1:]] == [
+        assert [c["topics"] for c in broker.calls] == [
             [
                 f"account/acct-1/vehicles/{KEPT}/status",
                 f"account/acct-1/vehicles/{KEPT}/position",
             ],
             [f"account/acct-1/vehicles/{KEPT}/status"],
         ]
-        assert broker.calls[2]["username"] == broker.calls[2]["client_id"]
+        assert broker.calls[1]["username"] == broker.calls[1]["client_id"]
         diagnostics = link.diagnostics()
         assert diagnostics["topics"] == "each car, status"
         assert diagnostics["login"] == "username as issued, as client id"
@@ -437,14 +452,12 @@ class TestTheLoop:
     ) -> None:
         link, pause = bare_link(hass, linked, 1)
         layouts = len(link._all_topic_sets("acct-1"))
-        broker.sessions += [([], MqttDropped(LOGIN_STAGE))] + [
-            ([], MqttDropped(SUBSCRIPTION_STAGE))
-        ] * layouts
+        broker.sessions += [([], MqttDropped(SUBSCRIPTION_STAGE))] * layouts
         await run(link)
-        # One refused login, then every layout once with the accepted one,
-        # and no other login tried after it.
-        assert len(broker.calls) == 1 + layouts
-        assert len({c["username"] for c in broker.calls[1:]}) == 1
+        # Every layout once with the login that was accepted, and no other
+        # login tried after it.
+        assert len(broker.calls) == layouts
+        assert len({(c["username"], c["client_id"]) for c in broker.calls}) == 1
         assert pause.waits == [datahub_link.STATUS_INTERVAL]
         assert (
             link.diagnostics()["accepted_login"] == "username as issued, as client id"

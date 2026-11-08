@@ -485,8 +485,10 @@ VEHICLE_SENSORS: tuple[JlrSensorDescription, ...] = (
         status_key="EXT_EXHAUST_FLUID_VOLUME_REFILL_LITRESX10",
         requires_diesel=True,
         native_unit_of_measurement=UnitOfVolume.LITERS,
+        # Volume, not stored volume: it is an amount to add, not what is in
+        # the tank. Home Assistant allows no measurement state class on a
+        # volume, and said so in the log on the first car to report one.
         device_class=SensorDeviceClass.VOLUME,
-        state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
         value_fn=_tenths,
     ),
