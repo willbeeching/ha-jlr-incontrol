@@ -239,10 +239,39 @@ def _signal_time(value: Any) -> Any:
     """
     if isinstance(value, str) and value.strip().isdigit():
         value = int(value.strip())
+    if isinstance(value, str):
+        return _text_time(value)
     if isinstance(value, bool) or not isinstance(value, int | float):
         return value
     seconds = value / 1000 if value > 1e11 else value
     return datetime.fromtimestamp(seconds, dt_util.UTC).isoformat()
+
+
+def _text_time(value: str) -> str:
+    """A time in text, in whichever server convention JLR's broker uses.
+
+    Their REST answers use ISO 8601. Not knowing the stream's, the common
+    server defaults are read too: Java's zone suffix (``...Z[UTC]``), Go's
+    ``2026-11-08 20:14:01.46 +0000 UTC``, and Java's Date text. A time with
+    no zone is taken as UTC, as everything else JLR send is, because a time
+    without one cannot be compared with the zoned times held and the message
+    would fail. Anything else is passed back for untimed_format to show.
+    """
+    text = value.strip()
+    if text.endswith("]") and "[" in text:
+        text = text[: text.rindex("[")]
+    words = text.split()
+    if len(words) in (3, 4) and words[2][:1] in "+-":
+        text = f"{words[0]}T{words[1]}{words[2]}"
+    parsed = dt_util.parse_datetime(text)
+    if parsed is None:
+        try:
+            parsed = datetime.strptime(text, "%a %b %d %H:%M:%S %Z %Y")
+        except ValueError:
+            return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt_util.UTC)
+    return parsed.isoformat()
 
 
 def _time_format(value: Any) -> str:

@@ -834,6 +834,28 @@ class TestTheTimesTheStreamSends:
         assert positions[-1]["timestamp"] == "2026-11-07T10:00:00+00:00"
         assert link.stats["untimed"] == 0
 
+    @pytest.mark.parametrize(
+        "when",
+        [
+            "2026-11-07T10:00:00.000Z",
+            "1794045600000",
+            "2026-11-07 10:00:00 +0000 UTC",
+            "2026-11-07T10:00:00Z[UTC]",
+            "Sat Nov 07 10:00:00 UTC 2026",
+            "2026-11-07 10:00:00",
+        ],
+    )
+    async def test_a_newer_reading_in_any_common_time_form_is_news(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, when: str
+    ) -> None:
+        # The snapshot double reports 09:00; each of these is 10:00 UTC.
+        link = DataHubLink(hass, linked)
+        await link._async_read_status()
+        sent = sent_by_broker("Vehicle.TraveledDistance", "12346000", when, "double")
+        link._on_message(TOPIC, json.dumps([sent]).encode())
+        assert link.stats["fresh"] == 1
+        assert link.reports[KEPT].isoformat() == "2026-11-07T10:00:00+00:00"
+
     async def test_a_time_it_cannot_read_is_counted_and_shaped(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
