@@ -45,6 +45,13 @@ The InControl sign-in stays alongside it, unchanged, for owners outside the UK a
 anyone who cannot use the Data Hub. It is still the reverse-engineered route it always was, and JLR
 could still close it without notice. If you are in the UK or the EU, use the Data Hub.
 
+**The plan is to retire the InControl sign-in once the Data Hub proves to work outside the UK and
+the EU.** Nobody there has tested it yet. If you are outside them, try signing in at
+[data.jlr.com](https://data.jlr.com) and
+[open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) saying whether your cars
+are listed, or what it refuses: that answer decides it. The retirement will be announced in the
+release notes ahead of time, not sprung on anyone.
+
 ### Owners' right to their own data
 
 Under the **EU Data Act** (Regulation (EU) 2023/2854), which covers connected products and names

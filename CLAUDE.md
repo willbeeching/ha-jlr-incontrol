@@ -137,7 +137,8 @@ Re-deriving these has cost days. They are documented at length in
 JLR's documented owner API (developer.jlr.com), and where the integration is
 heading. The reverse-engineered InControl connection stays alongside it, with
 no deprecation notice, until owners outside the UK and EU have tested what the
-Data Hub offers them. `docs/DATA_HUB.md` has the
+Data Hub offers them. If it works for them, the plan (stated in the README) is
+to retire the InControl connection, announced in release notes beforehand. `docs/DATA_HUB.md` has the
 user-facing detail; what matters when changing the code:
 
 - `datahub.py` is the client (private_key_jwt sign-in, DPoP on REST),
