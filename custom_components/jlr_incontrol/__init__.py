@@ -11,9 +11,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
 from .const import (
+    DATAHUB_ISSUES,
     DOMAIN,
-    ISSUE_DATAHUB_SIGNED_OUT,
-    ISSUE_DATAHUB_STREAM_OFF,
     ISSUE_PORTAL_SIGNED_OUT,
     PLATFORMS,
 )
@@ -93,11 +92,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> None
     would have cleared it no longer exists, so the warning stays in Repairs
     pointing at an account the user has already removed.
     """
-    for issue in (
-        ISSUE_PORTAL_SIGNED_OUT,
-        ISSUE_DATAHUB_SIGNED_OUT,
-        ISSUE_DATAHUB_STREAM_OFF,
-    ):
+    for issue in (ISSUE_PORTAL_SIGNED_OUT, *DATAHUB_ISSUES):
         ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
 
 

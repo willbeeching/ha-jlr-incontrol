@@ -135,6 +135,23 @@ ISSUE_DATAHUB_SIGNED_OUT = "datahub_signed_out"
 # nothing else checks. Off, everything still works, a reading at a time on the
 # REST timer, and an owner would not know to look.
 ISSUE_DATAHUB_STREAM_OFF = "datahub_stream_off"
+# The other things only the owner can put right at data.jlr.com, each of which
+# otherwise showed only in diagnostics or a debug log: a car whose location is
+# refused because it is not declared, a car whose status is not shared with
+# the client, and the client's certificate running out after its year.
+ISSUE_DATAHUB_LOCATION_REFUSED = "datahub_location_refused"
+ISSUE_DATAHUB_STATUS_REFUSED = "datahub_status_refused"
+ISSUE_DATAHUB_CERTIFICATE = "datahub_certificate_expiring"
+DATAHUB_ISSUES = (
+    ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_DATAHUB_STREAM_OFF,
+    ISSUE_DATAHUB_LOCATION_REFUSED,
+    ISSUE_DATAHUB_STATUS_REFUSED,
+    ISSUE_DATAHUB_CERTIFICATE,
+)
+# How long before the certificate runs out that the owner is told, and that
+# the options offer linking again. It is made valid for a year.
+DATAHUB_RENEW_WITHIN = timedelta(days=30)
 
 # ---- Identity: ForgeRock OIDC ----
 # JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on

@@ -35,6 +35,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
@@ -42,13 +43,20 @@ from homeassistant.util.ssl import client_context
 
 from .const import (
     CONF_DATAHUB,
+    CONF_REFRESH_TOKEN,
+    CONF_SSO_COOKIES,
     DATAHUB_ACCOUNT_ID,
+    DATAHUB_CERTIFICATE,
     DATAHUB_CLIENT_ID,
     DATAHUB_PRIVATE_KEY,
     DATAHUB_REFRESH_TOKEN,
+    DATAHUB_RENEW_WITHIN,
     DATAHUB_VEHICLES,
     DOMAIN,
+    ISSUE_DATAHUB_CERTIFICATE,
+    ISSUE_DATAHUB_LOCATION_REFUSED,
     ISSUE_DATAHUB_SIGNED_OUT,
+    ISSUE_DATAHUB_STATUS_REFUSED,
     ISSUE_DATAHUB_STREAM_OFF,
 )
 from .datahub import (
@@ -58,6 +66,7 @@ from .datahub import (
     DataHubForbidden,
     DataHubRateLimited,
     Tokens,
+    certificate_expiry,
 )
 from .redact import vehicle_label
 from .stream import (
@@ -223,6 +232,7 @@ class DataHubLink:
         self.location: dict[str, str] = {}
         self._location_due: dict[str, float] = {}
         self.ev: dict[str, str] = {}
+        self._status_refused: set[str] = set()
         self._ev_due: dict[str, float] = {}
         # Cars with a full REST snapshot behind their signals. Until a car has
         # one, what the stream has sent is a few signals, not its status.
@@ -479,6 +489,17 @@ class DataHubLink:
             self._location_due[vin] = (
                 0.0 if answer.startswith("permitted") else now + LOCATION_INTERVAL
             )
+        refused = {v for v, a in self.location.items() if a.startswith("refused")}
+        # Not for an owner who has the portal's location instead: they chose
+        # that, and the tracker is not missing anything.
+        portal = self.entry.data.get(CONF_SSO_COOKIES) or self.entry.data.get(
+            CONF_REFRESH_TOKEN
+        )
+        self._set_issue(
+            ISSUE_DATAHUB_LOCATION_REFUSED,
+            bool(refused) and not portal,
+            cars=self._car_names(refused),
+        )
 
     def _emit(self, vin: str) -> None:
         """Hand the car's current signals on, in the socket's shape.
@@ -505,7 +526,9 @@ class DataHubLink:
                 body = await self.client.async_status(vin, token)
             except DataHubForbidden as err:
                 _LOGGER.debug("Data Hub status for %s: %s", vehicle_label(vin), err)
+                self._status_refused.add(vin)
                 continue
+            self._status_refused.discard(vin)
             answered = True
             self._merge(vin, body)
             await self._async_read_ev(vin, token)
@@ -519,7 +542,56 @@ class DataHubLink:
             self._emit(vin)
         if answered:
             self._status_ok_at = time.monotonic()
+        self._set_issue(
+            ISSUE_DATAHUB_STATUS_REFUSED,
+            bool(self._status_refused),
+            cars=self._car_names(self._status_refused),
+        )
+        self._check_certificate()
         self._notify()
+
+    def _set_issue(self, issue: str, active: bool, **placeholders: str) -> None:
+        """Raise or clear one of this link's repairs."""
+        issue_id = f"{issue}_{self.entry.entry_id}"
+        if not active:
+            ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=issue,
+            translation_placeholders={"title": self.entry.title, **placeholders},
+        )
+
+    def _car_names(self, vins: set[str]) -> str:
+        """The cars as the owner knows them, for a repair to name."""
+        registry = dr.async_get(self.hass)
+        names = []
+        for vin in vins:
+            device = registry.async_get_device(identifiers={(DOMAIN, vin)})
+            name = device and (device.name_by_user or device.name)
+            names.append(name or vehicle_label(vin))
+        return ", ".join(sorted(names))
+
+    def _check_certificate(self) -> None:
+        """Say when the client's certificate is close to running out.
+
+        A year after linking JLR stop accepting it, and the link goes with
+        it. Nothing on JLR's side warns, so this does, a month ahead.
+        """
+        certificate = self.entry.data[CONF_DATAHUB].get(DATAHUB_CERTIFICATE)
+        try:
+            expires = certificate_expiry(certificate)
+        except (TypeError, ValueError):
+            return
+        self._set_issue(
+            ISSUE_DATAHUB_CERTIFICATE,
+            expires - dt_util.utcnow() < DATAHUB_RENEW_WITHIN,
+            date=dt_util.as_local(expires).date().isoformat(),
+        )
 
     def _merge(self, vin: str, body: dict[str, Any]) -> None:
         """A REST answer's signals into what is held, newer values kept."""

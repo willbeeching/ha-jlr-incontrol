@@ -134,7 +134,8 @@ them on in the entity's settings. See [ENTITIES.md](ENTITIES.md) for why each on
 
 ## "I set up on the Data Hub and there is no location"
 
-JLR refuse each car's location until the car is **declared** at data.jlr.com. Open your vehicle
+Home Assistant says which car under **Settings → Repairs**. JLR refuse each car's location until
+the car is **declared** at data.jlr.com. Open your vehicle
 list there and complete the declaration for each car, saying whether you are its **sole user** or a
 **shared user**. The next read picks it up, within the hour; diagnostics show the answer per car
 under `datahub` → `location` (`refused: …` before, `permitted` after).

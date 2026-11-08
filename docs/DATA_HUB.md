@@ -157,6 +157,12 @@ Also measured:
 
 - **Last report (Data Hub) stays unknown**: the car has not been allowed status, or the link has
   not read it yet. Download diagnostics and look at `datahub`.
+- **Settings → Repairs** says, in plain words and with what to do at data.jlr.com, each of the
+  things only the owner can put right: the link has stopped working, the stream is switched off,
+  a car's location is refused because it is not declared (not raised when the InControl sign-in
+  gives the portal's location instead), a car's readings are refused because it or its data
+  categories are not selected on the client, and the certificate has under 30 days left. Each one
+  goes away by itself once it is put right.
 - **Data Hub stream stays off**: Home Assistant says so under **Settings → Repairs**. Check
   **Toggle your stream** is on at data.jlr.com. With it off the link reads status every 15 minutes
   and asks about the stream again each hour; `stream_enabled: false` in diagnostics

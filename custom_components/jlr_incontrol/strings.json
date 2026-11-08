@@ -686,6 +686,18 @@
     "datahub_stream_off": {
       "title": "JLR Data Hub stream is switched off for {title}",
       "description": "The Data Hub link works, but its stream is switched off, so your cars' readings are only read every 15 minutes instead of arriving as the car reports them.\n\nTo switch it on, sign in at data.jlr.com, open the client you created for Home Assistant and turn **Toggle your stream** on. Home Assistant notices within the hour and this notice goes away by itself."
+    },
+    "datahub_location_refused": {
+      "title": "JLR won't share the location of {cars}",
+      "description": "JLR only share a car's location once the car has been declared at data.jlr.com. Until then Home Assistant can't show where it is.\n\nTo fix it: sign in at data.jlr.com, open your vehicle list, and for each car named above complete the declaration. Choose **Sole user** if only you drive it, or **Shared user** and confirm the other drivers know. Home Assistant checks again within the hour, and this message goes away by itself."
+    },
+    "datahub_status_refused": {
+      "title": "JLR aren't sharing readings for {cars}",
+      "description": "JLR refused this car's readings to Home Assistant, so its sensors aren't updating.\n\nTo fix it: sign in at data.jlr.com, open the client you created for Home Assistant, and check the car is selected along with **all** data categories. Home Assistant tries again every 15 minutes, and this message goes away once the readings come through. If it stays, link the Data Hub again from the integration's options."
+    },
+    "datahub_certificate_expiring": {
+      "title": "The JLR Data Hub link for {title} needs renewing by {date}",
+      "description": "The certificate behind the Data Hub link lasts a year, and JLR stop accepting it on {date}. After that the cars stop updating.\n\nTo renew it: open the integration's options and choose **Link the JLR Data Hub again**. It shows a new certificate to paste at data.jlr.com, the same way as when you first set it up. Everything keeps working until then."
     }
   }
 }

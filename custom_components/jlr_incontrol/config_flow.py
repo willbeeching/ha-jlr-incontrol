@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import timedelta
 from typing import Any
 
 # Core 2026.10 replaced voluptuous with probatio, and types every flow schema
@@ -53,15 +52,15 @@ from .const import (
     DATAHUB_ACCOUNT_ID,
     DATAHUB_CERTIFICATE,
     DATAHUB_CLIENT_ID,
+    DATAHUB_ISSUES,
     DATAHUB_PRIVATE_KEY,
     DATAHUB_REFRESH_TOKEN,
+    DATAHUB_RENEW_WITHIN,
     DATAHUB_VEHICLES,
     DISTANCE_UNIT_DEFAULT,
     DISTANCE_UNIT_KM,
     DISTANCE_UNIT_MILES,
     DOMAIN,
-    ISSUE_DATAHUB_SIGNED_OUT,
-    ISSUE_DATAHUB_STREAM_OFF,
     ISSUE_PORTAL_SIGNED_OUT,
     OPT_DISTANCE_UNIT,
     OPT_PRESSURE_UNIT,
@@ -502,10 +501,6 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
-# How long before the certificate runs out that linking again is offered. It
-# is made valid for a year, and nothing else says when that year is up.
-RELINK_WINDOW = timedelta(days=30)
-
 # Everything an InControl sign-in leaves in an entry: the account, the tokens,
 # the identity session and the owner portal's session. Not the cached vehicle
 # details or the freshness clocks, which are about the cars, not the sign-in.
@@ -705,7 +700,7 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
             expires = certificate_expiry(certificate)
         except (TypeError, ValueError):
             return False
-        return expires - dt_util.utcnow() < RELINK_WINDOW
+        return expires - dt_util.utcnow() < DATAHUB_RENEW_WITHIN
 
     async def async_step_datahub_relink(
         self, user_input: dict[str, Any] | None = None
@@ -912,7 +907,7 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
         data.pop(CONF_DATAHUB, None)
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
         # Repairs about a link the entry no longer has.
-        for issue in (ISSUE_DATAHUB_SIGNED_OUT, ISSUE_DATAHUB_STREAM_OFF):
+        for issue in DATAHUB_ISSUES:
             ir.async_delete_issue(
                 self.hass, DOMAIN, f"{issue}_{self.config_entry.entry_id}"
             )

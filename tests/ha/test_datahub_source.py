@@ -748,3 +748,86 @@ class TestBatteryFromTheEvEndpoint:
         hub.datahub.ev_result = DataHubAuthError("revoked")
         await status_loop(link)
         assert link.signed_out
+
+
+class TestRepairsAnOwnerCanAct:
+    """What only the owner can put right at data.jlr.com, said where they look."""
+
+    def issue(self, hass: HomeAssistant, entry: MockConfigEntry, name: str) -> Any:
+        from homeassistant.helpers import issue_registry as ir
+
+        return ir.async_get(hass).async_get_issue(
+            "jlr_incontrol", f"{name}_{entry.entry_id}"
+        )
+
+    def hub_only(self, hass: HomeAssistant, entry: MockConfigEntry) -> None:
+        data = {
+            k: v
+            for k, v in entry.data.items()
+            if k not in ("refresh_token", "password", "sso_cookies")
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+
+    async def test_a_car_not_declared_is_named(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare(hass, entry, 1)
+        self.hub_only(hass, entry)
+        await status_loop(link)
+        issue = self.issue(hass, entry, "datahub_location_refused")
+        assert issue is not None
+        assert issue.translation_placeholders["cars"].startswith("vehicle_")
+        # Declared: the next read clears it.
+        hub.datahub.location_result = {"Vehicle": {}}
+        link._location_due.clear()
+        link._pause = Steps(1)  # type: ignore[method-assign]
+        await status_loop(link)
+        assert self.issue(hass, entry, "datahub_location_refused") is None
+
+    async def test_not_for_an_owner_with_the_portals_location(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # They have location already; nothing is missing.
+        link, _ = bare(hass, entry, 1)
+        await status_loop(link)
+        assert link.location[KEPT].startswith("refused")
+        assert self.issue(hass, entry, "datahub_location_refused") is None
+
+    async def test_a_car_whose_readings_are_refused_is_named(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare(hass, entry, 1)
+        hub.datahub.status_result = DataHubForbidden("status")
+        await status_loop(link)
+        assert self.issue(hass, entry, "datahub_status_refused") is not None
+        hub.datahub.status_result = FakeDataHub(None, "x", "k").status_result
+        await link._async_read_status()
+        assert self.issue(hass, entry, "datahub_status_refused") is None
+
+    async def test_a_certificate_running_out_is_said_a_month_ahead(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from homeassistant.util import dt as dt_util
+
+        link, _ = bare(hass, entry, 1)
+        monkeypatch.setattr(
+            datahub_link,
+            "certificate_expiry",
+            lambda _: dt_util.utcnow() + timedelta(days=200),
+        )
+        await link._async_read_status()
+        assert self.issue(hass, entry, "datahub_certificate_expiring") is None
+        monkeypatch.setattr(
+            datahub_link,
+            "certificate_expiry",
+            lambda _: dt_util.utcnow() + timedelta(days=10),
+        )
+        await link._async_read_status()
+        issue = self.issue(hass, entry, "datahub_certificate_expiring")
+        assert issue is not None and issue.translation_placeholders["date"]
