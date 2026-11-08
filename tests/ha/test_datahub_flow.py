@@ -431,6 +431,25 @@ class TestRemovingTheInControlSignIn:
             )
             is None
         )
+        # Nothing left asks for the InControl password just removed: the
+        # portal it would sign in to is not wanted on the Data Hub alone.
+        reauth = [
+            f
+            for f in hass.config_entries.flow.async_progress()
+            if f["context"].get("source") == "reauth"
+        ]
+        assert reauth == []
+        # One already standing, from a version without this, is withdrawn at
+        # the next refresh.
+        entry.async_start_reauth(hass)
+        await hass.async_block_till_done()
+        await entry.runtime_data.async_refresh()
+        await hass.async_block_till_done()
+        assert not [
+            f
+            for f in hass.config_entries.flow.async_progress()
+            if f["context"].get("source") == "reauth"
+        ]
         # Now on the Data Hub alone, a location sign-in can be added back.
         menu = await hass.config_entries.options.async_init(entry.entry_id)
         assert "location" in menu["menu_options"]
@@ -442,7 +461,13 @@ class TestRemovingTheInControlSignIn:
         await finish(hass, await submit(hass, await open_datahub(hass, entry)))
         await hass.async_block_till_done()
         entry.runtime_data.datahub.signed_out = True
-        result = await remove_incontrol(hass, entry)
+        # Not offered over a link that is not working; linking again is.
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "incontrol_remove" not in menu["menu_options"]
+        assert "datahub_relink" in menu["menu_options"]
+        # And refused if reached anyway.
+        flow = hass.config_entries.options._progress[menu["flow_id"]]
+        result = await flow.async_step_incontrol_remove()
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "datahub_not_working"
         assert entry.data["refresh_token"] == "a-refresh-token"

@@ -140,6 +140,11 @@ class FakePortal:
     error: Exception | None = None
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # As the real one: a session only if the entry held cookies for it.
+        # Always True here hid an entry on the Data Hub alone starting a
+        # reauth for the portal it had no sign-in for.
+        sso = args[1] if len(args) > 1 else kwargs.get("sso_cookies")
+        self.configured = type(self).configured and bool(sso)
         self.listing: dict[str, dict[str, Any]] = {
             KEPT: {"nickname": "Test Car", "portal_id": "id-kept"}
         }

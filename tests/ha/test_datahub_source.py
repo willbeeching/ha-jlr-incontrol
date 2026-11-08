@@ -732,14 +732,30 @@ class TestBatteryFromTheEvEndpoint:
         assert answer.startswith("refused")
         assert link._ev_due[KEPT] - time.monotonic() > 23 * 3600
 
-    async def test_a_failure_on_the_ev_endpoint_does_not_cost_the_status(
+    async def test_a_passing_ev_failure_on_a_known_car_does_not_cost_the_status(
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         seen: list[dict[str, str]] = []
         link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        hub.datahub.ev_result = EV_ANSWER
+        await link._async_read_status()
         hub.datahub.ev_result = DataHubError("GET ev answered 500")
-        await status_loop(link)
+        seen.clear()
+        await link._async_read_status()
+        # Its battery is known; the status goes out with the battery held.
         assert seen and seen[0]["FUEL_LEVEL_PERC"] == "42"
+        assert seen[0]["EV_STATE_OF_CHARGE"] == "64"
+        assert link.ev[KEPT] == "permitted"
+
+    async def test_a_car_without_a_battery_answering_404_is_written_off(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        from custom_components.jlr_incontrol.datahub import DataHubNotFound
+
+        link, _ = bare(hass, entry, 1)
+        hub.datahub.ev_result = DataHubNotFound("GET ev answered 404")
+        await link._async_read_status()
+        assert link.ev[KEPT].startswith("refused")
 
     async def test_a_sign_out_on_the_ev_endpoint_is_a_sign_out(
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
@@ -831,3 +847,60 @@ class TestRepairsAnOwnerCanAct:
         await link._async_read_status()
         issue = self.issue(hass, entry, "datahub_certificate_expiring")
         assert issue is not None and issue.translation_placeholders["date"]
+
+
+class TestReviewProbes:
+    async def test_a_link_refused_at_startup_still_offers_linking_again(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Repairs said to link again, and the options had nowhere to do it:
+        # with setup failed there is no running link to ask.
+        monkeypatch.setattr(f"{Resubscription.__module__}.FIRST_SNAPSHOT_TIMEOUT", 0.05)
+        link_entry(entry, hass)
+        data = {
+            k: v
+            for k, v in entry.data.items()
+            if k not in ("refresh_token", "password", "sso_cookies", "username")
+        }
+        hass.config_entries.async_update_entry(entry, data=data)
+        build = datahub_link.DataHubClient
+
+        def revoked(*args: Any) -> Any:
+            fake = build(*args)
+            fake.refresh_result = DataHubAuthError("revoked")
+            return fake
+
+        monkeypatch.setattr(datahub_link, "DataHubClient", revoked)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is not ConfigEntryState.LOADED
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "datahub_relink" in menu["menu_options"]
+
+    async def test_a_passing_ev_error_is_not_a_car_without_a_battery(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        seen: list[dict[str, str]] = []
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        hub.datahub.ev_result = [DataHubError("GET ev answered 500"), EV_ANSWER]
+        await link._async_read_status()
+        # Not written off for a day, and the car's first status is held back
+        # rather than going out without its battery: setup prunes by it.
+        assert not link.ev.get(KEPT, "").startswith("refused")
+        assert seen == []
+        await link._async_read_status()
+        assert hub.datahub.calls.count("ev") == 2
+        assert seen and seen[-1]["EV_STATE_OF_CHARGE"] == "64"
+
+    async def test_a_car_without_a_battery_is_still_written_off(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        seen: list[dict[str, str]] = []
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        await link._async_read_status()
+        assert link.ev[KEPT].startswith("refused")
+        assert seen and "EV_STATE_OF_CHARGE" not in seen[-1]

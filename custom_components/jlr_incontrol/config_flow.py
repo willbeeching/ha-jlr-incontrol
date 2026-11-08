@@ -22,6 +22,7 @@ from homeassistant.config_entries import (
     SOURCE_REAUTH,
     SOURCE_RECONFIGURE,
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlowWithReload,
@@ -661,9 +662,10 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Choose between the settings and the Data Hub link."""
         menu = ["settings"]
+        working = self._link_working()
         if not self.config_entry.data.get(CONF_DATAHUB):
             menu.append("datahub")
-        elif self._link_needs_renewing():
+        elif not working or self._certificate_running_out():
             # Linking an entry that is already linked and working replaces a
             # good key for nothing, so it is offered only when there is a
             # reason: the link has stopped, or its certificate is running out.
@@ -683,18 +685,29 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
             # Set up on the Data Hub alone, which gives no location. The owner
             # portal does, and needs an InControl sign-in for it.
             menu.append("location")
-        if self.config_entry.data.get(CONF_DATAHUB) and any(
-            self.config_entry.data.get(key) for key in INCONTROL_KEYS
-        ):
+        # Only over a link that works: removing the sign-in from an entry whose
+        # link never started would leave it with nothing.
+        if working and any(self.config_entry.data.get(key) for key in INCONTROL_KEYS):
             menu.append("incontrol_remove")
         return self.async_show_menu(step_id="init", menu_options=menu)
 
-    def _link_needs_renewing(self) -> bool:
+    def _link_working(self) -> bool:
+        """Whether the entry is running on a link JLR accept.
+
+        Not just the running link's word: a link refused before setup
+        finished leaves no running link to ask, the entry not loaded and a
+        repair saying to link again — which has to be offered here.
+        """
+        if not self.config_entry.data.get(CONF_DATAHUB):
+            return False
+        if self.config_entry.state is not ConfigEntryState.LOADED:
+            return False
         link = getattr(
             getattr(self.config_entry, "runtime_data", None), "datahub", None
         )
-        if link is not None and link.signed_out:
-            return True
+        return link is not None and not link.signed_out
+
+    def _certificate_running_out(self) -> bool:
         certificate = self.config_entry.data[CONF_DATAHUB].get(DATAHUB_CERTIFICATE)
         try:
             expires = certificate_expiry(certificate)

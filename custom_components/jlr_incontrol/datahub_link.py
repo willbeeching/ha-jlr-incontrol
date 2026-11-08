@@ -64,6 +64,7 @@ from .datahub import (
     DataHubClient,
     DataHubError,
     DataHubForbidden,
+    DataHubNotFound,
     DataHubRateLimited,
     Tokens,
     certificate_expiry,
@@ -531,7 +532,8 @@ class DataHubLink:
             self._status_refused.discard(vin)
             answered = True
             self._merge(vin, body)
-            await self._async_read_ev(vin, token)
+            if not await self._async_read_ev(vin, token):
+                continue
             self._read_in_full.add(vin)
             _LOGGER.debug(
                 "Data Hub status for %s: reported %s, %d signals",
@@ -569,9 +571,15 @@ class DataHubLink:
     def _car_names(self, vins: set[str]) -> str:
         """The cars as the owner knows them, for a repair to name."""
         registry = dr.async_get(self.hass)
+        # The entry-scoped lookup where core has it; the identifiers one is
+        # deprecated from 2026.10 and logs saying so.
+        by_identifier = getattr(registry, "async_get_device_by_identifier", None)
         names = []
         for vin in vins:
-            device = registry.async_get_device(identifiers={(DOMAIN, vin)})
+            if by_identifier is not None:
+                device = by_identifier((DOMAIN, vin), self.entry.entry_id)
+            else:
+                device = registry.async_get_device(identifiers={(DOMAIN, vin)})
             name = device and (device.name_by_user or device.name)
             names.append(name or vehicle_label(vin))
         return ", ".join(sorted(names))
@@ -608,7 +616,7 @@ class DataHubLink:
         if snapshot:
             self._note_report(vin, snapshot)
 
-    async def _async_read_ev(self, vin: str, token: str) -> None:
+    async def _async_read_ev(self, vin: str, token: str) -> bool:
         """Battery and charging, from the endpoint that carries them.
 
         The status snapshot has none of it: JLR's catalog marks every traction
@@ -616,17 +624,31 @@ class DataHubLink:
         no charge, range or charging state until the stream delivered, and its
         battery entities were pruned as no longer reported. An owner on a
         Range Rover Sport plug-in hybrid reported exactly that.
+
+        False holds the car's status back: the EV endpoint failed in passing
+        and has never answered for this car, so whether it has a battery is
+        not known, and a first status without one is what setup prunes the
+        battery entities by. The next read tries again.
         """
         now = time.monotonic()
         if now < self._ev_due.get(vin, 0.0):
-            return
+            return True
         try:
             body = await self.client.async_ev(vin, token)
         except (DataHubAuthError, DataHubRateLimited):
             raise
-        except DataHubError as err:
+        except (DataHubForbidden, DataHubNotFound) as err:
+            # What JLR answer for a car without a charge port. Only these:
+            # a 500 once wrote a plug-in car off for a day.
             answer = f"refused: {err}"
             self._ev_due[vin] = now + EV_REFUSED_RETRY
+        except DataHubError as err:
+            _LOGGER.debug(
+                "Data Hub EV data for %s failed, trying again next read: %s",
+                vehicle_label(vin),
+                err,
+            )
+            return vin in self.ev
         else:
             self._merge(vin, body)
             answer = "permitted"
@@ -634,6 +656,7 @@ class DataHubLink:
         if answer != self.ev.get(vin):
             _LOGGER.debug("Data Hub EV data for %s: %s", vehicle_label(vin), answer)
         self.ev[vin] = answer
+        return True
 
     def _note_report(self, vin: str, when: datetime) -> bool:
         if vin not in self.reports or when > self.reports[vin]:

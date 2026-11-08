@@ -78,6 +78,10 @@ class DataHubForbidden(DataHubError):
     """Signed in, but not allowed this vehicle or this category."""
 
 
+class DataHubNotFound(DataHubError):
+    """404: no such thing for this vehicle, as opposed to a passing fault."""
+
+
 class DataHubRateLimited(DataHubError):
     """429. Carries how long JLR asked us to wait."""
 
@@ -431,6 +435,8 @@ class DataHubClient:
         if status == 403:
             detail = body.get("detail") if isinstance(body, dict) else None
             raise DataHubForbidden(detail or "not permitted")
+        if status == 404:
+            raise DataHubNotFound(f"GET {path.split('/')[-1]} answered 404")
         if status == 429:
             try:
                 wait = float(retry_after or 60)

@@ -603,6 +603,18 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self.datahub is not None and not self.datahub.signed_out
 
     @property
+    def _wants_portal(self) -> bool:
+        """Whether this entry means to read the owner portal at all.
+
+        An InControl entry does, for location and names. An entry on the Data
+        Hub alone does only if the owner signed in for location.
+        """
+        return self.has_incontrol or bool(
+            self.entry.data.get(CONF_SSO_COOKIES)
+            or self.entry.data.get(CONF_PORTAL_COOKIES)
+        )
+
+    @property
     def has_incontrol(self) -> bool:
         """Whether this entry holds an InControl sign-in at all.
 
@@ -817,6 +829,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return
             self._portal_signed_out = None
         if not self.portal.configured:
+            if not self._wants_portal:
+                # On the Data Hub alone, by setup or by removing the InControl
+                # sign-in: location comes from the Data Hub, and no portal
+                # session is the intended state, not a lost one. Treating it
+                # as lost started a reauth asking for the InControl password
+                # the owner had just chosen to remove. Any such prompt goes.
+                if self.entry.async_get_active_flows(self.hass, {SOURCE_REAUTH}):
+                    self._async_clear_signed_out_issue()
+                return
             # Entries created before the portal was used have no session
             # stored, and one cannot be conjured from a refresh token. Nothing
             # to retry here, so this is a repair and a single log line rather
