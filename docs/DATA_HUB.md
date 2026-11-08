@@ -1,8 +1,10 @@
 # JLR Data Hub (beta)
 
 JLR now publish an official API for owners, the **JLR Data Hub**, under the EU Data Act. It is
-documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started), and it is
-available in the UK as well as the EU.
+documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started). Despite the EU
+origin it is not only European: it works in the UK and the EU, and an owner in Canada has it
+working with location, the car declared as outside the UK and the EU. Nowhere else has been
+tried yet.
 
 From 2.0 the integration can be set up on it from **Add integration**, with no InControl email or
 password, and an existing InControl entry can be linked to it from the options. Either way,
@@ -131,7 +133,8 @@ Also measured:
   the docs do not say this. Confirmed on two cars: both refused, both declared as sole user, both
   permitted at the next read. Look for each car's status and class in your vehicle list at
   data.jlr.com.
-- **Electric cars, not yet checked against one.** The EV endpoint gives the true charge, a
+- **Electric cars** have been checked on a plug-in hybrid Range Rover Sport and an I-Pace. The
+  EV endpoint gives the true charge, a
   plugged-in flag, a charging flag and a mode, but no charging status, displayed charge or charging
   method, which the entities and the charge-port check read. Those are filled in from what it does
   give, word for word where the meaning is the same; plugged in and not charging reads **Plugged
