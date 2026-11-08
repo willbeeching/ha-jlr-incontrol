@@ -247,7 +247,12 @@ class TestUnlinking:
         assert "datahub" in entry.data
 
         menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert menu["menu_options"] == ["settings", "datahub", "datahub_remove"]
+        assert menu["menu_options"] == [
+            "settings",
+            "datahub",
+            "datahub_remove",
+            "incontrol_remove",
+        ]
         result = await hass.config_entries.options.async_configure(
             menu["flow_id"], {"next_step_id": "datahub_remove"}
         )
@@ -356,3 +361,87 @@ class TestSettingUpOnTheDataHub:
         )
         assert result["type"] is FlowResultType.FORM
         assert result["errors"] == {"base": "datahub_rejected"}
+
+
+async def remove_incontrol(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> dict[str, Any]:
+    menu = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "incontrol_remove" in menu["menu_options"]
+    return await hass.config_entries.options.async_configure(
+        menu["flow_id"], {"next_step_id": "incontrol_remove"}
+    )
+
+
+class TestRemovingTheInControlSignIn:
+    """The way off the reverse-engineered connection, for an owner on the Data Hub."""
+
+    async def test_it_is_not_offered_without_the_data_hub(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
+    ) -> None:
+        # With nothing else linked, removing it would leave the entry reading
+        # nothing at all.
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "incontrol_remove" not in menu["menu_options"]
+
+    async def test_it_forgets_the_sign_in_and_keeps_the_cars(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
+    ) -> None:
+        from homeassistant.helpers import issue_registry as ir
+
+        await finish(hass, await submit(hass, await open_datahub(hass, entry)))
+        await hass.async_block_till_done()
+        before = set(hass.states.async_entity_ids())
+        ir.async_create_issue(
+            hass,
+            "jlr_incontrol",
+            f"portal_signed_out_{entry.entry_id}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="portal_signed_out",
+        )
+
+        form = await remove_incontrol(hass, entry)
+        assert form["type"] is FlowResultType.FORM
+        result = await hass.config_entries.options.async_configure(form["flow_id"], {})
+        await hass.async_block_till_done()
+
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        for key in (
+            "username",
+            "password",
+            "device_id",
+            "user_id",
+            "refresh_token",
+            "sso_cookies",
+            "portal_cookies",
+            "portal_base",
+        ):
+            assert key not in entry.data, key
+        assert "datahub" in entry.data
+        coordinator = entry.runtime_data
+        assert not coordinator.has_incontrol
+        assert coordinator.status_source == "datahub"
+        # Every entity and its history stays: same entry, same unique ids.
+        assert before <= set(hass.states.async_entity_ids())
+        assert (
+            ir.async_get(hass).async_get_issue(
+                "jlr_incontrol", f"portal_signed_out_{entry.entry_id}"
+            )
+            is None
+        )
+        # Now on the Data Hub alone, a location sign-in can be added back.
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "location" in menu["menu_options"]
+        assert "incontrol_remove" not in menu["menu_options"]
+
+    async def test_it_is_refused_while_the_link_is_not_working(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
+    ) -> None:
+        await finish(hass, await submit(hass, await open_datahub(hass, entry)))
+        await hass.async_block_till_done()
+        entry.runtime_data.datahub.signed_out = True
+        result = await remove_incontrol(hass, entry)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "datahub_not_working"
+        assert entry.data["refresh_token"] == "a-refresh-token"

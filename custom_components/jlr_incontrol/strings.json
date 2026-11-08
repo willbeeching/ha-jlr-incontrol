@@ -81,7 +81,8 @@
           "settings": "Units and readings",
           "datahub": "Link the JLR Data Hub (beta)",
           "datahub_remove": "Unlink the JLR Data Hub",
-          "location": "InControl sign-in for location"
+          "location": "InControl sign-in for location",
+          "incontrol_remove": "Remove the InControl sign-in"
         }
       },
       "settings": {
@@ -123,6 +124,10 @@
         "data": {
           "code": "Verification code"
         }
+      },
+      "incontrol_remove": {
+        "title": "Remove the InControl sign-in",
+        "description": "Home Assistant forgets your InControl email, sign-in and owner portal session, and uses only the JLR Data Hub from now on. Every entity and its history is kept: status, cars and location keep coming from the Data Hub.\n\nWhat goes with it:\n- the fallback: if the Data Hub link ever stops working, the readings stop until you link it again, instead of switching to the InControl connection;\n- location from the owner portal for any car not declared at data.jlr.com. Declare it there to get its location from the Data Hub.\n\nYou can sign in to InControl again later from these options, for location only."
       }
     },
     "progress": {
@@ -141,7 +146,8 @@
       "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
       "unknown": "The link could not be completed.",
       "location_failed": "The InControl sign-in did not complete. Try again from the options; status from the Data Hub is unaffected.",
-      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit."
+      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit.",
+      "datahub_not_working": "The Data Hub link is not working, so the InControl sign-in is the only thing this entry has. Link the Data Hub again first."
     }
   },
   "selector": {

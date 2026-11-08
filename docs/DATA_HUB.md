@@ -20,6 +20,11 @@ not link carries on exactly as before.
   can take its location from JLR's owner portal instead, which needs an InControl sign-in: on an
   entry set up on the Data Hub, choose **InControl sign-in for location** in the options. Only the
   portal's session is kept, not your password, and it is used for location and car names only.
+- **Moving off InControl.** An entry that started on the InControl sign-in and has the Data Hub
+  linked can drop the sign-in: **Configure → Remove the InControl sign-in**. Every entity and its
+  history stays. What goes is the fallback below, and portal location for a car not declared at
+  data.jlr.com. It is refused while the link is not working, since the entry would then read
+  nothing.
 - **If the link stops working** (the client deleted, its certificate replaced, consent
   withdrawn), a repair says so. An entry that also has an InControl sign-in falls back to the
   telemetry socket by itself, so the sensors keep working while you link it again; one set up on

@@ -27,6 +27,7 @@ from homeassistant.config_entries import (
     OptionsFlowWithReload,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -40,6 +41,7 @@ from .const import (
     CONF_DATAHUB,
     CONF_DEVICE_ID,
     CONF_PASSWORD,
+    CONF_PORTAL_BASE,
     CONF_PORTAL_COOKIES,
     CONF_PORTAL_MINTED,
     CONF_REFRESH_TOKEN,
@@ -56,6 +58,7 @@ from .const import (
     DISTANCE_UNIT_KM,
     DISTANCE_UNIT_MILES,
     DOMAIN,
+    ISSUE_PORTAL_SIGNED_OUT,
     OPT_DISTANCE_UNIT,
     OPT_PRESSURE_UNIT,
     OPT_UNSETTLED_MINUTES,
@@ -494,6 +497,24 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+# Everything an InControl sign-in leaves in an entry: the account, the tokens,
+# the identity session and the owner portal's session. Not the cached vehicle
+# details or the freshness clocks, which are about the cars, not the sign-in.
+INCONTROL_KEYS = frozenset(
+    {
+        CONF_USERNAME,
+        CONF_PASSWORD,
+        CONF_DEVICE_ID,
+        CONF_USER_ID,
+        CONF_REFRESH_TOKEN,
+        CONF_SSO_COOKIES,
+        CONF_PORTAL_COOKIES,
+        CONF_PORTAL_BASE,
+        CONF_PORTAL_MINTED,
+    }
+)
+
+
 class DataHubLinker:
     """Linking a Data Hub client: shared by setup and by the options.
 
@@ -651,7 +672,42 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
             # Set up on the Data Hub alone, which gives no location. The owner
             # portal does, and needs an InControl sign-in for it.
             menu.append("location")
+        if self.config_entry.data.get(CONF_DATAHUB) and any(
+            self.config_entry.data.get(key) for key in INCONTROL_KEYS
+        ):
+            menu.append("incontrol_remove")
         return self.async_show_menu(step_id="init", menu_options=menu)
+
+    async def async_step_incontrol_remove(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Leave the entry on the Data Hub alone, keeping every entity.
+
+        The way off the reverse-engineered connection for an owner the Data
+        Hub works for. Refused while the link is not working: with neither a
+        working link nor a sign-in to fall back on, the entry would read
+        nothing, and only deleting it would get it back.
+        """
+        link = getattr(
+            getattr(self.config_entry, "runtime_data", None), "datahub", None
+        )
+        if link is None or link.signed_out:
+            return self.async_abort(reason="datahub_not_working")
+        if user_input is None:
+            return self.async_show_form(step_id="incontrol_remove")
+        data = {
+            key: value
+            for key, value in self.config_entry.data.items()
+            if key not in INCONTROL_KEYS
+        }
+        self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+        # A prompt to sign in to a portal this entry no longer uses would sit in
+        # Repairs for good.
+        ir.async_delete_issue(
+            self.hass, DOMAIN, f"{ISSUE_PORTAL_SIGNED_OUT}_{self.config_entry.entry_id}"
+        )
+        self.hass.config_entries.async_schedule_reload(self.config_entry.entry_id)
+        return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None

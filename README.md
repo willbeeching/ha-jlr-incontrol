@@ -50,7 +50,8 @@ the EU.** Nobody there has tested it yet. If you are outside them, try signing i
 [data.jlr.com](https://data.jlr.com) and
 [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) saying whether your cars
 are listed, or what it refuses: that answer decides it. The retirement will be announced in the
-release notes ahead of time, not sprung on anyone.
+release notes ahead of time, not sprung on anyone. Already on the Data Hub and happy with it? You
+can drop the InControl sign-in now, from the options: **Remove the InControl sign-in**.
 
 ### Owners' right to their own data
 
@@ -142,6 +143,10 @@ history.
   portal for location and car names only. Not needed for a car declared at data.jlr.com, which
   gets its location from the Data Hub.
 - **Unlink the JLR Data Hub**: on an entry that also has an InControl sign-in, goes back to it.
+- **Remove the InControl sign-in**: on an entry with the Data Hub linked, forgets the InControl
+  email, sign-in and portal session and uses the Data Hub alone, keeping every entity and its
+  history. You lose the automatic fallback to the InControl connection, and portal location for any
+  car not declared at data.jlr.com. Refused while the Data Hub link is not working.
 
 The two unit settings are purely about display; neither changes what is fetched or how often.
 
