@@ -84,7 +84,7 @@ ids made before it are kept, and so is their history.
 | Climate priority | `CLIMATE_PRIORITY` | any, Data Hub | diagnostic | on |
 | Climate run time | `CLIMATE_STATUS_REMAINING_RUNTIME` | any | diagnostic | on |
 | Climate venting time | `CLIMATE_STATUS_VENTING_TIME` | any | diagnostic | **off** |
-| Fuel-fired heater time remaining | `CLIMATE_STATUS_FFH_REMAINING_RUNTIME` | any | diagnostic | on |
+| Fuel-fired heater time remaining | `CLIMATE_STATUS_FFH_REMAINING_RUNTIME` | not electric | diagnostic | on |
 | Climate timer 1 and 2 | `CLIMATE_STATUS_TIMER{1,2}_*` | any | diagnostic | on |
 | Departure timer | `DEPARTURE_TIMER_*` | any, Data Hub | diagnostic | on |
 | Air purification cycle time, last cycle, started, last completed, last error | `CAC_*` | any | diagnostic | **off** |
@@ -153,7 +153,7 @@ any of them on in the entity settings.
 | Tyre warning front/rear left/right | `TYRE_STATUS_*` | any |
 | Climate, air conditioning | `CLIMATE_STATUS_OPERATING_STATUS`, `AIR_CONDITIONING_ACTIVE` | any |
 | Climate timer, departure timer set (diagnostic) | `CLIMATE_STATUS_TIMER_ACTIVATION_STATUS`, `DEPARTURE_TIMER_IS_SET` | any |
-| Fuel-fired heater enabled (diagnostic) | `CLIMATE_FFH_SETTING` | cars with one |
+| Fuel-fired heater enabled (diagnostic) | `CLIMATE_FFH_SETTING` | not electric |
 | Air purification (diagnostic, off by default) | `CAC_OPERATING_STATE` | any |
 | Seat held ×7 (diagnostic, off by default) | `SEAT_*_INHIBITED` | any, Data Hub |
 | Charging (flag, off by default), charging cable connected, battery conditioning | `EV_IS_CHARGING`, `EV_IS_PLUGGED_IN`, `EV_IS_PRECONDITIONING` | EV/PHEV |
@@ -166,7 +166,11 @@ wrong on yours, please open an issue. The **Total range** is made only for plug-
 with one source of energy it is that source's range again. **Climate run time** reads 30 with the climate
 off: it is how long a run lasts, and counts down only while one is going. The climate timers carry
 no year, so each is shown in the year that puts it nearest to now. Departure and climate timers are
-read in Home Assistant's time zone, as the car keeps its owner's clock.
+read in Home Assistant's time zone, as the car keeps its owner's clock. A departure timer dated
+before 2015 reads unknown: JLR send a date in 2000 for no timer, which showed as "26 years ago".
+The fuel-fired heater is left off electric cars, which send its keys without having one. A car
+whose fuel type JLR do not give counts as electric when it reports a battery charge and no fuel
+level; an existing heater entity on such a car is kept rather than deleted on that judgement.
 
 The bonnet lock is off by default and not part of the security readings: it is a latch outside
 central locking, and reads locked with every door open. `DOOR_IS_BOOT_LOCKED` and the kilometre electric

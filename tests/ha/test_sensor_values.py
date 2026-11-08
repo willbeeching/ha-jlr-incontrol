@@ -298,6 +298,11 @@ class TestTheDataHubsReadings:
     def test_a_word_that_says_nothing_is_unknown(self, raw: str) -> None:
         assert _words(raw) is None
 
+    def test_a_camel_case_word_reads_as_words(self) -> None:
+        # The I-Pace's charging mode on the Data Hub.
+        assert _words("TimedChargingNotActive") == "Timed charging not active"
+        assert _words("KEY_REMOVED") == "Key removed"
+
     def test_a_word_is_capped_at_what_a_state_can_hold(self) -> None:
         assert len(_words("X" * 300) or "") == 255
 
@@ -307,6 +312,16 @@ class TestTheDataHubsReadings:
             "DEPARTURE_TIMER_MONTH": "11",
             "DEPARTURE_TIMER_DAY": "8",
             "DEPARTURE_TIMER_HOUR": "7",
+        }
+        assert _departure(status) is None
+
+    def test_jlrs_placeholder_date_is_no_departure(self) -> None:
+        status = {
+            "DEPARTURE_TIMER_YEAR": "2000",
+            "DEPARTURE_TIMER_MONTH": "1",
+            "DEPARTURE_TIMER_DAY": "1",
+            "DEPARTURE_TIMER_HOUR": "0",
+            "DEPARTURE_TIMER_MINUTE": "0",
         }
         assert _departure(status) is None
 

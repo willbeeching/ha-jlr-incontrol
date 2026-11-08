@@ -129,6 +129,21 @@ def is_electric(attributes: dict[str, Any]) -> bool:
     return str(attributes.get("fuelType", "")).lower() == "electric"
 
 
+def has_no_engine(attributes: dict[str, Any], status: dict[str, Any]) -> bool:
+    """True for a car with nothing to burn, on its fuel type or its readings.
+
+    The Data Hub's fuel type can be null (a Defender's was), and an I-Pace on
+    the Data Hub showed a fuel-fired heater it does not have. With no fuel
+    type, a car that reports a battery charge and no fuel level is taken as
+    electric; a plug-in hybrid reports both.
+    """
+    if is_electric(attributes):
+        return True
+    if attributes.get("fuelType"):
+        return False
+    return "EV_STATE_OF_CHARGE" in status and "FUEL_LEVEL_PERC" not in status
+
+
 def is_not_diesel(attributes: dict[str, Any]) -> bool:
     """True only when the car is known to burn something other than diesel.
 

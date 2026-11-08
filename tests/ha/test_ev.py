@@ -24,6 +24,7 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
 )
 
 from custom_components.jlr_incontrol.entity import (  # noqa: E402
+    has_no_engine,
     is_electric,
     is_electrified,
 )
@@ -105,6 +106,18 @@ class TestTellingTheDrivetrainsApart:
         # EV_STATE_OF_CHARGE is the one key verified absent on ICE cars.
         assert is_electrified({"fuelType": "Something New"}, EV_STATUS)
         assert not is_electrified({"fuelType": "Something New"}, {"ODOMETER": "1"})
+
+
+class TestHavingNothingToBurn:
+    def test_a_known_fuel_type_decides(self) -> None:
+        assert has_no_engine({"fuelType": "Electric"}, {})
+        assert not has_no_engine({"fuelType": "Petrol"}, EV_STATUS)
+
+    def test_without_one_a_battery_and_no_fuel_level_decide(self) -> None:
+        assert has_no_engine({"fuelType": None}, EV_STATUS)
+        hybrid = {**EV_STATUS, "FUEL_LEVEL_PERC": "40"}
+        assert not has_no_engine({}, hybrid)
+        assert not has_no_engine({}, {"FUEL_LEVEL_PERC": "40"})
 
 
 class TestAnElectricCarsEntities:

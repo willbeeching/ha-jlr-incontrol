@@ -57,7 +57,7 @@ from .entity import (
     JlrDataHubEntity,
     JlrVehicleEntity,
     async_add_vehicle_entities,
-    is_electric,
+    has_no_engine,
     is_electrified,
     is_not_diesel,
 )
@@ -212,6 +212,8 @@ def _words(value: Any) -> str | None:
         return None
     # A state is capped at 255 characters, and the free-text cleaning fields
     # have no documented length.
+    # The Data Hub sends some in camel case: TimedChargingNotActive.
+    text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
     return text.replace("__", "_").replace("_", " ").capitalize()[:255]
 
 
@@ -260,12 +262,18 @@ def _local(year: int, month: int, day: int, hour: int, minute: int) -> datetime 
         return None
 
 
+# InControl cars date from 2015. JLR's placeholder for "no timer" is a date in
+# 2000, which is not a timer anybody set.
+DEPARTURE_EARLIEST_YEAR = 2015
+
+
 def _departure(status: dict[str, Any]) -> datetime | None:
     """The departure timer as one time.
 
     In Home Assistant's time zone: the car keeps the clock its owner set, and
     the timer is read off that clock. Zeros are an unset timer, not midnight on
-    the first of January.
+    the first of January, and so is a date before any of these cars was built:
+    an I-Pace with no timer showed one "26 years ago".
     """
     parts = [
         _whole(status.get(f"DEPARTURE_TIMER_{part}"))
@@ -274,6 +282,8 @@ def _departure(status: dict[str, Any]) -> datetime | None:
     if any(part is None for part in parts) or not all(parts[:3]):
         return None
     year, month, day, hour, minute = parts
+    if year < DEPARTURE_EARLIEST_YEAR:  # type: ignore[operator]
+        return None
     return _local(year, month, day, hour, minute)  # type: ignore[arg-type]
 
 
@@ -581,6 +591,7 @@ CABIN_SENSORS: tuple[JlrSensorDescription, ...] = (
         "heater_time_remaining",
         "CLIMATE_STATUS_FFH_REMAINING_RUNTIME",
         entity_category=EntityCategory.DIAGNOSTIC,
+        suppress_for_ev=True,
     ),
     JlrSensorDescription(
         key="climate_timer_1",
@@ -942,7 +953,7 @@ def _should_create_sensor(
     """Return True if a sensor description should be created for this vehicle."""
     if description.status_key not in status:
         return False
-    if description.suppress_for_ev and is_electric(attributes):
+    if description.suppress_for_ev and has_no_engine(attributes, status):
         return False
     if description.requires_diesel and is_not_diesel(attributes):
         return False
@@ -1036,6 +1047,8 @@ async def async_setup_entry(
             return set()
         keys = [d.key for d in EV_SENSORS if d.requires_ev]
         keys += ["evcc_status", "charge_now_setting"]
+        # has_no_engine guesses the same way when fuelType is missing.
+        keys += [d.key for d in ALL_SENSORS if d.suppress_for_ev]
         return {f"{vin}_{key}" for key in keys}
 
     async_add_vehicle_entities(

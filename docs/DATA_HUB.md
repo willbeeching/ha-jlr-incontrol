@@ -138,7 +138,8 @@ Also measured:
   in, not charging**, because the endpoint does not say whether that is paused, waiting or full.
   JLR's own documents disagree on two units: the signal catalog gives time to full charge in
   minutes and charging rate in km of range per hour, the API spec gives seconds and kW. The
-  catalog's are used. If either reads wrong on your car, please open an issue.
+  catalog is right: on an I-Pace charging at home, 114 minutes and 22 km/h matched the JLR
+  app's 1 hr 54 min and 14 mi/hr.
 - **Journeys** are refused for owner accounts altogether, even with the category selected and the
   car declared.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the

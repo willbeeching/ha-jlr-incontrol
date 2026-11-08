@@ -23,6 +23,7 @@ from .entity import (
     JlrDataHubEntity,
     JlrVehicleEntity,
     async_add_vehicle_entities,
+    has_no_engine,
     is_convertible,
     is_electrified,
     is_not_diesel,
@@ -60,6 +61,8 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     known: frozenset[str] = frozenset()
     # AdBlue: hidden on a car known to burn something other than diesel.
     requires_diesel: bool = False
+    # The fuel-fired heater: hidden on a car with nothing to burn.
+    suppress_for_ev: bool = False
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -304,6 +307,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         known=frozenset({"ENABLED", "DISABLED"}),
         is_on=lambda v: v == "ENABLED",
         entity_category=EntityCategory.DIAGNOSTIC,
+        suppress_for_ev=True,
     ),
     JlrBinaryDescription(
         key="air_cleaning",
@@ -438,6 +442,7 @@ async def async_setup_entry(
             and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
             and (not description.requires_ev or is_electrified(attributes, status))
             and not (description.requires_diesel and is_not_diesel(attributes))
+            and not (description.suppress_for_ev and has_no_engine(attributes, status))
             and (description.key not in CONVERTIBLE_KEYS or is_convertible(attributes))
         ]
         if coordinator.datahub and vin in coordinator.datahub.vehicles:
@@ -456,7 +461,11 @@ async def async_setup_entry(
         )
         if attributes.get("fuelType"):
             return set()
-        return {f"{vin}_{d.key}" for d in VEHICLE_BINARY_SENSORS if d.requires_ev}
+        return {
+            f"{vin}_{d.key}"
+            for d in VEHICLE_BINARY_SENSORS
+            if d.requires_ev or d.suppress_for_ev
+        }
 
     async_add_vehicle_entities(
         entry, Platform.BINARY_SENSOR, coordinator, async_add_entities, build, protect

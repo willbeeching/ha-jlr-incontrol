@@ -135,6 +135,24 @@ VEHICLE: dict[str, Any] = {
 ELECTRIC: dict[str, Any] = {
     "VehicleIdentification": {"VIN": KEPT},
     "TraveledDistance": 12345000,
+    # What an I-Pace sent with no fuel-fired heater and no departure timer.
+    "Cabin": {
+        "HVAC": {
+            "AirConditioning": {
+                "FuelFiredHeater": {"Setting": "DISABLED", "TimeRemaining": 27}
+            }
+        }
+    },
+    "Schedule": {
+        "Departure": {
+            "IsSet": "TRUE",
+            "Year": 2000,
+            "Month": 1,
+            "Day": 1,
+            "Hour": 0,
+            "Minute": 0,
+        }
+    },
     "Powertrain": {
         # An electric car can still send the fuel signals, empty.
         "FuelSystem": {"AbsoluteLevel": 0},
@@ -157,7 +175,7 @@ ELECTRIC: dict[str, Any] = {
                 },
                 "ChargeRate": 40,
                 "StateOfChargeRate": 9.5,
-                "ChargingModeChoice": "SMART",
+                "ChargingModeChoice": "TimedChargingNotActive",
             },
             "RangeEstimation": {
                 "Consumption": {
@@ -399,7 +417,7 @@ class TestAnElectricCar:
             ("ev_charge_limit_one_off", "100.0"),
             ("ev_charge_limit_one_off_mode", "Inactive"),
             ("ev_charge_limit_permanent_mode", "Active"),
-            ("ev_charging_mode", "Smart"),
+            ("ev_charging_mode", "Timed charging not active"),
             ("ev_charging_rate", "40.0"),
             ("ev_charging_rate_percent", "9.5"),
             ("ev_battery_actual", "78.0"),
@@ -426,6 +444,17 @@ class TestAnElectricCar:
 
     def test_a_fuel_reading_is_not_made_for_it(self, hass: HomeAssistant) -> None:
         assert state(hass, "sensor", "fuel_volume") is None
+
+    # A Defender's fuel type came back null; a car that reports a battery and
+    # no fuel level is still known to have nothing to burn.
+    @pytest.mark.parametrize("fuel", ["electric", None])
+    def test_a_fuel_fired_heater_is_not_made_for_it(self, hass: HomeAssistant) -> None:
+        assert state(hass, "sensor", "heater_time_remaining") is None
+        assert state(hass, "binary_sensor", "heater_enabled") is None
+
+    def test_the_placeholder_departure_is_no_timer(self, hass: HomeAssistant) -> None:
+        # It read "26 years ago" on an I-Pace.
+        assert state(hass, "sensor", "departure_time") == STATE_UNKNOWN
 
 
 def ev_endpoint(charging: bool, plugged: bool, **extra: Any) -> dict[str, Any]:
