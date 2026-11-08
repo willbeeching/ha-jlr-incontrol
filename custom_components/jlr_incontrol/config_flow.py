@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import timedelta
 from typing import Any
 
 # Core 2026.10 replaced voluptuous with probatio, and types every flow schema
@@ -34,6 +35,7 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.util import dt as dt_util
 
 from .api import JlrClient, JlrConnectionError
 from .auth import JlrInvalidCode, JlrLogin, JlrLoginError, JlrSessionExpired
@@ -79,6 +81,7 @@ from .datahub import (
     DataHubExpired,
     DeviceLogin,
     Tokens,
+    certificate_expiry,
     generate_credentials,
 )
 
@@ -497,6 +500,10 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+# How long before the certificate runs out that linking again is offered. It
+# is made valid for a year, and nothing else says when that year is up.
+RELINK_WINDOW = timedelta(days=30)
+
 # Everything an InControl sign-in leaves in an entry: the account, the tokens,
 # the identity session and the owner portal's session. Not the cached vehicle
 # details or the freshness clocks, which are about the cars, not the sign-in.
@@ -656,7 +663,14 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose between the settings and the Data Hub link."""
-        menu = ["settings", "datahub"]
+        menu = ["settings"]
+        if not self.config_entry.data.get(CONF_DATAHUB):
+            menu.append("datahub")
+        elif self._link_needs_renewing():
+            # Linking an entry that is already linked and working replaces a
+            # good key for nothing, so it is offered only when there is a
+            # reason: the link has stopped, or its certificate is running out.
+            menu.append("datahub_relink")
         # Only where there is an InControl sign-in to go back to: unlinking an
         # entry set up on the Data Hub alone would leave it reading nothing.
         # Deleting the integration is the way out of that one.
@@ -677,6 +691,25 @@ class JlrOptionsFlowHandler(OptionsFlowWithReload):
         ):
             menu.append("incontrol_remove")
         return self.async_show_menu(step_id="init", menu_options=menu)
+
+    def _link_needs_renewing(self) -> bool:
+        link = getattr(
+            getattr(self.config_entry, "runtime_data", None), "datahub", None
+        )
+        if link is not None and link.signed_out:
+            return True
+        certificate = self.config_entry.data[CONF_DATAHUB].get(DATAHUB_CERTIFICATE)
+        try:
+            expires = certificate_expiry(certificate)
+        except (TypeError, ValueError):
+            return False
+        return expires - dt_util.utcnow() < RELINK_WINDOW
+
+    async def async_step_datahub_relink(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The same steps as linking, under the name that says why."""
+        return await self.async_step_datahub(user_input)
 
     async def async_step_incontrol_remove(
         self, user_input: dict[str, Any] | None = None

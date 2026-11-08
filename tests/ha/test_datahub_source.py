@@ -497,7 +497,7 @@ def sign_in(monkeypatch: pytest.MonkeyPatch) -> type:
 
 async def open_location(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
     menu = await hass.config_entries.options.async_init(entry.entry_id)
-    assert menu["menu_options"] == ["settings", "datahub", "location"]
+    assert menu["menu_options"] == ["settings", "location"]
     return await hass.config_entries.options.async_configure(
         menu["flow_id"], {"next_step_id": "location"}
     )

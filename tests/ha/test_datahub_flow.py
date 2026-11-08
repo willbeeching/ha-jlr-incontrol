@@ -247,9 +247,10 @@ class TestUnlinking:
         assert "datahub" in entry.data
 
         menu = await hass.config_entries.options.async_init(entry.entry_id)
+        # Linking again is not offered over a link that works: it would only
+        # replace a good key.
         assert menu["menu_options"] == [
             "settings",
-            "datahub",
             "datahub_remove",
             "incontrol_remove",
         ]
@@ -312,7 +313,7 @@ class TestSettingUpOnTheDataHub:
         # Nothing to unlink back to, so unlinking is not offered; signing in
         # to InControl for location is.
         menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert menu["menu_options"] == ["settings", "datahub", "location"]
+        assert menu["menu_options"] == ["settings", "location"]
         await hass.config_entries.options.async_configure(
             menu["flow_id"], {"next_step_id": "settings"}
         )
@@ -445,3 +446,50 @@ class TestRemovingTheInControlSignIn:
         assert result["type"] is FlowResultType.ABORT
         assert result["reason"] == "datahub_not_working"
         assert entry.data["refresh_token"] == "a-refresh-token"
+
+
+class TestLinkingAgain:
+    """Offered only when the link needs it, under a name that says so."""
+
+    async def link(self, hass: HomeAssistant, entry: MockConfigEntry) -> None:
+        await finish(hass, await submit(hass, await open_datahub(hass, entry)))
+        await hass.async_block_till_done()
+
+    async def test_when_the_link_has_stopped(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
+    ) -> None:
+        await self.link(hass, entry)
+        entry.runtime_data.datahub.signed_out = True
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "datahub_relink" in menu["menu_options"]
+        # It is the same steps as linking: the certificate to paste first.
+        result = await hass.config_entries.options.async_configure(
+            menu["flow_id"], {"next_step_id": "datahub_relink"}
+        )
+        assert result["step_id"] == "datahub"
+
+    async def test_when_the_certificate_is_running_out(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        loaded: Doubles,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from datetime import timedelta
+
+        from homeassistant.util import dt as dt_util
+
+        await self.link(hass, entry)
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "datahub_relink" not in menu["menu_options"]
+        await hass.config_entries.options.async_configure(
+            menu["flow_id"], {"next_step_id": "settings"}
+        )
+        monkeypatch.setattr(
+            config_flow,
+            "certificate_expiry",
+            lambda _: dt_util.utcnow() + timedelta(days=10),
+        )
+        menu = await hass.config_entries.options.async_init(entry.entry_id)
+        assert "datahub_relink" in menu["menu_options"]

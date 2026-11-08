@@ -82,7 +82,8 @@
           "datahub": "Link the JLR Data Hub (beta)",
           "datahub_remove": "Unlink the JLR Data Hub",
           "location": "InControl sign-in for location",
-          "incontrol_remove": "Remove the InControl sign-in"
+          "incontrol_remove": "Remove the InControl sign-in",
+          "datahub_relink": "Link the JLR Data Hub again"
         }
       },
       "settings": {

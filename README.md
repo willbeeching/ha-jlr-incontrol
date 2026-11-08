@@ -138,7 +138,8 @@ history.
 
 - **Units and readings**: the settings below.
 - **Link the JLR Data Hub (beta)**: moves the entry onto JLR's official owner API. See
-  [docs/DATA_HUB.md](docs/DATA_HUB.md).
+  [docs/DATA_HUB.md](docs/DATA_HUB.md). Once linked it is replaced by **Link the JLR Data Hub
+  again**, shown only when the link has stopped working or its certificate has under 30 days left.
 - **InControl sign-in for location**: on an entry set up on the Data Hub, signs in to JLR's owner
   portal for location and car names only. Not needed for a car declared at data.jlr.com, which
   gets its location from the Data Hub.

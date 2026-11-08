@@ -74,7 +74,11 @@ client at data.jlr.com.
 ## How it talks to JLR
 
 - **Sign-in**: once, with the device code you approve on your phone. After that a refresh token
-  keeps the link alive without you. JLR's refresh token for this has no expiry of its own.
+  keeps the link alive without you. JLR's refresh token for this has no expiry of its own, but the
+  certificate does: it is made valid for a year. From 30 days before it runs out, the options offer
+  **Link the JLR Data Hub again**, which makes a new one; the same entry is offered it if the link
+  stops working. A link that is working is not offered it, since linking again only replaces a
+  good key.
 - **Status**: one REST read per car when the link starts, then every 15 minutes until the stream
   has delivered a message, and hourly after that. Fifteen minutes is the cadence the integration's
   housekeeping already keeps; it is there because the REST read is the only source of change
