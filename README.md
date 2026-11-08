@@ -7,98 +7,84 @@
 [![vibe-coded](https://img.shields.io/badge/vibe-coded-ff69b4?logo=musicbrainz&logoColor=white)](https://en.wikipedia.org/wiki/Vibe_coding)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20AI%20tokens-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/willbeeching)
 
-Get your Jaguar or Land Rover into Home Assistant. Fuel level, doors, windows, tyre pressures and
-where you parked it.
+Get your Jaguar or Land Rover into Home Assistant: fuel, doors, locks, windows, tyre pressures,
+warnings, timers and where you parked it.
 
-In the UK and the EU it uses the **JLR Data Hub**, JLR's official API for owners (beta, from
-1.9.0). Elsewhere it falls back on the older connection the InControl app uses, which needs your
-InControl email and password.
+There are two ways in, and the integration offers both when you add it:
 
-There's no third-party cloud in the middle and nothing to plug into the car. The integration talks
-to JLR's own backend, so it runs anywhere Home Assistant does.
+- **The JLR Data Hub**, JLR's official API for owners, in the UK and the EU. No InControl password,
+  nothing reverse-engineered. New in 1.9.0 and still in beta.
+- **The InControl sign-in**, the connection JLR's own app uses, for owners the Data Hub does not
+  reach. It needs your InControl email and password.
 
-> [!IMPORTANT]
-> **Upgrading from v1.3.x or earlier: sign in again once.** v1.4.0 changed how it reads your car,
-> and reading location and vehicle names needs a sign-in that older versions never captured.
-> Without it you'll see vehicles named from their VIN and no location.
->
-> **Settings → Devices & Services → Jaguar Land Rover InControl → ⋮ on the entry → Reconfigure**,
-> then your password and the emailed code. Your entities, history and automations are kept —
-> there's no need to remove and re-add anything.
->
-> This release is **read-only**. Remote control (lock, climate, charging, honk) is no longer
-> available.
+Both give the same entities. There's no third-party cloud in the middle and nothing to plug into
+the car: the integration talks to JLR's own services from your Home Assistant, so it runs anywhere
+Home Assistant does. It is read-only: it reads the car and never sends it a command.
+
+> [!NOTE]
+> **Upgrading from 1.3.x or earlier on the InControl sign-in?** Sign in again once: **Settings →
+> Devices & Services → Jaguar Land Rover InControl → ⋮ on the entry → Reconfigure**. Location and
+> vehicle names need a sign-in those versions never captured. Your entities, history and
+> automations are kept.
 
 ## Where this is heading
 
-Read this before you build anything important on top of it.
+Over August 2026 Jaguar Land Rover closed off, one after another, the routes this integration had
+been using: first the login endpoint, then app attestation over the endpoints that serve vehicle
+data, then the same over everything that sends a command to the car. Each time a way round was
+found, and each time it looked like the last one. Remote control did not survive it, which is why
+this integration has been read-only since 1.4.0 and will stay that way.
 
-Over August 2026 Jaguar Land Rover closed off the routes this integration used, one after another.
-First the login endpoint, then app attestation over the endpoints that serve vehicle data, then
-the same over everything that sends a command to the car. Each time, a way round has been found —
-sign-in moved to the flow the app itself uses, status moved to the real-time telemetry connection,
-and location and vehicle names now come from the owner web portal.
+Then, in November, JLR's **Data Hub** turned out to offer owners in the UK and the EU exactly what
+this integration needs: a documented API, a sign-in that is meant for third parties, and a stream
+meant to deliver the car's readings as it reports them. Laid side by side with the old connection
+on real cars, every value matched. That is where this integration is going. It is the sanctioned
+route, and nothing about it depends on JLR leaving a door open by accident.
 
-But that is three workarounds in a fortnight, and the pattern is not ambiguous: JLR are steadily
-shutting the door on anything that is not their own app. The two routes still open are open
-because nobody has closed them yet, not because they are meant to be used. **Assume this is the
-last working version.** If the telemetry connection or the portal goes the way of the rest, there
-may be nothing left to move to, and that will be the end of it rather than another update.
-
-Remote control has already reached that point. Every surface has been checked and there is no way
-to actuate the car without the app's attestation, so this integration is read-only now and will
-stay that way.
-
-I'm sorry. I know a fair few people have built automations and dashboards on this, and it is
-genuinely useful right up until the moment it isn't. I'll keep it working for as long as there is
-something to work with, and if it does stop for good I'll say so plainly here rather than leave
-anyone guessing. And if JLR ask me to stop, I will — see the
-[note to them](#a-note-to-jaguar-land-rover) at the end.
+The InControl sign-in stays alongside it, unchanged, for owners outside the UK and the EU and for
+anyone who cannot use the Data Hub. It is still the reverse-engineered route it always was, and JLR
+could still close it without notice. If you are in the UK or the EU, use the Data Hub.
 
 ### Owners' right to their own data
-
-Worth knowing, if you'd rather none of this were necessary.
 
 Under the **EU Data Act** (Regulation (EU) 2023/2854), which covers connected products and names
 vehicles explicitly, owners in the EU have a right to the data their vehicle generates, and a right
 to have the manufacturer share it with a third party of their choosing — machine-readable and,
-where technically feasible, continuously. It also limits using technical measures to frustrate
-those rights.
+where technically feasible, continuously. The Data Hub looks very much like JLR's answer to it, and
+it is a good one.
 
-That is the route this integration ought to be unnecessary alongside. If you're in the EU, you can
-ask Jaguar Land Rover directly how an owner is meant to get continuous access to their own vehicle
-data, and what the compliant route is. In the UK the equivalent is weaker: UK GDPR gives you access
-and portability, which means a copy of your data on request rather than a live feed.
-
-None of that makes this integration official or sanctioned, and none of it is legal advice — the
-Data Act's applicability dates are staggered and the detail matters. But manufacturers respond to
-being asked, and the more owners who ask for proper access, the less anyone needs a project like
-this one. **If you do ask and get a useful answer, please post it in an issue** — a documented,
-supported route would be a better outcome than another workaround.
+Outside the EU and the UK there is no such route yet. If you're one of those owners, it is worth
+asking Jaguar Land Rover how you are meant to get access to your own vehicle's data; manufacturers
+respond to being asked. None of this is legal advice — the detail matters. **If you ask and get a
+useful answer, please post it in an issue.**
 
 ## What you get
 
-- Live vehicle status, pushed as the car reports it: fuel level and range, odometer,
-  service/AdBlue distance, tyre pressures, 12V battery, coolant temperature, and a fair bit more.
-- **BEV support:** battery charge, electric range, charging status, time to full and
-  preconditioning time remaining. ICE-only sensors are hidden automatically on electric cars.
-- Every door's open/closed and lock state, all four windows, the sunroof, theft alarm status, and
-  warnings for fluids and service, as binary sensors.
-- Climate, timers and the cabin: whether climate and air conditioning are running, the climate and
-  departure timers, the fuel-fired heater, headlights, airbag and front-impact flags, tyre
-  warnings, fuel in litres, and seat fold positions. Some are off by default; every one is listed
-  in [docs/ENTITIES.md](docs/ENTITIES.md).
-- A GPS `device_tracker` showing where the car finished its last journey, with the time of the fix.
-- **All info** sensor (disabled by default) exposing the full status dict as attributes.
-- Diagnostics download for troubleshooting, with VIN, plate and position redacted.
-- Configurable distance and pressure unit overrides.
+- Vehicle status: fuel level, litres and range, odometer, service and AdBlue distance, tyre
+  pressures and warnings, the 12V battery, coolant temperature, and a good deal more.
+- Every door's open/closed and lock state, the windows, the sunroof, the bonnet and boot, the theft
+  alarm, and warnings for fluids, the particulate filter and service, as binary sensors.
+- Climate and the cabin: whether climate and air conditioning are running, the climate and
+  departure timers, the fuel-fired heater, headlights, airbag and front-impact flags, and seat fold
+  positions.
+- **Electric and plug-in hybrid cars:** battery charge, electric and combined range, charging status
+  and rate, time to full, charge limits and preconditioning.
+- Only what your car has: entities are made for the readings your car reports, and the ones that
+  mean nothing for it are left off (no fuel sensors on an electric car, no AdBlue on a petrol one,
+  no electric sensors on a car without a charge port). Niche ones are off by default; every entity
+  is listed in [docs/ENTITIES.md](docs/ENTITIES.md).
+- A `device_tracker` with where the car last reported its position, and the time of that fix.
+- Diagnostics download for troubleshooting, with VINs, plates, positions, keys and tokens redacted.
+- Distance and pressure unit overrides.
 - More than one car on the account? They all show up automatically.
 
 ## Requirements
 
-- Home Assistant 2025.8 or newer
-- An InControl account with your vehicle(s) added to it
-- Your account email and password
+- Home Assistant 2025.8 or newer.
+- For the **Data Hub**: a JLR account with your cars listed at [data.jlr.com](https://data.jlr.com)
+  (UK and EU), and your phone to approve the link.
+- For the **InControl sign-in**: an InControl account with your cars added to it, its email and
+  password, and your inbox to hand for the code JLR email you.
 
 ## Installation
 
@@ -108,7 +94,8 @@ supported route would be a better outcome than another workaround.
 2. Install **Jaguar Land Rover InControl**.
 3. Restart Home Assistant.
 
-To pick up beta releases, enable **Show beta versions** on the custom repository in HACS.
+To pick up beta releases, enable **Show beta versions** on the custom repository in HACS. The Data
+Hub is in the 1.9.0 betas.
 
 ### Manual
 
@@ -133,9 +120,9 @@ InControl**. It asks how to connect:
   within minutes; location and car names come from JLR's owner portal. JLR could change it or
   switch it off without notice.
 
-Both give the same entities. An entry started on the InControl sign-in can link the Data Hub later
-from its options, keeping every entity and its history.
-Each vehicle appears as a device with its own sensors.
+Both give the same entities, and each car appears as a device with its own. An entry started on
+the InControl sign-in can link the Data Hub later from its options, keeping every entity and its
+history.
 
 ### Options
 
@@ -172,59 +159,78 @@ and history are kept.
 
 **Settings → Devices & Services → Jaguar Land Rover InControl → ⋮ → Delete.**
 
-Everything goes with it: the refresh token, the portal session cookies, the device and user ids
-and the cached vehicle details are all held in that config entry and are deleted with it. All the
-devices and entities it created are removed, and any sign-in prompt it raised is withdrawn. Nothing
-is left behind in Home Assistant, and nothing is stored anywhere else — there is no account to
-close and no server of ours holding anything.
+Everything goes with it. Whatever the entry held — the Data Hub's private key, client id and
+refresh token, or the InControl refresh token, portal session and device and user ids — lives in
+that config entry and is deleted with it, along with the cached vehicle details, every device and
+entity it created, and any repair it raised. Nothing is stored anywhere else: there is no account
+to close and no server of ours holding anything.
 
-Your InControl account itself is untouched. If you want to revoke this integration's access at
-JLR's end rather than just locally, change your InControl password; that invalidates the stored
-token.
+To revoke access at JLR's end as well:
 
-To remove **one car** but keep the rest, delete it from your InControl account and it will
-disappear here within fifteen minutes, cached details included. You can also delete its device
-directly, which Home Assistant allows once the account genuinely no longer lists it.
+- **Data Hub:** delete the client at [data.jlr.com](https://data.jlr.com). The key Home Assistant
+  holds is then worth nothing.
+- **InControl sign-in:** change your InControl password, which invalidates the stored token.
+
+To remove **one car** but keep the rest, take it off the Data Hub client at data.jlr.com, or off
+your InControl account, and it disappears here once JLR stop listing it, cached details included.
+You can also delete its device directly, which Home Assistant allows once the account genuinely no
+longer lists it.
 
 ## How it works
+
+### The Data Hub
+
+Adding the integration makes a private key inside Home Assistant and shows you the certificate
+that goes with it. You paste the certificate into a client at data.jlr.com, and approve the link
+on your phone with a code Home Assistant shows you. From then on every request to JLR is signed
+with that key, which never leaves Home Assistant, so a token on its own is no use to anyone. JLR's
+refresh token for the link does not expire, so it keeps working without you.
+
+Status is read from JLR's REST API every 15 minutes, and the integration also holds one connection
+to JLR's stream for the whole account. Once the stream has shown it delivers, the REST read drops
+to hourly and changes arrive as the car reports them. Location is read with each status update for
+every car declared at data.jlr.com, and a car JLR refuse is asked only hourly. Each reading carries
+the time the car actually reported it, which the InControl route never had.
+
+### The InControl sign-in
 
 Sign-in uses the same OpenID Connect flow as JLR's own app, which finishes with a verification code
 emailed to you. Only a renewable token, a session, your device id and your user id are stored in
 your own Home Assistant config entry — your password is not kept, and none of it goes anywhere
 else.
 
-**Vehicle status is pushed, not polled.** The integration holds open the same real-time telemetry
-connection JLR's app uses and subscribes to each vehicle on the account. A car's full status
-arrives the moment it subscribes, and updates stream in as the vehicle reports them, so values
-change in Home Assistant when they change in the car.
+Vehicle status is pushed, not polled: the integration holds open the same real-time telemetry
+connection JLR's app uses, gets each car's full status the moment it subscribes, and relays updates
+as the car reports them. Location and car names come from JLR's owner web portal, re-read every
+half hour.
 
-That's also the polite way round, which matters for an unofficial integration: rather than asking
-JLR's servers the same question on a timer forever, it waits to be told. What remains on a schedule
-is light — renewing the token and, every half hour, re-reading the parked location.
+### Either way
 
-Worth knowing:
+It is built to be a quiet client of a service that is not ours: waiting to be told where it can,
+asking on a timer only where it must, and backing off when JLR ask it to.
 
-- **Location is where the last journey ended**, not a live position. It appears once a completed
-  journey has been processed, which can be hours after you park, so it answers "is the car home"
-  well and "where is it mid-drive" not at all. The tracker carries the time of the fix as a
-  `timestamp` attribute, and a `stale` attribute once that fix is over a day old.
+- **Location is where the car last reported it**, normally where it was parked, not a live
+  position. It answers "is the car home" well and "where is it mid-drive" not at all. The tracker
+  carries the time of the fix as a `timestamp` attribute, and a `stale` attribute once that fix is
+  over a day old.
 - **If the location can't be refreshed, the tracker says nothing rather than guessing.** An old fix
   still resolves to a zone, so serving one anyway doesn't produce a cautious answer — it produces a
   confident wrong one. When it can't be refreshed the state goes unknown and `trusted` is false;
   worth checking in automations that act on the car being home.
-- The status you see is whatever the car last reported. Vehicles report on their own schedule,
-  and this integration relays those reports as they arrive.
+- The status you see is whatever the car last reported. Cars report on their own schedule, and
+  nothing here can wake one up to ask.
 - Locked and alarm-armed are independent states: a car can be locked with the alarm off.
 - **Preconditioning time remaining** is a point-in-time value, not a live countdown — the car
   reports it once when preconditioning starts and it then sits still rather than ticking down.
   For a countdown that actually counts, see [docs/RECIPES.md](docs/RECIPES.md).
-- Sign-in sessions eventually expire. When that happens Home Assistant will ask you to sign in
-  again, with a fresh emailed code.
+- If a sign-in stops working — an InControl session expiring, or a Data Hub client deleted or its
+  consent withdrawn — Home Assistant says so under **Settings → Repairs**, with what to do.
 
 ## What people use it for
 
 - **Is the car home?** The `device_tracker` resolves to your zones, so "arrived home" and "left"
-  automations work — bearing in mind it updates when a journey completes, not continuously.
+  automations work — bearing in mind it updates when the car reports its position, not
+  continuously.
 - **Charge on cheap rate or on solar.** **Plugged in**, **Charging** and the **Battery** percentage
   are what a tariff automation or a surplus-charging controller needs. The **EVCC status** sensor
   (off by default) reports IEC 61851 connector state for wallbox controllers that speak it.
@@ -242,7 +248,8 @@ Template sensors, automations and dashboard snippets are in
 
 | | |
 | --- | --- |
-| [Entities](docs/ENTITIES.md) | Every entity, which vehicles get it, where its data comes from and how it degrades |
+| [Data Hub](docs/DATA_HUB.md) | Setting up the Data Hub, what JLR's docs get wrong, and its troubleshooting |
+| [Entities](docs/ENTITIES.md) | Every entity, which cars get it, where its data comes from and how it degrades |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | By symptom, not by log line |
 | [Recipes](docs/RECIPES.md) | Template sensors, automations, dashboard cards |
 | [Data model](docs/DATA_MODEL.md) | The raw JLR status keys, for anyone extending this |
@@ -251,28 +258,25 @@ Template sensors, automations and dashboard snippets are in
 
 This is an unofficial community project with no affiliation to, or endorsement from, Jaguar Land
 Rover. "Jaguar", "Land Rover" and "InControl" are their trademarks, used here only to describe what
-this connects to. It relies on undocumented APIs that JLR are actively closing off — see
-[Where this is heading](#where-this-is-heading) — and it can stop working without warning. It was developed with AI assistance, it comes with no warranty, and you
-should use it with your own account and vehicles at your own risk. There are technical notes and a
-data model write-up in `docs/` if you're curious.
+this connects to. The Data Hub is JLR's documented API; the InControl sign-in relies on undocumented
+ones that JLR have been closing off, and it can stop working without warning. It was developed with
+AI assistance, it comes with no warranty, and you should use it with your own account and vehicles
+at your own risk. There are technical notes and a data model write-up in `docs/` if you're curious.
 
 It reads one thing: your own vehicle's data, from your own account, into your own Home Assistant.
 Nothing is routed through me or anyone else, and it sends no commands to any car.
 
 ### A note to Jaguar Land Rover
 
-If anyone at JLR would like this changed or taken down, please
+Thank you for the Data Hub. It is what this note used to ask you for: a supported, read-only way
+for owners to see their own car in their own home automation, and the integration now uses it
+wherever it can. I would gladly retire the InControl connection the day the
+Data Hub reaches every owner, and I would be glad to help test it anywhere it is not offered yet.
+
+If anyone at JLR would like anything here changed or taken down, please
 [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) or get in touch through my
 GitHub profile and I'll do it. No argument and no lawyers required. This is a personal side
-project, not a product and not a commercial venture, built so owners can see their own car in their
-own home automation. If that isn't something you want, say so and it stops.
-
-Better still, I would rather work with you than around you. If there is any appetite for a
-sanctioned route — a supported API, a developer programme, or even a narrow read-only one covering
-an owner's own vehicle — I would be glad to talk, to help build or test it, and to retire this
-project in favour of it. The demand is plainly there: people want to see their own car in their own
-home automation, and nothing more than that. Serving it properly would suit everyone better than
-blocking it, and I would much rather be on the right side of that.
+project, not a product and not a commercial venture.
 
 ## Support
 
