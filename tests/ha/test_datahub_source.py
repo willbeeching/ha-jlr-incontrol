@@ -630,3 +630,61 @@ class TestLocationFromAnInControlSignIn:
         assert "portal_cookies" not in hub_only.data
         assert "refresh_token" not in hub_only.data
         assert hub.client.calls == []
+
+
+class TestStartingUpWithAStreamThatSpeaksFirst:
+    async def test_an_early_streamed_reading_does_not_cost_entities(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A restart where the stream answers before the first REST read.
+
+        The one streamed signal was taken for the car's whole status: setup
+        went ahead on it and the prune deleted every entity whose key it did
+        not carry, the fuel level among them, for good.
+        """
+        from homeassistant.helpers import entity_registry as er
+
+        link_entry(entry, hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        registry = er.async_get(hass)
+        fuel = registry.async_get_entity_id(
+            "sensor", "jlr_incontrol", f"{KEPT}_fuel_level"
+        )
+        assert fuel is not None
+        await hass.config_entries.async_unload(entry.entry_id)
+        await hass.async_block_till_done()
+
+        released = asyncio.Event()
+
+        class SlowHub(FakeDataHub):
+            async def async_status(self, vin: str, access_token: str) -> Any:
+                await released.wait()
+                return await super().async_status(vin, access_token)
+
+        monkeypatch.setattr(
+            datahub_link, "DataHubClient", hub.builder("datahub", SlowHub)
+        )
+
+        async def speaks_first(**kwargs: Any) -> str:
+            kwargs["on_subscribed"]()
+            kwargs["on_message"](
+                f"account/acct-1/vehicles/{KEPT}/status",
+                b'{"name": "Vehicle.TraveledDistance",'
+                b' "timestamp": "2026-11-07T10:00:00Z", "value": 12346000}',
+            )
+            released.set()
+            await asyncio.Event().wait()
+            return "unreachable"
+
+        monkeypatch.setattr(datahub_link, "run_session", speaks_first)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert registry.async_get(fuel) is not None
+        state = hass.states.get(fuel)
+        assert state is not None and float(state.state) == 42
+        await hass.config_entries.async_unload(entry.entry_id)

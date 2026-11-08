@@ -198,36 +198,44 @@ async def run_session(
         stage = SUBSCRIPTION_STAGE
         writer.write(subscribe_packet(1, topics))
         await writer.drain()
+        # The keepalive is the client's to keep: MQTT has the broker hang up
+        # on a client silent for one and a half keepalives, whatever the
+        # broker itself is sending. So it runs on what this side last sent.
+        # It used to run on what arrived, and a busy stream that reset it
+        # with every message kept the client silent until the broker cut it.
+        last_sent = loop.time()
         awaiting_ping = False
         subscribed = False
         while True:
-            wait = float(keepalive)
-            if deadline is not None:
-                remaining = deadline - loop.time()
-                if remaining <= 0:
-                    return "time limit"
-                wait = min(wait, remaining)
-            if reading is None:
-                reading = asyncio.ensure_future(_read_packet(reader))
-            done, _ = await asyncio.wait({reading}, timeout=wait)
-            if not done:
-                if deadline is not None and loop.time() >= deadline:
-                    return "time limit"
+            now = loop.time()
+            if deadline is not None and now >= deadline:
+                return "time limit"
+            if now - last_sent >= keepalive:
                 if awaiting_ping:
                     raise MqttError("keepalive went unanswered")
                 writer.write(bytes([PINGREQ, 0]))
                 await writer.drain()
+                last_sent = now
                 awaiting_ping = True
+            wait = max(0.0, keepalive - (loop.time() - last_sent))
+            if deadline is not None:
+                wait = min(wait, max(0.0, deadline - loop.time()))
+            if reading is None:
+                reading = asyncio.ensure_future(_read_packet(reader))
+            done, _ = await asyncio.wait({reading}, timeout=wait)
+            if not done:
                 continue
             kind, body = reading.result()
             reading = None
-            awaiting_ping = False
             kind_type = kind & 0xF0
+            if kind_type == PINGRESP:
+                awaiting_ping = False
             if kind_type == PUBLISH:
                 topic_name, payload, packet_id = parse_publish(kind, body)
                 if packet_id is not None:
                     writer.write(_packet(PUBACK, struct.pack("!H", packet_id)))
                     await writer.drain()
+                    last_sent = loop.time()
                 on_message(topic_name, payload)
             elif kind_type == SUBACK and not subscribed:
                 # 0x80 is the broker refusing a filter. Every filter refused

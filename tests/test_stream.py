@@ -359,6 +359,37 @@ class TestASession:
         assert reason == "closed by broker"
         assert 0xC0 in [k for k, _ in broker.received]
 
+    async def test_a_busy_line_still_pings_on_time(self) -> None:
+        # The keepalive is the client's to keep: the broker hangs up on a
+        # client silent for one and a half keepalives, however much the broker
+        # itself is sending. A message every 0.05s once reset the wait, so
+        # the client never sent anything at all.
+        async def script(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            await broker.take(r)
+            w.write(CONNACK_OK)
+            await broker.take(r)
+            w.write(SUBACK_OK)
+            await w.drain()
+            loop = asyncio.get_running_loop()
+            pinged = asyncio.ensure_future(broker.take(r))
+            until = loop.time() + 0.6
+            while loop.time() < until and not pinged.done():
+                w.write(publish("account/a/vehicles/V/status", b"[]"))
+                await w.drain()
+                await asyncio.sleep(0.05)
+            if pinged.done():
+                w.write(bytes([0xD0, 0]))
+                await w.drain()
+            else:
+                pinged.cancel()
+
+        broker = Broker(script)
+        async with broker:
+            reason, messages = await session(broker, keepalive=0.2)
+        assert reason == "closed by broker"
+        assert messages
+        assert 0xC0 in [k for k, _ in broker.received]
+
     async def test_an_unanswered_ping_ends_the_session(self) -> None:
         async def script(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
             await broker.take(r)

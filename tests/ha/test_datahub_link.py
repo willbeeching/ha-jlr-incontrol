@@ -686,3 +686,46 @@ class TestPositionOnTheStream:
             POSITION_TOPIC, json.dumps(fix("2026-11-07T15:00:00Z")).encode()
         )
         assert link.signals[KEPT]["Vehicle.CurrentLocation.Latitude"]["value"] == 51.5
+
+
+class TestStreamOrdering:
+    async def test_an_older_reading_does_not_replace_a_newer_one(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # JLR deliver late and out of order. A delayed "unlocked" replaced a
+        # newer "locked" while the newer time stayed on the car.
+        link = DataHubLink(hass, linked)
+        name = "Vehicle.Body.Door.Lock.Status"
+        link._on_message(TOPIC, message(name, "2026-11-07T15:00:00Z", "TRUE"))
+        link._on_message(TOPIC, message(name, "2026-11-07T14:00:00Z", "FALSE"))
+        assert link.signals[KEPT][name]["value"] == "TRUE"
+        assert link.reports[KEPT].isoformat() == "2026-11-07T15:00:00+00:00"
+
+    async def test_a_reading_with_the_same_time_is_taken(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        name = "Vehicle.Body.Door.Lock.Status"
+        link._on_message(TOPIC, message(name, "2026-11-07T15:00:00Z", "TRUE"))
+        link._on_message(TOPIC, message(name, "2026-11-07T15:00:00Z", "FALSE"))
+        assert link.signals[KEPT][name]["value"] == "FALSE"
+
+    async def test_the_stream_says_nothing_before_the_first_full_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # One streamed signal is not a car's status. Passed on before the
+        # REST snapshot, it was taken for the whole of it at start-up.
+        seen: list[dict[str, str]] = []
+        link = DataHubLink(hass, linked, on_status=lambda _, s: seen.append(s))
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T15:00:00Z", 9)
+        )
+        assert seen == []
+        await link._async_read_status()
+        assert seen and "FUEL_LEVEL_PERC" in seen[-1]
+        # The streamed value, newer than the snapshot, is in what was handed on.
+        assert seen[-1]["ODOMETER"] == "9"
+        link._on_message(
+            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T16:00:00Z", 10)
+        )
+        assert seen[-1]["ODOMETER"] == "10"

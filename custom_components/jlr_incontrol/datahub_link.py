@@ -216,6 +216,9 @@ class DataHubLink:
         # What JLR said the last time each car's location was asked for.
         self.location: dict[str, str] = {}
         self._location_due: dict[str, float] = {}
+        # Cars with a full REST snapshot behind their signals. Until a car has
+        # one, what the stream has sent is a few signals, not its status.
+        self._read_in_full: set[str] = set()
         # When the stream may next be tried, after a round of rejections.
         self._stream_after = 0.0
 
@@ -466,8 +469,15 @@ class DataHubLink:
             )
 
     def _emit(self, vin: str) -> None:
-        """Hand the car's current signals on, in the socket's shape."""
-        if self._on_status is None:
+        """Hand the car's current signals on, in the socket's shape.
+
+        Not before the car's first REST snapshot. The stream and that read
+        start together, and a streamed signal that won the race was handed on
+        as the car's whole status: setup went ahead on one key and the prune
+        deleted every entity it did not carry. What the stream sends first is
+        kept, and goes out with the snapshot.
+        """
+        if self._on_status is None or vin not in self._read_in_full:
             return
         reported = self.reports.get(vin)
         values = {name: entry["value"] for name, entry in self.signals[vin].items()}
@@ -497,6 +507,7 @@ class DataHubLink:
                 signals[name] = {"value": value, "time": snapshot}
             if snapshot:
                 self._note_report(vin, snapshot)
+            self._read_in_full.add(vin)
             _LOGGER.debug(
                 "Data Hub status for %s: reported %s, %d signals",
                 vehicle_label(vin),
@@ -746,6 +757,13 @@ class DataHubLink:
             name = item.get("name")
             when = _parse_time(item.get("timestamp"))
             if not isinstance(name, str):
+                continue
+            held = self.signals.get(vin, {}).get(name, {}).get("time")
+            if held and (when is None or when < held):
+                # Delivered late: JLR send out of order. An "unlocked" from
+                # an hour ago replaced a newer "locked" while the newer time
+                # stayed on the car, which is a wrong reading made to look
+                # current. A value the same age is taken; it is a redelivery.
                 continue
             self.signals.setdefault(vin, {})[name] = {
                 "value": item.get("value"),
