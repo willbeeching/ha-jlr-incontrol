@@ -127,7 +127,9 @@ Also measured:
   real shape was found: on a drive in Australia the broker sent lists of signals keyed
   `dataType`, `description`, `signalName`, `signalTimestamp`, `signalValue`, `unit` and
   `vssIdentifier`, which the link now reads, taking the VSS name from `vssIdentifier` (or
-  `signalName`) and reading numbers sent as text as numbers.
+  `signalName`) and reading numbers sent as text as numbers. `signalTimestamp` is epoch
+  milliseconds as text (`"1794167909000"`, measured on an I-Pace), not the ISO 8601 the REST
+  answers use; until 2.0.4 read it, every streamed reading was set aside for want of a time.
 - The status values are the same as the existing integration's (the same frozen coolant
   temperature, the same `KEY_ON_ENGINE_OFF`), so everything in [DATA_MODEL.md](DATA_MODEL.md)
   still applies.

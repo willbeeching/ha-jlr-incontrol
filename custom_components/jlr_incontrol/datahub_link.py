@@ -233,9 +233,10 @@ def _signal_time(value: Any) -> Any:
     """A signal's time as ISO text; epoch numbers are read as UTC.
 
     Also an epoch number sent as text, which is neither a JSON number nor a
-    date: an I-Pace's streamed fixes arrived with times nothing here could
-    read, so each was stored untimed, never counted as news, and dropped
-    before the tracker.
+    date. That is what the broker sends: an I-Pace's streamed fixes came
+    with signalTimestamp "1794167909000", milliseconds as text, which 2.0.3
+    could not read, so each was stored untimed, never counted as news, and
+    dropped before the tracker.
     """
     if isinstance(value, str) and value.strip().isdigit():
         value = int(value.strip())

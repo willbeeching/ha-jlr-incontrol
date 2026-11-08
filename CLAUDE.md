@@ -162,6 +162,12 @@ user-facing detail; what matters when changing the code:
   from refused to permitted straight after. Journeys stay refused to owners.
   Whether the broker allows the `/position` topic is not yet measured, which
   is why status alone is the fallback layout.
+- The stream's messages are not the documented `{name, value, timestamp}`:
+  the broker sends lists of `{dataType, description, signalName,
+  signalTimestamp, signalValue, unit, vssIdentifier}`, numbers as text, and
+  `signalTimestamp` as epoch milliseconds in text (`"1794167909000"`). Each of
+  those went unread or untimed for a release; `_as_signal` and `_signal_time`
+  are where they are read.
 - Every key, token, client id and account id stays in the config entry;
   `redact.py` covers them. Never put a real owner's readings in tests or
   comments — use made-up values of the same shape.
