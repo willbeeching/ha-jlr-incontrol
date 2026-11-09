@@ -149,6 +149,22 @@ See [DATA_HUB.md](DATA_HUB.md#if-it-is-not-working). The two usual causes are th
 switched on for the client at data.jlr.com, and a certificate at data.jlr.com that is not the one
 Home Assistant showed — a new one is made each time you start linking, so paste the latest.
 
+## "The setup or options screens have no text, or no certificate"
+
+Blank menu buttons, or a Data Hub step that is just a `client_id` box with no certificate above
+it, mean the Home Assistant app is showing the text it saved before the integration updated. The
+labels and the step that shows the certificate are both text it loads. Fully close and reopen the
+app, or clear its cache, or do the step in a browser instead; an owner on the Android Companion
+app had exactly this, and the browser showed everything.
+
+## "data.jlr.com shows no data categories to choose"
+
+When creating access credentials at data.jlr.com, the data categories come from JLR. An empty
+list, with **Next** greyed out, most likely means your vehicle declaration has not been processed
+yet. Check the car's status in your vehicle list there and try again later; if it stays empty, it
+is one for JLR's Data Hub support, linked from developer.jlr.com. The InControl sign-in works in
+the meantime, and the Data Hub can be linked to the same entry later without losing anything.
+
 ## Turning on debug logging
 
 **Settings → Devices & Services → Jaguar Land Rover InControl → Enable debug logging**, reproduce,
