@@ -15,7 +15,8 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, Doubles  # noqa: E402
+import doubles  # noqa: E402
+from doubles import KEPT, Doubles, FakeClient  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -81,6 +82,55 @@ class TestForcingAUnit:
     ) -> None:
         await set_up(hass, {"pressure_unit": "psi"})
         assert unit_for(hass, "odometer") is None
+
+
+@pytest.fixture
+def charging_car(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An I-Pace with a charging rate, in place before setup."""
+
+    async def attributes(self: FakeClient, vin: str) -> dict[str, Any]:
+        return {"vehicleBrand": "Jaguar", "fuelType": "Electric"}
+
+    monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+    monkeypatch.setattr(
+        doubles,
+        "STATUS",
+        {
+            "EV_STATE_OF_CHARGE": "80",
+            "EV_CHARGING_RATE_KM_PER_HOUR": "22",
+            "ODOMETER": "123456",
+            "LAST_UPDATED_TIME": "2026-08-26T08:00:00.000Z",
+        },
+    )
+
+
+@pytest.mark.usefixtures("charging_car")
+class TestChargingRateFollowsDistance:
+    """An I-Pace owner chose miles and still saw the charging rate in km/h."""
+
+    async def test_miles_make_it_mph(
+        self, hass: HomeAssistant, doubles: Doubles
+    ) -> None:
+        await set_up(hass, {"distance_unit": "miles"})
+        assert unit_for(hass, "ev_charging_rate") == "mph"
+
+    async def test_an_entry_that_chose_miles_before_gets_it_too(
+        self, hass: HomeAssistant, doubles: Doubles
+    ) -> None:
+        # Its distance was applied by an earlier version, which recorded it
+        # and never touched speed.
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={**DATA, CONF_APPLIED_UNITS: {"distance": "mi"}},
+            options={"distance_unit": "miles"},
+            unique_id="a-user",
+        )
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        pick_by_hand(hass, "ev_charging_rate", "km/h")
+        await restart(hass, entry)
+        assert entry.data[CONF_APPLIED_UNITS]["speed"] == "mph"
 
 
 class TestPuttingItBack:
@@ -191,7 +241,12 @@ class TestWhatItRemembers:
         self, hass: HomeAssistant, doubles: Doubles
     ) -> None:
         entry = await set_up(hass, {"distance_unit": "km", "pressure_unit": "psi"})
-        assert entry.data[CONF_APPLIED_UNITS] == {"distance": "km", "pressure": "psi"}
+        assert entry.data[CONF_APPLIED_UNITS] == {
+            "distance": "km",
+            "pressure": "psi",
+            # The charging rate follows the distance choice.
+            "speed": "km/h",
+        }
 
     async def test_the_default_records_nothing(
         self, hass: HomeAssistant, doubles: Doubles

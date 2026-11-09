@@ -97,7 +97,7 @@ ids made before it are kept, and so is their history.
 | Charge limit | `EV_CHARGE_LIMIT` | EV/PHEV, Data Hub | — | on |
 | Charge limit one-off, its mode, and permanent mode | `EV_CHARGE_LIMIT_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Charging mode | `EV_CHARGING_MODE_CHOICE` | EV/PHEV, Data Hub | — | on |
-| Charging rate (range per hour, and % per hour) | `EV_CHARGING_RATE_*` | EV/PHEV, Data Hub | — | on |
+| Charging rate (range per hour, in mph when the distance option is miles; and % per hour) | `EV_CHARGING_RATE_*` | EV/PHEV, Data Hub | — | on |
 | Battery (actual) | `EV_STATE_OF_CHARGE_ACTUAL` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Consumption by speed band ×7, climbing, descending, standing | `EV_CONSUMPTION_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Usable energy (initial, from regeneration, revised) | `EV_USABLE_ENERGY_*` | EV/PHEV, Data Hub | diagnostic | **off** |
@@ -141,7 +141,8 @@ any of them on in the entity settings.
 | Door lock front/rear left/right, boot lock (off by default) | `DOOR_*_LOCK_STATUS` | cars that report them |
 | Alarm armed | `THEFT_ALARM_STATUS` | any |
 | Alarm triggered | `THEFT_ALARM_STATUS` | any |
-| Brake fluid / coolant / oil / washer fluid warnings | `*_WARN` | any |
+| Brake fluid / coolant / washer fluid warnings | `*_WARN` | any |
+| Oil level warning | `EXT_OIL_LEVEL_WARN` | not electric |
 | AdBlue warning | `EXT_EXHAUST_FLUID_WARN` | diesel |
 | Charging | `EV_CHARGING_STATUS` | EV/PHEV |
 | Plugged in | `EV_CHARGING_METHOD` | EV/PHEV |

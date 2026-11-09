@@ -214,7 +214,59 @@ def _words(value: Any) -> str | None:
     # have no documented length.
     # The Data Hub sends some in camel case: TimedChargingNotActive.
     text = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text)
+    text = _spaced(text)
     return text.replace("__", "_").replace("_", " ").capitalize()[:255]
+
+
+# Words JLR run together with no case to split on: an I-Pace on 2.0.4 still
+# read "Timedchargingnotactive" after the camel-case split, so its charging
+# mode arrives as one word. Longest first, so "charging" wins over "charge".
+_RUN_TOGETHER_WORDS = sorted(
+    (
+        "timed",
+        "charging",
+        "charge",
+        "not",
+        "active",
+        "inactive",
+        "immediate",
+        "smart",
+        "scheduled",
+        "departure",
+        "eco",
+        "now",
+        "off",
+        "on",
+        "mode",
+        "plugged",
+        "in",
+        "unplugged",
+        "paused",
+        "waiting",
+        "complete",
+        "full",
+    ),
+    key=len,
+    reverse=True,
+)
+
+
+def _spaced(text: str) -> str:
+    """One run-together word split into known words, or left as it came.
+
+    Only a word made wholly of known words is split, so a value JLR add later
+    shows as sent rather than cut at a guess.
+    """
+    if " " in text or "_" in text or len(text) < 8:
+        return text
+    word, parts = text.lower(), []
+    while word:
+        part = next((w for w in _RUN_TOGETHER_WORDS if word.startswith(w)), None)
+        if part is None:
+            return text
+        parts.append(part)
+        word = word[len(part) :]
+    return " ".join(parts)
 
 
 def _enum(words: dict[str, str]) -> Callable[[Any], str | None]:
@@ -972,6 +1024,19 @@ def _distance_unit_override(entry: JlrConfigEntry) -> str | None:
     return None
 
 
+def _speed_for(distance_unit: str | None) -> str | None:
+    """The per-hour unit that goes with a distance unit.
+
+    Charging rate is range gained per hour, a speed to Home Assistant, so the
+    distance option did not reach it: an owner who chose miles still saw km/h.
+    """
+    if distance_unit == UnitOfLength.MILES:
+        return UnitOfSpeed.MILES_PER_HOUR
+    if distance_unit == UnitOfLength.KILOMETERS:
+        return UnitOfSpeed.KILOMETERS_PER_HOUR
+    return None
+
+
 def _pressure_unit_override(entry: JlrConfigEntry) -> str | None:
     """Return a pressure unit override from options, or None for HA default."""
     unit = entry.options.get(OPT_PRESSURE_UNIT, PRESSURE_UNIT_DEFAULT)
@@ -1080,7 +1145,13 @@ def _apply_unit_overrides(
     the unit this wrote, leaving anything the user has chosen since alone.
     """
     applied = dict(entry.data.get(CONF_APPLIED_UNITS) or {})
-    wanted = {"distance": distance_unit, "pressure": pressure_unit}
+    # Speed is kept apart from distance, though it follows it, so an entry
+    # whose distance was applied before speed followed still gets its speed.
+    wanted = {
+        "distance": distance_unit,
+        "pressure": pressure_unit,
+        "speed": _speed_for(distance_unit),
+    }
     if all(applied.get(kind) == unit for kind, unit in wanted.items()):
         return
 
@@ -1092,6 +1163,8 @@ def _apply_unit_overrides(
                 kind = "distance"
             elif description.device_class == SensorDeviceClass.PRESSURE:
                 kind = "pressure"
+            elif description.device_class == SensorDeviceClass.SPEED:
+                kind = "speed"
             else:
                 continue
             unit, before = wanted[kind], applied.get(kind)
@@ -1142,6 +1215,8 @@ class JlrVehicleSensor(JlrVehicleEntity, SensorEntity):
         self._attr_unique_id = f"{vin}_{description.key}"
         if distance_unit and description.device_class == SensorDeviceClass.DISTANCE:
             self._attr_suggested_unit_of_measurement = distance_unit
+        if distance_unit and description.device_class == SensorDeviceClass.SPEED:
+            self._attr_suggested_unit_of_measurement = _speed_for(distance_unit)
         if pressure_unit and description.device_class == SensorDeviceClass.PRESSURE:
             self._attr_suggested_unit_of_measurement = pressure_unit
 

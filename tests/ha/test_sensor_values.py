@@ -303,6 +303,17 @@ class TestTheDataHubsReadings:
         assert _words("TimedChargingNotActive") == "Timed charging not active"
         assert _words("KEY_REMOVED") == "Key removed"
 
+    @pytest.mark.parametrize(
+        "raw", ["TIMEDCHARGINGNOTACTIVE", "Timedchargingnotactive"]
+    )
+    def test_words_run_together_read_as_words(self, raw: str) -> None:
+        # The I-Pace's charging mode on 2.0.4: no case left to split on.
+        assert _words(raw) == "Timed charging not active"
+
+    def test_a_run_together_word_it_does_not_know_is_left_as_sent(self) -> None:
+        assert _words("NOTCONNECTED") == "Notconnected"
+        assert _words("NORMALUNBLOCKED") == "Normalunblocked"
+
     def test_a_word_is_capped_at_what_a_state_can_hold(self) -> None:
         assert len(_words("X" * 300) or "") == 255
 

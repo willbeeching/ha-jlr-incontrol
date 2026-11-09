@@ -111,13 +111,14 @@ def _lock(key: str, status_key: str) -> JlrBinaryDescription:
     )
 
 
-def _warning(key: str, status_key: str) -> JlrBinaryDescription:
+def _warning(key: str, status_key: str, **kwargs: Any) -> JlrBinaryDescription:
     return JlrBinaryDescription(
         key=key,
         translation_key=key,
         status_key=status_key,
         device_class=BinarySensorDeviceClass.PROBLEM,
         is_on=lambda v: v != "NORMAL",
+        **kwargs,
     )
 
 
@@ -255,7 +256,8 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
     # Service / fluid warnings.
     _warning("brake_fluid_warning", "BRAKE_FLUID_WARN"),
     _warning("coolant_level_warning", "ENG_COOLANT_LEVEL_WARN"),
-    _warning("oil_level_warning", "EXT_OIL_LEVEL_WARN"),
+    # An I-Pace sends it, and has no engine oil to warn about.
+    _warning("oil_level_warning", "EXT_OIL_LEVEL_WARN", suppress_for_ev=True),
     _warning("washer_fluid_warning", "WASHER_FLUID_WARN"),
     JlrBinaryDescription(
         key="adblue_warning",

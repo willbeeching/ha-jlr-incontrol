@@ -154,8 +154,10 @@ ELECTRIC: dict[str, Any] = {
         }
     },
     "Powertrain": {
-        # An electric car can still send the fuel signals, empty.
+        # An electric car can still send the fuel signals, empty, and an
+        # I-Pace sends an engine oil warning.
         "FuelSystem": {"AbsoluteLevel": 0},
+        "CombustionEngine": {"EngineOil": {"IsLevelLow": "NORMAL"}},
         "TractionBattery": {
             "StateOfCharge": {"Displayed": 80, "Current": 78},
             "Range": 300,
@@ -476,6 +478,7 @@ class TestAnElectricCar:
     def test_a_fuel_fired_heater_is_not_made_for_it(self, hass: HomeAssistant) -> None:
         assert state(hass, "sensor", "heater_time_remaining") is None
         assert state(hass, "binary_sensor", "heater_enabled") is None
+        assert state(hass, "binary_sensor", "oil_level_warning") is None
 
     def test_the_placeholder_departure_is_no_timer(self, hass: HomeAssistant) -> None:
         # It read "26 years ago" on an I-Pace.
