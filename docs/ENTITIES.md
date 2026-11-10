@@ -100,7 +100,7 @@ ids made before it are kept, and so is their history.
 | Charging rate (range per hour, in mph when the distance option is miles; and % per hour) | `EV_CHARGING_RATE_*` | EV/PHEV, Data Hub | — | on |
 | Battery (actual) | `EV_STATE_OF_CHARGE_ACTUAL` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Consumption by speed band ×7, climbing, descending, standing | `EV_CONSUMPTION_*` | EV/PHEV, Data Hub | diagnostic | **off** |
-| Usable energy (initial, from regeneration, revised) | `EV_USABLE_ENERGY_*` | EV/PHEV, Data Hub | diagnostic | **off** |
+| Usable energy (initial, from regeneration, revised), in kWh: JLR send usable and revised in hundredths of a kWh and regeneration in Wh | `EV_USABLE_ENERGY_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Last updated | — | any | diagnostic | on |
 | Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
 | All info | — | any | diagnostic | **off** |

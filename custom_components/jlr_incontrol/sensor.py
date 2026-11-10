@@ -294,6 +294,26 @@ def _per_100(value: Any) -> float | None:
     return None if number is None else round(number / 10, 2)
 
 
+def _centi_kwh(value: Any) -> float | None:
+    """Usable energy, which JLR send in hundredths of a kWh.
+
+    Passed on as kWh it read 2,580 kWh on an I-Pace at 34%: about 79 per
+    percent of charge, so 79 kWh full, which only hundredths make sense of.
+    """
+    number = _to_float(value)
+    return None if number is None else round(number / 100, 2)
+
+
+def _wh_as_kwh(value: Any) -> float | None:
+    """Regenerated energy, which JLR send in Wh, unlike usable energy.
+
+    Measured against the JLR app: it rose 1,690 over a drive the app said
+    regenerated 1.6 kWh.
+    """
+    number = _to_float(value)
+    return None if number is None else round(number / 1000, 2)
+
+
 def _watts(value: Any) -> float | None:
     """Wh per second, as JLR send standing consumption, as a power in watts."""
     number = _to_float(value)
@@ -982,14 +1002,19 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
             device_class=SensorDeviceClass.ENERGY_STORAGE,
             state_class=SensorStateClass.MEASUREMENT,
             suggested_display_precision=1,
+            value_fn=scale,
             entity_category=EntityCategory.DIAGNOSTIC,
             entity_registry_enabled_default=False,
             requires_ev=True,
         )
-        for key, status_key in (
-            ("ev_usable_energy", "EV_USABLE_ENERGY_INITIAL"),
-            ("ev_usable_energy_regenerative", "EV_USABLE_ENERGY_REGENERATIVE"),
-            ("ev_usable_energy_revised", "EV_USABLE_ENERGY_REVISED"),
+        for key, status_key, scale in (
+            ("ev_usable_energy", "EV_USABLE_ENERGY_INITIAL", _centi_kwh),
+            (
+                "ev_usable_energy_regenerative",
+                "EV_USABLE_ENERGY_REGENERATIVE",
+                _wh_as_kwh,
+            ),
+            ("ev_usable_energy_revised", "EV_USABLE_ENERGY_REVISED", _centi_kwh),
         )
     ),
 )

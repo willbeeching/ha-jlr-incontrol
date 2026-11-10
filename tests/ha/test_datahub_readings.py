@@ -186,10 +186,12 @@ ELECTRIC: dict[str, Any] = {
                     "Descent": 120.0,
                     "Stationary": 0.1,
                 },
+                # As JLR send them: usable in hundredths of a kWh,
+                # regenerated in Wh (measured on an I-Pace).
                 "UsableEnergy": {
-                    "Initial": 84.5,
-                    "Regenerative": 2.5,
-                    "Revised": 83.0,
+                    "Initial": 8450,
+                    "Regenerative": 2500,
+                    "Revised": 8300,
                 },
             },
         },
