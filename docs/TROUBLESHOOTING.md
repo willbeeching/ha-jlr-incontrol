@@ -160,10 +160,12 @@ app had exactly this, and the browser showed everything.
 ## "data.jlr.com shows no data categories to choose"
 
 When creating access credentials at data.jlr.com, the data categories come from JLR. An empty
-list, with **Next** greyed out, most likely means your vehicle declaration has not been processed
-yet. Check the car's status in your vehicle list there and try again later; if it stays empty, it
-is one for JLR's Data Hub support, linked from developer.jlr.com. The InControl sign-in works in
-the meantime, and the Data Hub can be linked to the same entry later without losing anything.
+list, with **Next** greyed out, is a fault on JLR's side, not something you did: owners who hit it
+saw an "API ERROR MESSAGE" flash up for a few seconds, and have reported it to JLR's Data Hub
+support, linked from developer.jlr.com. If your vehicle declaration was only just made, it is worth
+checking the car's status in your vehicle list and trying again later; if the list stays empty,
+contact JLR's support. The InControl sign-in works in the meantime, and the Data Hub can be linked
+to the same entry later without losing anything.
 
 ## Turning on debug logging
 
