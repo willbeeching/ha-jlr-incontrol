@@ -160,11 +160,12 @@ app had exactly this, and the browser showed everything.
 ## "data.jlr.com shows no data categories to choose"
 
 When creating access credentials at data.jlr.com, the data categories come from JLR. An empty
-list, with **Next** greyed out, is a fault on JLR's side, not something you did: owners who hit it
-saw an "API ERROR MESSAGE" flash up for a few seconds, and have reported it to JLR's Data Hub
-support, linked from developer.jlr.com. If your vehicle declaration was only just made, it is worth
-checking the car's status in your vehicle list and trying again later; if the list stays empty,
-contact JLR's support. The InControl sign-in works in the meantime, and the Data Hub can be linked
+list, with **Next** greyed out, is a fault on JLR's side, not something you did: an "API ERROR
+MESSAGE" flashes up for a few seconds. One owner captured the response behind it in the browser's
+developer tools: a `502 Bad Gateway` from `/v1/categories` saying **"Powertrain data is missing from
+the vehicle record"**. JLR's own record for the car is incomplete, and only they can fix it.
+Contact JLR's Data Hub support, linked from developer.jlr.com, with that message and the
+`correlationId` from the same response. The InControl sign-in works in the meantime, and the Data Hub can be linked
 to the same entry later without losing anything.
 
 ## Turning on debug logging
