@@ -98,6 +98,12 @@ client at data.jlr.com.
   no battery readings until the stream delivered. A car without a charge port is refused there,
   and is asked again once a day rather than every read. The answer per car is in diagnostics under
   `ev`.
+- **Journeys**: for the **Last journey** sensors. Read when the link starts, five minutes after the
+  stream sends the position that ends a journey, and every six hours in case the stream missed
+  one. JLR list journeys oldest first, twenty to a page, so this is one request, or two once a car
+  has more than twenty. A car JLR refuse journeys for gains no journey sensors and is asked again
+  once a day. Each journey JLR send includes where it started and ended; the integration does not
+  keep either. The answer per car is in diagnostics under `journeys`.
 - **Stream**: one MQTT connection for the account, held open, which brings status as the car
   reports it, typically within about 16 seconds, and the car's position when a journey ends.
   JLR send no position while the car is being driven, matching their own app, which hides it. JLR end each session at an hour;
@@ -151,8 +157,12 @@ Also measured:
   minutes and charging rate in km of range per hour, the API spec gives seconds and kW. The
   catalog is right: on an I-Pace charging at home, 114 minutes and 22 km/h matched the JLR
   app's 1 hr 54 min and 14 mi/hr.
-- **Journeys** are refused for owner accounts altogether, even with the category selected and the
-  car declared.
+- **Journeys** were refused for owner accounts altogether until November 2026, even with the
+  category selected and the car declared. Since then one owner's account answers, without
+  changing anything at data.jlr.com, with journeys from 30 October 2026 on, nothing earlier. Each
+  has its start and end time, duration in seconds, distance and average speed with their units, and
+  its start and end coordinates. That owner's two most recent drives were missing at first, so how
+  soon a journey appears after the car is parked is not yet known.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
 - With it switched on, the broker the portal names does not resolve, and the broker in the docs

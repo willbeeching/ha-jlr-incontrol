@@ -30,6 +30,7 @@ from custom_components.jlr_incontrol import datahub_link  # noqa: E402
 from custom_components.jlr_incontrol.const import DOMAIN  # noqa: E402
 from custom_components.jlr_incontrol.datahub import (  # noqa: E402
     DataHubAuthError,
+    DataHubError,
     DataHubForbidden,
     DataHubRateLimited,
 )
@@ -1030,3 +1031,301 @@ class TestStreamOrdering:
             TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T16:00:00Z", 10)
         )
         assert seen[-1]["ODOMETER"] == "10"
+
+
+def journey(
+    started: str,
+    ended: str,
+    km: float = 4.0,
+    kmh: float = 43.24,
+    seconds: int = 333,
+    distance_unit: str = "km",
+    speed_unit: str = "km/h",
+) -> dict[str, Any]:
+    """One journey as JLR list it, with made-up values."""
+    return {
+        "journeyId": "10000001",
+        "startTime": started,
+        "endTime": ended,
+        "duration": seconds,
+        "distance": {"value": km, "unit": distance_unit},
+        "averageSpeed": {"value": kmh, "unit": speed_unit},
+        "startLocation": {"latitude": "51.5000", "longitude": "-0.1200"},
+        "endLocation": {"latitude": "51.6000", "longitude": "-0.1300"},
+    }
+
+
+def journeys(*items: dict[str, Any], pages: int = 1) -> dict[str, Any]:
+    return {
+        "items": list(items),
+        "page": {
+            "totalElements": len(items),
+            "totalPages": pages,
+            "currentPage": 0,
+            "pageSize": 20,
+        },
+    }
+
+
+OCTOBER = journey("2026-10-30T14:50:56Z", "2026-10-30T17:28:35Z", 172.0, 65.46, 9459)
+SHORT = journey("2026-10-31T13:35:53Z", "2026-10-31T13:41:26Z")
+
+
+class Pauses:
+    """Waits that return at once, recorded."""
+
+    def __init__(self) -> None:
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+
+
+class TestJourneys:
+    async def test_the_last_journey_is_kept_without_where_it_went(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = journeys(OCTOBER, SHORT)
+        await link._async_read_journeys()
+        held = link.journeys[KEPT]
+        assert held["ended"].isoformat() == "2026-10-31T13:41:26+00:00"
+        assert held["started"].isoformat() == "2026-10-31T13:35:53+00:00"
+        assert held["duration"] == 333
+        assert held["distance"] == 4.0
+        assert held["average_speed"] == 43.24
+        # Where a car has been is not something this integration keeps.
+        assert "51.6000" not in repr(link.journeys)
+        assert link.journey_access[KEPT] == "permitted"
+
+    async def test_the_newest_is_on_the_last_page(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Oldest first, twenty to a page: one owner's list ran from October.
+        link = DataHubLink(hass, linked)
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = [
+            journeys(OCTOBER, SHORT, pages=3),
+            journeys(latest, pages=3),
+        ]
+        await link._async_read_journeys()
+        assert [c for c in hub.datahub.calls if c.startswith("journeys")] == [
+            "journeys 0",
+            "journeys 2",
+        ]
+        assert link.journeys[KEPT]["distance"] == 30.0
+
+    async def test_miles_are_read_as_kilometres(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = journeys(
+            journey(
+                "2026-11-08T18:00:00Z",
+                "2026-11-08T18:30:00Z",
+                km=10.0,
+                kmh=20.0,
+                distance_unit="mi",
+                speed_unit="mph",
+            )
+        )
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["distance"] == 16.09
+        assert link.journeys[KEPT]["average_speed"] == 32.19
+
+    async def test_a_reading_in_a_unit_not_known_is_left_out(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        odd = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        odd["distance"] = {"value": 4.0, "unit": "furlongs"}
+        odd["averageSpeed"] = {"value": "fast", "unit": "km/h"}
+        odd["duration"] = None
+        flat = journey("2026-11-08T17:00:00Z", "2026-11-08T17:30:00Z")
+        flat["distance"] = "4 km"
+        hub.datahub.journeys_result = journeys(flat, odd, {"endTime": None}, "junk")
+        await link._async_read_journeys()
+        held = link.journeys[KEPT]
+        assert held["distance"] is None
+        assert held["average_speed"] is None
+        assert held["duration"] is None
+
+    async def test_an_older_answer_does_not_replace_the_journey_held(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = [journeys(SHORT), journeys(OCTOBER)]
+        await link._async_read_journeys()
+        link._journeys_due.clear()
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["distance"] == 4.0
+
+    async def test_a_refusal_is_asked_again_daily_not_every_status_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, _ = bare_link(hass, linked, steps=3)
+        await run_status(link)
+        assert hub.datahub.calls.count("status") == 3
+        assert hub.datahub.calls.count("journeys 0") == 1
+        assert link.journey_access[KEPT].startswith("refused")
+        assert KEPT not in link.journeys
+        wait = link._journeys_due[KEPT] - time.monotonic()
+        assert wait > datahub_link.JOURNEY_REFUSED_RETRY - 60
+
+    async def test_a_car_that_answers_is_read_every_few_hours(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        hub_journeys = journeys(SHORT)
+        link, _ = bare_link(hass, linked, steps=3)
+        link.client.journeys_result = hub_journeys
+        await run_status(link)
+        assert hub.datahub.calls.count("journeys 0") == 1
+        wait = link._journeys_due[KEPT] - time.monotonic()
+        assert wait > datahub_link.JOURNEY_INTERVAL - 60
+        assert wait <= datahub_link.JOURNEY_INTERVAL
+
+    async def test_a_failed_read_is_tried_again_at_the_next_status_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = [DataHubError("answered 500"), journeys(SHORT)]
+        await link._async_read_journeys()
+        assert KEPT not in link.journeys
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["distance"] == 4.0
+
+    async def test_a_fix_on_the_stream_reads_the_journey_it_ended(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The stream sends a fix only when a journey ends, about half a
+        # minute after; JLR are given a few minutes to file the journey.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        pauses = Pauses()
+        link._pause = pauses
+        hub.datahub.journeys_result = journeys(SHORT)
+        await link._async_read_journeys()
+        drive = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = journeys(SHORT, drive)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert pauses.waits == [datahub_link.JOURNEY_SETTLE]
+        assert link.journeys[KEPT]["distance"] == 30.0
+
+    async def test_a_fix_redelivered_on_reconnect_reads_nothing(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        drive = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = journeys(drive)
+        await link._async_read_journeys()
+        # The fix that ended the journey already held: JLR's retained copy.
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is None
+        assert hub.datahub.calls.count("journeys 0") == 1
+
+    async def test_the_same_fix_twice_reads_once(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        hub.datahub.journeys_result = journeys(SHORT)
+        batch = json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        link._on_message(POSITION_TOPIC, batch)
+        assert link._journey_task is not None
+        await link._journey_task
+        link._on_message(POSITION_TOPIC, batch)
+        assert link._journey_task.done()
+        assert hub.datahub.calls.count("journeys 0") == 1
+
+    async def test_a_car_refused_journeys_is_not_asked_on_each_fix(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        await link._async_read_journeys()
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is None
+
+    async def test_signed_out_while_waiting_to_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        hub.datahub.refresh_result = DataHubAuthError("invalid_grant")
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert link.signed_out
+
+    async def test_a_failure_after_a_fix_is_left_to_the_timer(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        hub.datahub.journeys_result = DataHubRateLimited(120)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert KEPT not in link.journeys
+        assert not link.signed_out
+
+    async def test_stopping_cancels_a_read_waiting_on_a_fix(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        task = link._journey_task
+        assert task is not None and not task.done()
+        await link.async_stop()
+        assert task.cancelled()
+        assert "journeys 0" not in hub.datahub.calls
+
+    async def test_diagnostics_say_what_jlr_answered_and_when_it_ended(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = journeys(SHORT)
+        await link._async_read_journeys()
+        report = link.diagnostics()
+        assert list(report["journeys"].values()) == ["permitted"]
+        (car,) = report["vehicles"].values()
+        assert car["last_journey_end"].isoformat() == "2026-10-31T13:41:26+00:00"
+
+    async def test_a_fix_during_a_read_gets_a_read_of_its_own(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        drive = journey("2026-11-08T19:00:00Z", "2026-11-08T19:30:00Z", 30.0)
+        answers = [journeys(SHORT), journeys(SHORT, drive)]
+
+        async def slow(vin: str, token: str, page: int = 0) -> Any:
+            hub.datahub.calls.append(f"journeys {page}")
+            if len(answers) == 2:
+                # Another journey ends while JLR are answering for the first.
+                link._on_message(
+                    POSITION_TOPIC, json.dumps(fix("2026-11-08T19:30:34Z")).encode()
+                )
+            return answers.pop(0)
+
+        link.client.async_journeys = slow
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert hub.datahub.calls.count("journeys 0") == 2
+        assert link.journeys[KEPT]["distance"] == 30.0

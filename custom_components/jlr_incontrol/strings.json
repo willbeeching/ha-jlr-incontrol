@@ -477,6 +477,23 @@
           "moving": "Moving",
           "part_folded": "Part folded"
         }
+      },
+      "last_journey_distance": {
+        "name": "Last journey distance"
+      },
+      "last_journey_duration": {
+        "name": "Last journey duration"
+      },
+      "last_journey_average_speed": {
+        "name": "Last journey average speed"
+      },
+      "last_journey_end": {
+        "name": "Last journey ended",
+        "state_attributes": {
+          "started": {
+            "name": "Started"
+          }
+        }
       }
     },
     "binary_sensor": {

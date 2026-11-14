@@ -33,7 +33,7 @@ from homeassistant.const import (
     UnitOfTime,
     UnitOfVolume,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
@@ -1022,6 +1022,49 @@ EV_SENSORS: tuple[JlrSensorDescription, ...] = (
 ALL_SENSORS = (*VEHICLE_SENSORS, *CABIN_SENSORS, *TYRE_SENSORS, *EV_SENSORS)
 
 
+@dataclass(frozen=True, kw_only=True)
+class JlrJourneyDescription(SensorEntityDescription):
+    """One reading of a car's last journey, from the Data Hub."""
+
+    field: str
+
+
+# Keys, not ids: the unique ids are f"{vin}_{key}" like every other sensor.
+JOURNEY_SENSORS: tuple[JlrJourneyDescription, ...] = (
+    JlrJourneyDescription(
+        key="last_journey_distance",
+        translation_key="last_journey_distance",
+        field="distance",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        suggested_display_precision=1,
+    ),
+    JlrJourneyDescription(
+        key="last_journey_duration",
+        translation_key="last_journey_duration",
+        field="duration",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.SECONDS,
+        suggested_unit_of_measurement=UnitOfTime.MINUTES,
+        suggested_display_precision=0,
+    ),
+    JlrJourneyDescription(
+        key="last_journey_average_speed",
+        translation_key="last_journey_average_speed",
+        field="average_speed",
+        device_class=SensorDeviceClass.SPEED,
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        suggested_display_precision=0,
+    ),
+    JlrJourneyDescription(
+        key="last_journey_end",
+        translation_key="last_journey_end",
+        field="ended",
+        device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+)
+
+
 def _should_create_sensor(
     description: JlrSensorDescription,
     status: dict[str, Any],
@@ -1129,23 +1172,73 @@ async def async_setup_entry(
         when it has it and falls back to looking for EV_STATE_OF_CHARGE when
         it does not. The fallback is sound for deciding whether to *create*
         an entity and far too thin for deciding to delete one and its history.
+
+        The journey sensors are withheld too, for another reason: see
+        ``journeys``.
         """
         attributes = (
             coordinator.data.get("vehicles", {}).get(vin, {}).get("attributes", {})
         )
         if attributes.get("fuelType"):
-            return set()
+            return journeys(vin)
         keys = [d.key for d in EV_SENSORS if d.requires_ev]
         keys += ["evcc_status", "charge_now_setting"]
         # has_no_engine guesses the same way when fuelType is missing.
         keys += [d.key for d in ALL_SENSORS if d.suppress_for_ev]
-        return {f"{vin}_{key}" for key in keys}
+        return {f"{vin}_{key}" for key in keys} | journeys(vin)
+
+    def journeys(vin: str) -> set[str]:
+        """Journey sensors, which arrive after the rest: never pruned with it.
+
+        They are built when the link has read a journey, which is after the
+        status that builds everything else, so the prune that follows that
+        status would delete them, history and all, on every restart.
+        """
+        if coordinator.datahub is None or vin not in coordinator.datahub.vehicles:
+            return set()
+        return {f"{vin}_{d.key}" for d in JOURNEY_SENSORS}
 
     async_add_vehicle_entities(
         entry, Platform.SENSOR, coordinator, async_add_entities, build, protect
     )
+    _add_journey_sensors(entry, coordinator, async_add_entities, distance_unit)
 
     _apply_unit_overrides(hass, entry, distance_unit, pressure_unit)
+
+
+def _add_journey_sensors(
+    entry: JlrConfigEntry,
+    coordinator: JlrCoordinator,
+    async_add_entities: AddEntitiesCallback,
+    distance_unit: str | None,
+) -> None:
+    """Add a car's journey sensors once the link has read a journey for it.
+
+    Not before: JLR refused journeys to every owner until November 2026, and
+    a car that is still refused would carry four sensors that never read.
+    """
+    link = coordinator.datahub
+    if link is None:
+        return
+    added: set[str] = set()
+
+    @callback
+    def add() -> None:
+        fresh: list[JlrJourneySensor] = []
+        for vin in list(link.journeys):
+            if vin in added or vin not in coordinator.data.get("vehicles", {}):
+                continue
+            added.add(vin)
+            fresh.extend(
+                JlrJourneySensor(coordinator, vin, description, distance_unit)
+                for description in JOURNEY_SENSORS
+            )
+        if fresh:
+            async_add_entities(fresh)
+
+    add()
+    entry.async_on_unload(link.async_add_listener(add))
+    entry.async_on_unload(coordinator.async_add_listener(add))
 
 
 def _apply_unit_overrides(
@@ -1183,7 +1276,7 @@ def _apply_unit_overrides(
     ent_reg = er.async_get(hass)
     vins = entry.runtime_data.data.get("vehicles", {})
     for vin in vins:
-        for description in ALL_SENSORS:
+        for description in (*ALL_SENSORS, *JOURNEY_SENSORS):
             if description.device_class == SensorDeviceClass.DISTANCE:
                 kind = "distance"
             elif description.device_class == SensorDeviceClass.PRESSURE:
@@ -1318,6 +1411,47 @@ class JlrDataHubReportSensor(JlrDataHubEntity, SensorEntity):
     def native_value(self) -> datetime | None:
         link = self.coordinator.datahub
         return link.reports.get(self._vin) if link else None
+
+
+class JlrJourneySensor(JlrDataHubEntity, SensorEntity):
+    """The car's last journey: distance, duration, average speed, or its end.
+
+    From the Data Hub's journeys, which give each in full once the journey is
+    over. Nothing here is live: the values change when a journey ends.
+    """
+
+    entity_description: JlrJourneyDescription
+
+    def __init__(
+        self,
+        coordinator: JlrCoordinator,
+        vin: str,
+        description: JlrJourneyDescription,
+        distance_unit: str | None,
+    ) -> None:
+        super().__init__(coordinator, vin)
+        self.entity_description = description
+        self._attr_unique_id = f"{vin}_{description.key}"
+        if distance_unit and description.device_class == SensorDeviceClass.DISTANCE:
+            self._attr_suggested_unit_of_measurement = distance_unit
+        if distance_unit and description.device_class == SensorDeviceClass.SPEED:
+            self._attr_suggested_unit_of_measurement = _speed_for(distance_unit)
+
+    @property
+    def _journey(self) -> dict[str, Any]:
+        link = self.coordinator.datahub
+        return link.journeys.get(self._vin, {}) if link else {}
+
+    @property
+    def native_value(self) -> Any:
+        return self._journey.get(self.entity_description.field)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.field != "ended":
+            return None
+        started = self._journey.get("started")
+        return {"started": started.isoformat() if started else None}
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):

@@ -143,6 +143,18 @@ under `datahub` → `location` (`refused: …` before, `permitted` after).
 If you would rather not declare, choose **InControl sign-in for location** in the integration's
 options instead; the car's location then comes from JLR's owner portal.
 
+## "There are no Last journey sensors, or they show an old journey"
+
+- **None at all.** They are created only once JLR answer with a journey for the car, and JLR
+  refused journeys to every owner account until November 2026. Look in the diagnostics under
+  `datahub` → `journeys`: `refused` means JLR still refuse them for that car, and the integration
+  asks again once a day. They are only on the Data Hub; the InControl sign-in has no journeys.
+- **An old journey.** JLR's list starts on 30 October 2026, so nothing before that appears, and a
+  drive can take a while to reach the list after the car is parked. The integration reads five
+  minutes after the stream reports the journey's end, and again every six hours. If a drive is
+  still missing a day later, please say so on an issue: how quickly journeys arrive is not yet
+  known.
+
 ## "The Data Hub link will not finish, or stopped working"
 
 See [DATA_HUB.md](DATA_HUB.md#if-it-is-not-working). The two usual causes are the stream not

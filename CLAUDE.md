@@ -159,7 +159,10 @@ user-facing detail; what matters when changing the code:
   client id, and only exact topics (no wildcards). Location is refused per
   car until the owner completes the car's declaration at data.jlr.com (sole
   or shared user, other drivers' consent) — confirmed on two cars, which went
-  from refused to permitted straight after. Journeys stay refused to owners.
+  from refused to permitted straight after. Journeys were refused to owners
+  until November 2026, then answered for one owner from 30 October 2026 on,
+  oldest first, twenty to a page, each with start and end coordinates that
+  `latest_journey` drops on purpose.
   The broker accepts the exact `/position` topic and delivers fixes on it,
   but only when a journey ends (about 34 seconds after), never during a drive,
   as JLR's own app hides position while driving. Status alone stays as the

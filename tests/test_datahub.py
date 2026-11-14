@@ -500,6 +500,19 @@ class TestTheApi:
         assert await client.async_ev(VIN, "t") == {"Vehicle": {}}
         assert session.calls[0][1].endswith(f"/v1/vehicles/{VIN}/ev")
 
+    async def test_journeys_ask_for_a_page(
+        self, credentials: datahub.Credentials
+    ) -> None:
+        client, session = make(credentials, FakeResponse(200, {"items": []}))
+        assert await client.async_journeys(VIN, "t", page=3) == {"items": []}
+        assert session.calls[0][1].endswith(f"/v1/vehicles/{VIN}/journeys?page=3")
+        # The proof names the resource without its query, or JLR refuse it.
+        proof = jwt.decode(
+            session.calls[0][2]["headers"]["DPoP"],
+            options={"verify_signature": False},
+        )
+        assert proof["htu"].endswith(f"/v1/vehicles/{VIN}/journeys")
+
     async def test_a_network_failure_is_an_error(
         self, credentials: datahub.Credentials
     ) -> None:

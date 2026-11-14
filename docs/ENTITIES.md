@@ -103,6 +103,7 @@ ids made before it are kept, and so is their history.
 | Usable energy (initial, from regeneration, revised), in kWh: JLR send usable and revised in hundredths of a kWh and regeneration in Wh | `EV_USABLE_ENERGY_*` | EV/PHEV, Data Hub | diagnostic | **off** |
 | Last updated | — | any | diagnostic | on |
 | Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
+| Last journey distance, duration, average speed, and when it ended (with `started` as an attribute); distance and speed follow the distance option | Data Hub journeys | cars JLR give journeys for | — | on |
 | All info | — | any | diagnostic | **off** |
 
 **Engine coolant temperature** reads unknown once the figure has stood unchanged for longer
@@ -120,6 +121,11 @@ with the figure sitting in the snapshot. Age judges it now, measured on the read
 rather than on when the car last said anything — a parked car's 12V voltage drifts down on its
 own, and counting that as the car reporting in would keep a coolant figure looking current all
 night.
+
+The **Last journey** sensors appear only once JLR have answered with a journey for the car, so an
+account still refused journeys has none. They change when a journey ends, not while one is under
+way: the read follows the position the stream sends at the end of a journey, five minutes later,
+with a read every six hours as a fallback. Where the journey started and ended is not kept.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC

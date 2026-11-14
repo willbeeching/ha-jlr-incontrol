@@ -209,7 +209,9 @@ them, and the car's position when a journey ends. JLR send no position while the
 driven, as their own app does not show it. Once it has delivered a reading newer than REST had, the REST
 read drops to hourly. Location is read with each status update for
 every car declared at data.jlr.com, and a car JLR refuse is asked only hourly. Each reading carries
-the time the car actually reported it, which the InControl route never had.
+the time the car actually reported it, which the InControl route never had. Where JLR give
+journeys, the last one's distance, duration and average speed are read a few minutes after it
+ends.
 
 ### The InControl sign-in
 

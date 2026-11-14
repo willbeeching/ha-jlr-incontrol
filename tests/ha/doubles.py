@@ -216,7 +216,13 @@ class FakeDataHub:
     Each ``*_result`` is returned, or raised if it is an exception. A list is
     consumed one answer per call, for a sequence such as a sign-in that is
     pending twice and then approved.
+
+    ``journeys`` on the class is what a new client answers for journeys, for a
+    test that needs them answered from setup on. None is JLR's gateway
+    refusing, which is what owners got until November 2026.
     """
+
+    journeys: Any = None
 
     def __init__(self, session: Any, client_id: str, private_key: str) -> None:
         from custom_components.jlr_incontrol.datahub import Tokens
@@ -294,6 +300,11 @@ class FakeDataHub:
         self.ev_result: Any = DataHubForbidden(
             "Access to category is not permitted for this vehicle: ev"
         )
+        self.journeys_result: Any = (
+            DataHubForbidden("Access denied")
+            if type(self).journeys is None
+            else type(self).journeys
+        )
         self.login_result: Any = None
         self.poll_results: list[Any] = []
 
@@ -324,6 +335,10 @@ class FakeDataHub:
     async def async_ev(self, vin: str, access_token: str) -> Any:
         self.calls.append("ev")
         return self._answer(self.ev_result)
+
+    async def async_journeys(self, vin: str, access_token: str, page: int = 0) -> Any:
+        self.calls.append(f"journeys {page}")
+        return self._answer(self.journeys_result)
 
     async def async_stream_token(self) -> Any:
         self.calls.append("stream token")

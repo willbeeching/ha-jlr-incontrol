@@ -407,9 +407,16 @@ class DataHubClient:
             raise DataHubForbidden(body.get("error_description") or body["error"])
         raise DataHubError(f"stream token refused ({status} {body.get('error')})")
 
-    async def async_get(self, path: str, access_token: str) -> dict[str, Any]:
-        """GET a REST path with the token and a fresh DPoP proof."""
+    async def async_get(
+        self, path: str, access_token: str, query: str = ""
+    ) -> dict[str, Any]:
+        """GET a REST path with the token and a fresh DPoP proof.
+
+        The query goes on the request and not into the proof: a DPoP proof's
+        ``htu`` is the URI without its query, per RFC 9449.
+        """
         url = f"{API_BASE}{path}"
+        target = f"{url}?{query}" if query else url
         for attempt in range(2):
             headers = {
                 "Authorization": f"DPoP {access_token}",
@@ -418,7 +425,7 @@ class DataHubClient:
             }
             try:
                 async with self._session.get(
-                    url, headers=headers, timeout=TIMEOUT
+                    target, headers=headers, timeout=TIMEOUT
                 ) as resp:
                     status = resp.status
                     nonce = resp.headers.get("DPoP-Nonce")
@@ -460,3 +467,11 @@ class DataHubClient:
     async def async_vehicle(self, vin: str, access_token: str) -> dict[str, Any]:
         """The vehicle's details: brand, model, year, body, fuel type."""
         return await self.async_get(f"/v1/vehicles/{vin}", access_token)
+
+    async def async_journeys(
+        self, vin: str, access_token: str, page: int = 0
+    ) -> dict[str, Any]:
+        """One page of the car's journeys, oldest first, twenty to a page."""
+        return await self.async_get(
+            f"/v1/vehicles/{vin}/journeys", access_token, f"page={page}"
+        )

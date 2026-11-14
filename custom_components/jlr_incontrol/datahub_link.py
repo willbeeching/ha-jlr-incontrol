@@ -12,6 +12,9 @@ Two sources, both JLR's documented API:
   minutes until the stream has shown it delivers, hourly after that.
 - The MQTT stream, held open continuously. JLR push signals as the car sends
   them, each stamped with when it sent them.
+- Journeys, for the last one's distance, duration and average speed: read a
+  few minutes after the stream sends the fix that ends a journey, and every
+  few hours in case it did not.
 
 Politeness is the same rule as the socket's: a floor between connection
 attempts, backoff on failure, and nothing that retries in a loop when the
@@ -128,6 +131,19 @@ LOCATION_INTERVAL = 60 * 60.0
 # car that is refused is asked again daily rather than every read, since what
 # it is refused for is its hardware, not anything an owner can change.
 EV_REFUSED_RETRY = 24 * 60 * 60.0
+# Journeys. The stream sends a fix only when a journey ends (about 34 seconds
+# after, measured November 2026), so a new fix is the cue to read the journey
+# it ended, a few minutes later so JLR have it filed. The timer is the fallback
+# for a stream that is off or missed one, and slow: a journey is history, not
+# a reading anyone acts on in the minute. Refused, as journeys were to owners
+# until November 2026, they are asked again daily.
+JOURNEY_SETTLE = 5 * 60.0
+JOURNEY_INTERVAL = 6 * 60 * 60.0
+JOURNEY_REFUSED_RETRY = 24 * 60 * 60.0
+# A held journey that ended this close before a fix is the one the fix ends;
+# the stream redelivers the last fix on every reconnect, and that is not news.
+JOURNEY_FIX_MATCH = 10 * 60.0
+_KM_PER_MILE = 1.609344
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
 HEALTHY_FOR = 3 * 60 * 60.0
@@ -158,6 +174,55 @@ def _parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     return dt_util.parse_datetime(value)
+
+
+def _in_km(measure: Any, units: dict[str, float]) -> float | None:
+    """A ``{value, unit}`` pair from journeys, in km or km/h, or None."""
+    if not isinstance(measure, dict):
+        return None
+    scale = units.get(str(measure.get("unit") or "").lower())
+    try:
+        value = float(measure.get("value", ""))
+    except (TypeError, ValueError):
+        return None
+    return None if scale is None else round(value * scale, 2)
+
+
+_DISTANCE_UNITS = {"km": 1.0, "mi": _KM_PER_MILE, "miles": _KM_PER_MILE}
+_SPEED_UNITS = {
+    "km/h": 1.0,
+    "kmh": 1.0,
+    "mph": _KM_PER_MILE,
+    "mi/h": _KM_PER_MILE,
+}
+
+
+def latest_journey(items: Any) -> dict[str, Any] | None:
+    """The journey that ended last, without where it started or ended.
+
+    JLR send each journey's start and end coordinates. They are not kept:
+    this integration stores no coordinates beyond the car's current fix, and
+    a history of where a car has been is more than any sensor here needs.
+    """
+    latest: dict[str, Any] | None = None
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        ended = _parse_time(item.get("endTime"))
+        if ended is None or (latest and ended <= latest["ended"]):
+            continue
+        try:
+            duration: float | None = float(item.get("duration", ""))
+        except (TypeError, ValueError):
+            duration = None
+        latest = {
+            "ended": ended,
+            "started": _parse_time(item.get("startTime")),
+            "duration": duration,
+            "distance": _in_km(item.get("distance"), _DISTANCE_UNITS),
+            "average_speed": _in_km(item.get("averageSpeed"), _SPEED_UNITS),
+        }
+    return latest
 
 
 def _flatten(tree: Any, prefix: str = "") -> dict[str, Any]:
@@ -324,6 +389,7 @@ class DataHubLink:
         self._tokens: Tokens | None = None
         self._task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
+        self._journey_task: asyncio.Task[None] | None = None
         self._listeners: list[CALLBACK_TYPE] = []
 
         self.connected = False
@@ -377,6 +443,14 @@ class DataHubLink:
         self._read_in_full: set[str] = set()
         # When the stream may next be tried, after a round of rejections.
         self._stream_after = 0.0
+        # The last journey per car, and what JLR said when last asked.
+        self.journeys: dict[str, dict[str, Any]] = {}
+        self.journey_access: dict[str, str] = {}
+        self._journeys_due: dict[str, float] = {}
+        # The newest fix each car has had a journey read for, and the cars
+        # waiting for their read after one.
+        self._journey_fix: dict[str, datetime] = {}
+        self._journeys_after_fix: set[str] = set()
 
     # -- lifecycle --------------------------------------------------------
 
@@ -398,14 +472,14 @@ class DataHubLink:
         )
 
     async def async_stop(self) -> None:
-        """Stop both loops and close the stream."""
-        for task in (self._task, self._status_task):
+        """Stop both loops and any journey read waiting, and close the stream."""
+        for task in (self._task, self._status_task, self._journey_task):
             if task is not None:
                 task.cancel()
                 # Whatever the task died of, an unload must still finish.
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
-        self._task = self._status_task = None
+        self._task = self._status_task = self._journey_task = None
         self._set_connected(False)
 
     @property
@@ -450,6 +524,7 @@ class DataHubLink:
             try:
                 await self._async_read_status()
                 await self._async_probe_location()
+                await self._async_read_journeys()
             except DataHubAuthError as err:
                 self._signed_out(err)
                 return
@@ -636,6 +711,96 @@ class DataHubLink:
             bool(refused) and not portal,
             cars=self._car_names(refused),
         )
+
+    async def _async_read_journeys(self, vins: set[str] | None = None) -> None:
+        """Read the last journey of the cars named, or of each one that is due.
+
+        JLR list journeys oldest first, twenty to a page, and say how many
+        pages there are, so the newest is on the last page: one request while
+        a car has twenty journeys or fewer, two after. The first page is kept
+        in the reckoning in case JLR ever list newest first.
+        """
+        now = time.monotonic()
+        due = [
+            v
+            for v in self.vehicles
+            if (
+                v in vins if vins is not None else now >= self._journeys_due.get(v, 0.0)
+            )
+        ]
+        if not due:
+            return
+        token = await self._async_access_token()
+        changed = False
+        for vin in due:
+            try:
+                first = await self.client.async_journeys(vin, token)
+                items = list(first.get("items") or [])
+                pages = (first.get("page") or {}).get("totalPages")
+                if isinstance(pages, int) and pages > 1:
+                    last = await self.client.async_journeys(vin, token, pages - 1)
+                    items += list(last.get("items") or [])
+            except (DataHubAuthError, DataHubRateLimited):
+                raise
+            except (DataHubForbidden, DataHubNotFound) as err:
+                answer = f"refused: {err}"
+                self._journeys_due[vin] = now + JOURNEY_REFUSED_RETRY
+            except DataHubError as err:
+                # Left due, so the next status read tries again.
+                _LOGGER.debug(
+                    "Data Hub journeys for %s failed: %s", vehicle_label(vin), err
+                )
+                continue
+            else:
+                answer = "permitted"
+                self._journeys_due[vin] = now + JOURNEY_INTERVAL
+                latest = latest_journey(items)
+                held = self.journeys.get(vin)
+                if latest and (held is None or latest["ended"] > held["ended"]):
+                    self.journeys[vin] = latest
+                    changed = True
+            if answer != self.journey_access.get(vin):
+                _LOGGER.debug(
+                    "Data Hub journeys for %s: %s", vehicle_label(vin), answer
+                )
+            self.journey_access[vin] = answer
+        if changed:
+            self._notify()
+
+    def _journey_ended(self, vin: str, fix_time: datetime | None) -> None:
+        """A fix arrived on the stream: read the journey it ended, shortly.
+
+        Only for a fix that is news. The stream redelivers the last fix when
+        it reconnects, hourly, and a fix the held journey already ended at is
+        that one again.
+        """
+        if fix_time is None or self.journey_access.get(vin, "").startswith("refused"):
+            return
+        if vin in self._journey_fix and fix_time <= self._journey_fix[vin]:
+            return
+        self._journey_fix[vin] = fix_time
+        held = self.journeys.get(vin)
+        if held and (fix_time - held["ended"]).total_seconds() < JOURNEY_FIX_MATCH:
+            return
+        self._journeys_after_fix.add(vin)
+        if self._journey_task is None or self._journey_task.done():
+            self._journey_task = self.entry.async_create_background_task(
+                self.hass, self._async_journeys_shortly(), f"{DOMAIN} journeys"
+            )
+
+    async def _async_journeys_shortly(self) -> None:
+        # Round again for a fix that came in while a read was under way, which
+        # found this task still running and so started none of its own.
+        while self._journeys_after_fix and not self.signed_out:
+            await self._pause(JOURNEY_SETTLE)
+            vins, self._journeys_after_fix = self._journeys_after_fix, set()
+            try:
+                await self._async_read_journeys(vins)
+            except DataHubAuthError as err:
+                self._signed_out(err)
+            except DataHubError as err:
+                # The status loop's timer reads them later.
+                _LOGGER.debug("Data Hub journeys after a fix failed: %s", err)
 
     def _emit(self, vin: str) -> None:
         """Hand the car's current signals on, in the socket's shape.
@@ -1111,6 +1276,7 @@ class DataHubLink:
         position = signals_to_position(values, when.isoformat() if when else None)
         if position is not None:
             self._on_position(vin, position)
+            self._journey_ended(vin, when)
 
     # -- reporting --------------------------------------------------------
 
@@ -1123,6 +1289,7 @@ class DataHubLink:
             "healthy": self.healthy,
             "location": {vehicle_label(v): a for v, a in self.location.items()},
             "ev": {vehicle_label(v): a for v, a in self.ev.items()},
+            "journeys": {vehicle_label(v): a for v, a in self.journey_access.items()},
             "broker": self.broker,
             "login": self._login.label if self._login else None,
             "accepted_login": self._accepted.label if self._accepted else None,
@@ -1134,6 +1301,7 @@ class DataHubLink:
                     # The latest fix's time on its own key: under the signal
                     # names it is redacted with the coordinates it belongs to.
                     "fix_time": self.signals.get(vin, {}).get(LATITUDE, {}).get("time"),
+                    "last_journey_end": self.journeys.get(vin, {}).get("ended"),
                     "signals": {
                         name: entry.get("time")
                         for name, entry in sorted(self.signals.get(vin, {}).items())

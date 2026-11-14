@@ -225,6 +225,18 @@
       },
       "vehicle_state": {
         "default": "mdi:car-key"
+      },
+      "last_journey_distance": {
+        "default": "mdi:map-marker-distance"
+      },
+      "last_journey_duration": {
+        "default": "mdi:timer-outline"
+      },
+      "last_journey_average_speed": {
+        "default": "mdi:speedometer"
+      },
+      "last_journey_end": {
+        "default": "mdi:flag-checkered"
       }
     }
   }
