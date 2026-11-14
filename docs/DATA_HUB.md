@@ -158,11 +158,13 @@ Also measured:
   catalog is right: on an I-Pace charging at home, 114 minutes and 22 km/h matched the JLR
   app's 1 hr 54 min and 14 mi/hr.
 - **Journeys** were refused for owner accounts altogether until November 2026, even with the
-  category selected and the car declared. Since then one owner's account answers, without
+  category selected and the car declared. Since then two owners' accounts answer, without
   changing anything at data.jlr.com, with journeys from 30 October 2026 on, nothing earlier. Each
   has its start and end time, duration in seconds, distance and average speed with their units, and
-  its start and end coordinates. That owner's two most recent drives were missing at first, so how
-  soon a journey appears after the car is parked is not yet known.
+  its start and end coordinates. On a Range Rover the journey was in the list at the first read,
+  five minutes after the stream's end-of-journey fix, so 5 minutes 20 seconds after the car
+  stopped. One owner's two most recent drives were missing from the list at first, so it may not
+  be that quick on every account.
 - The stream's sign-in is refused (`Client not enabled to retrieve service account`) until the
   stream is switched on for the client in the portal.
 - With it switched on, the broker the portal names does not resolve, and the broker in the docs

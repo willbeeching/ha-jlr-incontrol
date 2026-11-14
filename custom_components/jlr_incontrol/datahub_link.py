@@ -133,7 +133,8 @@ LOCATION_INTERVAL = 60 * 60.0
 EV_REFUSED_RETRY = 24 * 60 * 60.0
 # Journeys. The stream sends a fix only when a journey ends (about 34 seconds
 # after, measured November 2026), so a new fix is the cue to read the journey
-# it ended, a few minutes later so JLR have it filed. The timer is the fallback
+# it ended, a few minutes later so JLR have it filed. Five was enough on a Range
+# Rover: the journey was listed at the first read. The timer is the fallback
 # for a stream that is off or missed one, and slow: a journey is history, not
 # a reading anyone acts on in the minute. Refused, as journeys were to owners
 # until November 2026, they are asked again daily.
