@@ -423,10 +423,17 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_SSO_COOKIES: sso_cookies,
         }
         if existing is not None:
-            # Keep the device id and anything else already configured.
-            return self.async_update_reload_and_abort(
-                existing, data={**existing.data, **data}
-            )
+            # Keep the device id and anything else already configured, except
+            # the portal session, as the location-only sign-ins already do: it
+            # belongs to the old identity session. Kept, it was tried first
+            # at startup, the portal answered 500 for it, and a 500 is never a
+            # reason to mint, so signing in again left location stuck (#54).
+            kept = {
+                key: value
+                for key, value in existing.data.items()
+                if key not in (CONF_PORTAL_COOKIES, CONF_PORTAL_MINTED)
+            }
+            return self.async_update_reload_and_abort(existing, data={**kept, **data})
         await self.async_set_unique_id(client.user_id or self._username)
         self._abort_if_unique_id_configured()
         return self.async_create_entry(title=self._username, data=data)

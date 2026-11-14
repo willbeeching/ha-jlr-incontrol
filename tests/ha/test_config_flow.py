@@ -391,6 +391,48 @@ class TestSigningInAgain:
             "iPlanetDirectoryPro": "a-forgerock-session"
         }
 
+    @pytest.mark.parametrize(
+        "source", [config_entries.SOURCE_RECONFIGURE, config_entries.SOURCE_REAUTH]
+    )
+    async def test_signing_in_again_drops_the_old_portal_session(
+        self, hass: HomeAssistant, existing: MockConfigEntry, source: str
+    ) -> None:
+        # The portal session belongs to the identity session it was minted
+        # from. Kept, it was tried first, the portal answered 500 for it, and
+        # the new sign-in never got to mint one of its own (#54).
+        hass.config_entries.async_update_entry(
+            existing,
+            data={
+                **existing.data,
+                "portal_cookies": {"JSESSIONID": "an-old-session"},
+                "portal_minted": 1794000000.0,
+                "portal_base": "https://incontrol.landrover.com/jlr-portal-owner-web",
+            },
+        )
+        # Reauth is started with the entry's data; reconfigure with none, as
+        # anything passed to it is taken as its form being submitted.
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": source, "entry_id": existing.entry_id},
+            data=(
+                dict(existing.data) if source == config_entries.SOURCE_REAUTH else None
+            ),
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"password": PASSWORD}
+        )
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"code": CODE}
+        )
+        assert "portal_cookies" not in existing.data
+        assert "portal_minted" not in existing.data
+        # Everything else stays, the new identity session with it.
+        assert existing.data["device_id"] == "an-existing-device-id"
+        assert existing.data["portal_base"].startswith("https://")
+        assert existing.data["sso_cookies"] == {
+            "iPlanetDirectoryPro": "a-forgerock-session"
+        }
+
 
 class TestTheJourneyFallingOverInWaysNobodyPlanned:
     """The catch-alls, and the two states the flow can be resumed into."""

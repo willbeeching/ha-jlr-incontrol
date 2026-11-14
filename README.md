@@ -46,17 +46,17 @@ It was launched under the EU Data Act, but it is not limited to the UK and EU: o
 and Australia have it working. If data.jlr.com lists your cars, wherever you are, it should work
 for you.
 
-The InControl sign-in stays alongside it, unchanged, for anyone the Data Hub does not reach. It is
-still the reverse-engineered route it always was, and JLR could still close it without notice. If
-data.jlr.com lists your cars, use the Data Hub.
+The InControl sign-in stays alongside it until then. It is still the reverse-engineered route it
+always was, and JLR could still close it without notice. If data.jlr.com lists your cars, use the
+Data Hub.
 
-**The plan is to retire the InControl sign-in**, now that the Data Hub has been shown to work
-outside the UK and EU. If data.jlr.com does not list your cars, or refuses something the InControl
-sign-in gives you, please
-[open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) saying where you are and
-what it refuses, so it can be looked at first. The retirement will be announced in the
-release notes ahead of time, not sprung on anyone. Already on the Data Hub and happy with it? You
-can drop the InControl sign-in now, from the options: **Remove the InControl sign-in**.
+**The InControl sign-in is discontinued from 1 December 2026.** Releases from that date support the
+JLR Data Hub only, now that it has been shown to work outside the UK and EU, and the InControl
+sign-in, the owner portal's location with it, is removed. If data.jlr.com does not list your cars,
+or refuses something the InControl sign-in gives you, please
+[open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) before then saying where
+you are and what it refuses. Already on the Data Hub and happy with it? You can drop the InControl
+sign-in now, from the options: **Remove the InControl sign-in**.
 
 ### Owners' right to their own data
 
@@ -291,8 +291,8 @@ Nothing is routed through me or anyone else, and it sends no commands to any car
 
 Thank you for the Data Hub. It is what this note used to ask you for: a supported, read-only way
 for owners to see their own car in their own home automation, and the integration now uses it
-wherever it can. I would gladly retire the InControl connection the day the
-Data Hub reaches every owner, and I would be glad to help test it anywhere it is not offered yet.
+wherever it can. The InControl connection is retired from 1 December 2026, and I would be glad
+to help test the Data Hub anywhere it is not offered yet.
 
 If anyone at JLR would like anything here changed or taken down, please
 [open an issue](https://github.com/willbeeching/ha-jlr-incontrol/issues) or get in touch through my

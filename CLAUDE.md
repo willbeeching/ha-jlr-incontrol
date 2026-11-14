@@ -135,13 +135,14 @@ Re-deriving these has cost days. They are documented at length in
 ## The JLR Data Hub
 
 JLR's documented owner API (developer.jlr.com), and where the integration is
-heading. The reverse-engineered InControl connection stays alongside it, with
-no deprecation notice, until owners outside the UK and EU have tested what the
-Data Hub offers them. Canada was the first: a Defender there works, location
-included, declared as outside the UK and EU. Australia followed: a Defender
-works, possibly declared with a UK or EU region (both November 2026). If it holds elsewhere, the plan (stated in the README)
-is to retire the InControl connection, announced in release notes beforehand. `docs/DATA_HUB.md` has the
-user-facing detail; what matters when changing the code:
+heading. The reverse-engineered InControl connection is **discontinued from 1
+December 2026**, announced in the 2.1.2 release notes and the README: releases
+from that date are Data Hub only. Until then it gets fixes for things that
+break, and nothing new is built on it (the owner portal's trail included).
+Canada was the first owner outside the UK and EU on the Data Hub: a Defender
+there works, location included. Australia followed: a Defender works, possibly
+declared with a UK or EU region (both November 2026). `docs/DATA_HUB.md` has
+the user-facing detail; what matters when changing the code:
 
 - `datahub.py` is the client (private_key_jwt sign-in, DPoP on REST),
   `stream.py` a minimal MQTT client, `datahub_link.py` the running link, and
