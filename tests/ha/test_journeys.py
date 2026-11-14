@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, Doubles, FakeDataHub  # noqa: E402
+from doubles import KEPT, SOLD, Doubles, FakeDataHub  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -199,4 +199,53 @@ class TestLastJourney:
         await set_up(hass, entry, distance_unit="miles")
         assert hass.states.get(SENSORS[0]).attributes["unit_of_measurement"] == "mi"
         assert hass.states.get(SENSORS[2]).attributes["unit_of_measurement"] == "mph"
+        await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_energy_used_appears_only_once_jlr_send_it(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(FakeDataHub, "journeys", ANSWER)
+        await set_up(hass, entry)
+        energy = "sensor.test_car_last_journey_energy_used"
+        fuel = "sensor.test_car_last_journey_fuel_used"
+        assert hass.states.get(energy) is None
+        assert hass.states.get(fuel) is None
+        link = entry.runtime_data.datahub
+        newer = {
+            **ANSWER["items"][0],
+            "endTime": "2026-11-09T08:00:00Z",
+            "energyUsed": {"value": 6.25, "unit": "kWh"},
+        }
+        link.client.journeys_result = {**ANSWER, "items": [newer]}
+        await link._async_read_journeys({KEPT})
+        await hass.async_block_till_done()
+        state = hass.states.get(energy)
+        assert float(state.state) == 6.25
+        assert state.attributes["unit_of_measurement"] == "kWh"
+        assert hass.states.get(fuel) is None
+        # A later journey without it leaves the sensor there, reading unknown
+        # rather than a zero JLR never sent.
+        plain = {**ANSWER["items"][0], "endTime": "2026-11-10T08:00:00Z"}
+        link.client.journeys_result = {**ANSWER, "items": [plain]}
+        await link._async_read_journeys({KEPT})
+        await hass.async_block_till_done()
+        assert hass.states.get(energy).state == "unknown"
+        await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_a_journey_for_a_car_not_yet_known_waits_for_the_car(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The link can hold a car the coordinator has not taken on yet; its
+        # sensors would have no device to belong to.
+        await set_up(hass, entry)
+        link = entry.runtime_data.datahub
+        before = len(hass.states.async_entity_ids("sensor"))
+        link.journeys[SOLD] = {"ended": None, "distance": 1.0}
+        link._notify()
+        await hass.async_block_till_done()
+        assert len(hass.states.async_entity_ids("sensor")) == before
         await hass.config_entries.async_unload(entry.entry_id)

@@ -198,6 +198,45 @@ _SPEED_UNITS = {
 }
 
 
+# What a journey's energyUsed is, by its unit. JLR's spec gives kWh or litres:
+# electricity used, or fuel burned.
+_ENERGY_USED = {
+    "kwh": ("energy_used", 1.0),
+    "wh": ("energy_used", 0.001),
+    "litres": ("fuel_used", 1.0),
+    "liters": ("fuel_used", 1.0),
+    "l": ("fuel_used", 1.0),
+}
+
+
+def _energy_used(measure: Any) -> dict[str, float]:
+    """A journey's energyUsed, under the name its unit says it is."""
+    if not isinstance(measure, dict):
+        return {}
+    known = _ENERGY_USED.get(str(measure.get("unit") or "").lower())
+    try:
+        value = float(measure.get("value", ""))
+    except (TypeError, ValueError):
+        return {}
+    return {known[0]: round(value * known[1], 3)} if known else {}
+
+
+def journey_shape(item: dict[str, Any], prefix: str = "") -> list[str]:
+    """A journey's field names, nested ones dotted, and never their values.
+
+    For diagnostics. JLR's spec lists eight fields; a car that gets more
+    shows them here, which is how they can be mapped without anyone having
+    to post what they drove.
+    """
+    names: list[str] = []
+    for key, value in item.items():
+        name = f"{prefix}{key}"
+        names.append(name)
+        if isinstance(value, dict):
+            names.extend(journey_shape(value, f"{name}."))
+    return sorted(names)
+
+
 def latest_journey(items: Any) -> dict[str, Any] | None:
     """The journey that ended last, without where it started or ended.
 
@@ -222,6 +261,8 @@ def latest_journey(items: Any) -> dict[str, Any] | None:
             "duration": duration,
             "distance": _in_km(item.get("distance"), _DISTANCE_UNITS),
             "average_speed": _in_km(item.get("averageSpeed"), _SPEED_UNITS),
+            **_energy_used(item.get("energyUsed")),
+            "shape": journey_shape(item),
         }
     return latest
 
@@ -1303,6 +1344,7 @@ class DataHubLink:
                     # names it is redacted with the coordinates it belongs to.
                     "fix_time": self.signals.get(vin, {}).get(LATITUDE, {}).get("time"),
                     "last_journey_end": self.journeys.get(vin, {}).get("ended"),
+                    "journey_shape": self.journeys.get(vin, {}).get("shape"),
                     "signals": {
                         name: entry.get("time")
                         for name, entry in sorted(self.signals.get(vin, {}).items())

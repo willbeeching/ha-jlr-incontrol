@@ -104,6 +104,7 @@ ids made before it are kept, and so is their history.
 | Last updated | — | any | diagnostic | on |
 | Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
 | Last journey distance, duration, average speed, and when it ended (with `started` as an attribute); distance and speed follow the distance option | Data Hub journeys | cars JLR give journeys for | — | on |
+| Last journey energy used (kWh) or fuel used (litres) | Data Hub journeys, `energyUsed` | only once a journey carries it | — | on |
 | All info | — | any | diagnostic | **off** |
 
 **Engine coolant temperature** reads unknown once the figure has stood unchanged for longer
@@ -126,6 +127,10 @@ The **Last journey** sensors appear only once JLR have answered with a journey f
 account still refused journeys has none. They change when a journey ends, not while one is under
 way: the read follows the position the stream sends at the end of a journey, five minutes later,
 with a read every six hours as a fallback. Where the journey started and ended is not kept.
+**Energy used** and **fuel used** come from one optional field in JLR's spec, `energyUsed`, which is
+in kWh or litres depending on the car; each sensor appears only once a journey has carried it, and a
+journey without it reads unknown rather than zero. JLR's journeys carry no MPG, EV distance,
+regeneration or efficiency figures, so there are no sensors for those.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC

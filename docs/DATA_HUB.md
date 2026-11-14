@@ -161,7 +161,11 @@ Also measured:
   category selected and the car declared. Since then two owners' accounts answer, without
   changing anything at data.jlr.com, with journeys from 30 October 2026 on, nothing earlier. Each
   has its start and end time, duration in seconds, distance and average speed with their units, and
-  its start and end coordinates. On a Range Rover the journey was in the list at the first read,
+  its start and end coordinates. JLR's spec lists one more, `energyUsed` in kWh or litres, which
+  the first answers did not include; nothing about fuel economy, EV distance or regeneration is
+  in the spec at all. Diagnostics list the newest journey's field names, never their values,
+  under each car's `journey_shape`, so a car that gets more fields shows it. On a Range Rover
+  the journey was in the list at the first read,
   five minutes after the stream's end-of-journey fix, so 5 minutes 20 seconds after the car
   stopped. One owner's two most recent drives were missing from the list at first, so it may not
   be that quick on every account.

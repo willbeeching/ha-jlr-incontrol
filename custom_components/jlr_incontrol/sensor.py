@@ -1027,6 +1027,9 @@ class JlrJourneyDescription(SensorEntityDescription):
     """One reading of a car's last journey, from the Data Hub."""
 
     field: str
+    # Created only once a journey has carried it: energyUsed is optional in
+    # JLR's spec, and was absent from the first real answer seen.
+    when_sent: bool = False
 
 
 # Keys, not ids: the unique ids are f"{vin}_{key}" like every other sensor.
@@ -1061,6 +1064,24 @@ JOURNEY_SENSORS: tuple[JlrJourneyDescription, ...] = (
         translation_key="last_journey_end",
         field="ended",
         device_class=SensorDeviceClass.TIMESTAMP,
+    ),
+    JlrJourneyDescription(
+        key="last_journey_energy_used",
+        translation_key="last_journey_energy_used",
+        field="energy_used",
+        when_sent=True,
+        device_class=SensorDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        suggested_display_precision=1,
+    ),
+    JlrJourneyDescription(
+        key="last_journey_fuel_used",
+        translation_key="last_journey_fuel_used",
+        field="fuel_used",
+        when_sent=True,
+        device_class=SensorDeviceClass.VOLUME,
+        native_unit_of_measurement=UnitOfVolume.LITERS,
+        suggested_display_precision=1,
     ),
 )
 
@@ -1216,23 +1237,29 @@ def _add_journey_sensors(
 
     Not before: JLR refused journeys to every owner until November 2026, and
     a car that is still refused would carry four sensors that never read.
+    Energy and fuel used wait for a journey that carries them, so a car JLR
+    never send them for does not gain a sensor that never reads either.
     """
     link = coordinator.datahub
     if link is None:
         return
-    added: set[str] = set()
+    added: set[tuple[str, str]] = set()
 
     @callback
     def add() -> None:
         fresh: list[JlrJourneySensor] = []
-        for vin in list(link.journeys):
-            if vin in added or vin not in coordinator.data.get("vehicles", {}):
+        for vin, journey in list(link.journeys.items()):
+            if vin not in coordinator.data.get("vehicles", {}):
                 continue
-            added.add(vin)
-            fresh.extend(
-                JlrJourneySensor(coordinator, vin, description, distance_unit)
-                for description in JOURNEY_SENSORS
-            )
+            for description in JOURNEY_SENSORS:
+                if (vin, description.key) in added:
+                    continue
+                if description.when_sent and journey.get(description.field) is None:
+                    continue
+                added.add((vin, description.key))
+                fresh.append(
+                    JlrJourneySensor(coordinator, vin, description, distance_unit)
+                )
         if fresh:
             async_add_entities(fresh)
 

@@ -494,6 +494,12 @@
             "name": "Started"
           }
         }
+      },
+      "last_journey_energy_used": {
+        "name": "Last journey energy used"
+      },
+      "last_journey_fuel_used": {
+        "name": "Last journey fuel used"
       }
     },
     "binary_sensor": {

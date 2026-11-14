@@ -1329,3 +1329,52 @@ class TestJourneys:
         await link._journey_task
         assert hub.datahub.calls.count("journeys 0") == 2
         assert link.journeys[KEPT]["distance"] == 30.0
+
+    async def test_energy_used_is_read_by_its_unit(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # JLR's spec has energyUsed in kWh or litres: electricity or fuel.
+        link = DataHubLink(hass, linked)
+        electric = journey("2026-11-08T17:00:00Z", "2026-11-08T17:30:00Z")
+        electric["energyUsed"] = {"value": 6.25, "unit": "kWh"}
+        hub.datahub.journeys_result = journeys(electric)
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["energy_used"] == 6.25
+        assert "fuel_used" not in link.journeys[KEPT]
+        burned = journey("2026-11-09T17:00:00Z", "2026-11-09T17:30:00Z")
+        burned["energyUsed"] = {"value": 2.4, "unit": "litres"}
+        hub.datahub.journeys_result = journeys(burned)
+        link._journeys_due.clear()
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["fuel_used"] == 2.4
+        assert "energy_used" not in link.journeys[KEPT]
+
+    async def test_energy_in_a_unit_not_known_is_left_out(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        odd = journey("2026-11-08T17:00:00Z", "2026-11-08T17:30:00Z")
+        odd["energyUsed"] = {"value": 3, "unit": "gallons"}
+        later = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        later["energyUsed"] = {"value": "some", "unit": "kWh"}
+        hub.datahub.journeys_result = journeys(odd)
+        await link._async_read_journeys()
+        assert "fuel_used" not in link.journeys[KEPT]
+        link._journeys_due.clear()
+        hub.datahub.journeys_result = journeys(later)
+        await link._async_read_journeys()
+        assert "energy_used" not in link.journeys[KEPT]
+
+    async def test_diagnostics_name_a_journeys_fields_and_never_their_values(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        extra = journey("2026-11-08T17:00:00Z", "2026-11-08T17:30:00Z")
+        extra["ecoScore"] = 87
+        hub.datahub.journeys_result = journeys(extra)
+        await link._async_read_journeys()
+        (car,) = link.diagnostics()["vehicles"].values()
+        assert "ecoScore" in car["journey_shape"]
+        assert "endLocation.latitude" in car["journey_shape"]
+        assert "distance.unit" in car["journey_shape"]
+        assert "87" not in repr(car) and "51.6000" not in repr(car)
