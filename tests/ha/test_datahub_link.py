@@ -590,6 +590,31 @@ class TestWhatItReads:
         await link._async_access_token()
         assert hub.datahub.calls.count("refresh offline-1") == 1
 
+    async def test_reads_that_find_the_token_spent_together_renew_it_once(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # JLR rotate the refresh token on use: a second renewal with the one
+        # just spent is refused, and the link signs itself out.
+        link = DataHubLink(hass, linked)
+        release = asyncio.Event()
+        spent: list[str] = []
+
+        async def renew(refresh_token: str) -> Any:
+            if refresh_token in spent:
+                raise DataHubAuthError("invalid_grant")
+            spent.append(refresh_token)
+            await release.wait()
+            return hub.datahub.tokens
+
+        link.client.async_refresh = renew
+        first = asyncio.create_task(link._async_access_token())
+        second = asyncio.create_task(link._async_access_token())
+        await asyncio.sleep(0)
+        release.set()
+        assert await first == await second == "access"
+        assert spent == ["offline-1"]
+        assert not link.signed_out
+
     async def test_a_snapshot_without_a_time_reports_nothing(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:

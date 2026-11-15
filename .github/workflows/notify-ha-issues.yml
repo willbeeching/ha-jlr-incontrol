@@ -26,6 +26,14 @@ jobs:
           GROK_WEBHOOK_URL: ${{ secrets.GROK_WEBHOOK_URL }}
           GROK_WEBHOOK_KEY: ${{ secrets.GROK_WEBHOOK_KEY }}
         run: |
+          # A pull request from a fork runs without the repository's secrets,
+          # so there is nowhere to forward it; skip rather than fail the
+          # contributor's checks with a webhook they cannot reach.
+          if [ -z "${GROK_WEBHOOK_URL}" ]; then
+            echo "No webhook configured for this run; nothing forwarded."
+            exit 0
+          fi
+
           jq -c \
             --arg github_event "$GITHUB_EVENT_NAME" \
             --arg actor "$GITHUB_ACTOR" \

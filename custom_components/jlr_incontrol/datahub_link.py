@@ -437,6 +437,7 @@ class DataHubLink:
         self.vehicles: list[str] = list(settings.get(DATAHUB_VEHICLES, []))
         self.account_id: str | None = settings.get(DATAHUB_ACCOUNT_ID)
         self._tokens: Tokens | None = None
+        self._token_lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._journey_task: asyncio.Task[None] | None = None
@@ -672,21 +673,38 @@ class DataHubLink:
         )
         self._notify()
 
-    async def _async_access_token(self) -> str:
+    def _token_in_hand(self) -> str | None:
         if self._tokens and self._tokens.expires_at - time.time() > 30:
             return self._tokens.access_token
-        settings: dict[str, Any] = self.entry.data[CONF_DATAHUB]
-        tokens = await self.client.async_refresh(settings[DATAHUB_REFRESH_TOKEN])
-        self._tokens = tokens
-        if tokens.vehicles:
-            self.vehicles = tokens.vehicles
-        if tokens.account_id:
-            self.account_id = tokens.account_id
-        ir.async_delete_issue(
-            self.hass, DOMAIN, f"{ISSUE_DATAHUB_SIGNED_OUT}_{self.entry.entry_id}"
-        )
-        self._persist(tokens)
-        return tokens.access_token
+        return None
+
+    async def _async_access_token(self) -> str:
+        """A live access token, renewing it if it is nearly spent.
+
+        One renewal at a time. JLR rotate the refresh token on every use, and
+        the status timer, a Refresh press and a journey read after a fix can
+        all find the token spent at once. Two renewals with the same refresh
+        token and the second is refused as invalid_grant, which reads as the
+        owner having revoked the link and signs it out.
+        """
+        if (token := self._token_in_hand()) is not None:
+            return token
+        async with self._token_lock:
+            # Renewed by whoever held the lock while this waited.
+            if (token := self._token_in_hand()) is not None:
+                return token
+            settings: dict[str, Any] = self.entry.data[CONF_DATAHUB]
+            tokens = await self.client.async_refresh(settings[DATAHUB_REFRESH_TOKEN])
+            self._tokens = tokens
+            if tokens.vehicles:
+                self.vehicles = tokens.vehicles
+            if tokens.account_id:
+                self.account_id = tokens.account_id
+            ir.async_delete_issue(
+                self.hass, DOMAIN, f"{ISSUE_DATAHUB_SIGNED_OUT}_{self.entry.entry_id}"
+            )
+            self._persist(tokens)
+            return tokens.access_token
 
     def _persist(self, tokens: Tokens) -> None:
         """Keep the rotated refresh token, and what it says the link covers.

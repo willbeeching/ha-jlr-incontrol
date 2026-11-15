@@ -85,7 +85,7 @@ client at data.jlr.com.
   has delivered a reading newer than the car's last report, and hourly after that. A message that
   only repeats what REST already brought does not count. Fifteen minutes is the cadence the integration's
   housekeeping already keeps; it is there because the REST read is the only source of change
-  until the stream is shown to work. The **Refresh** button reads status on demand, at most once a
+  until the stream is shown to work. The **Refresh** button reads status and location on demand, at most once a
   minute.
 - **Location**: read with each status read for every car JLR allow it for, so every 15 minutes
   until the stream proves itself and hourly after. A car JLR refuse (not declared at data.jlr.com)
