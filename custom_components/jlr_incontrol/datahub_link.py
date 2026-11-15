@@ -149,12 +149,6 @@ EV_FAILURES_BEFORE_WARNING = 3
 JOURNEY_SETTLE = 5 * 60.0
 JOURNEY_INTERVAL = 6 * 60 * 60.0
 JOURNEY_REFUSED_RETRY = 24 * 60 * 60.0
-# A held journey that ended this close before a fix is the one the fix ends;
-# the stream redelivers the last fix on every reconnect, and that is not news.
-# The fix was measured 34 seconds after the journey's end. This was ten
-# minutes, which took a second trip ending eight minutes after the first for
-# the first's redelivered fix and never read it.
-JOURNEY_FIX_MATCH = 2 * 60.0
 _KM_PER_MILE = 1.609344
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
@@ -871,18 +865,19 @@ class DataHubLink:
     def _journey_ended(self, vin: str, fix_time: datetime | None) -> None:
         """A fix arrived on the stream: read the journey it ended, shortly.
 
-        Only for a fix that is news. The stream redelivers the last fix when
-        it reconnects, hourly, and a fix the held journey already ended at is
-        that one again.
+        Only for a fix that is news, and a repeat is told by its own time: the
+        stream redelivers the last fix on every reconnect, hourly, stamped as
+        before. Guessing from how soon after the held journey's end it came
+        took a second trip ending minutes after the first for a repeat, at ten
+        minutes and then at two, and never read it. The price is one read per
+        car when the link starts, for the first fix it hears, which may be the
+        redelivered one.
         """
         if fix_time is None or self.journey_access.get(vin, "").startswith("refused"):
             return
         if vin in self._journey_fix and fix_time <= self._journey_fix[vin]:
             return
         self._journey_fix[vin] = fix_time
-        held = self.journeys.get(vin)
-        if held and (fix_time - held["ended"]).total_seconds() < JOURNEY_FIX_MATCH:
-            return
         self._journeys_after_fix.add(vin)
         if self._journey_task is None or self._journey_task.done():
             self._journey_task = self.entry.async_create_background_task(

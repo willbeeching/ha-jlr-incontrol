@@ -1337,17 +1337,42 @@ class TestJourneys:
     async def test_a_fix_redelivered_on_reconnect_reads_nothing(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
+        # The broker redelivers the last fix, stamped as before, every time
+        # the stream reconnects. Only the first time it is heard costs a read.
         link = DataHubLink(hass, linked, on_position=lambda *_: None)
         link._pause = Pauses()
         drive = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
         hub.datahub.journeys_result = journeys(drive)
-        await link._async_read_journeys()
-        # The fix that ended the journey already held: JLR's retained copy.
+        retained = json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        link._on_message(POSITION_TOPIC, retained)
+        assert link._journey_task is not None
+        await link._journey_task
+        for _reconnect in range(3):
+            link._on_message(POSITION_TOPIC, retained)
+        assert link._journey_task.done()
+        assert hub.datahub.calls.count("journeys 0") == 1
+
+    async def test_a_trip_ending_a_minute_after_the_last_is_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The case the time windows got wrong: no gap between two trips is
+        # too short for them to be two trips.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        first = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = journeys(first)
         link._on_message(
             POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
         )
-        assert link._journey_task is None
-        assert hub.datahub.calls.count("journeys 0") == 1
+        assert link._journey_task is not None
+        await link._journey_task
+        second = journey("2026-11-08T18:30:40Z", "2026-11-08T18:31:10Z", 0.5)
+        hub.datahub.journeys_result = journeys(first, second)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:31:44Z")).encode()
+        )
+        await link._journey_task
+        assert link.journeys[KEPT]["distance"] == 0.5
 
     async def test_the_same_fix_twice_reads_once(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
