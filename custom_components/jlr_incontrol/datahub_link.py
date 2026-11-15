@@ -149,6 +149,10 @@ EV_FAILURES_BEFORE_WARNING = 3
 JOURNEY_SETTLE = 5 * 60.0
 JOURNEY_INTERVAL = 6 * 60 * 60.0
 JOURNEY_REFUSED_RETRY = 24 * 60 * 60.0
+# A read after a fix that finds nothing newer than the car's last journey has
+# most likely beaten JLR to filing it; asked once more, this much later, rather
+# than left to the six-hour timer.
+JOURNEY_UNFILED_RETRY = 30 * 60.0
 _KM_PER_MILE = 1.609344
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
@@ -505,7 +509,9 @@ class DataHubLink:
         # The newest fix each car has had a journey read for, and the cars
         # waiting for their read after one.
         self._journey_fix: dict[str, datetime] = {}
-        self._journeys_after_fix: set[str] = set()
+        # Cars waiting on a read after a fix: when it is due, on the monotonic
+        # clock, and whether a read that finds nothing new may try once more.
+        self._journeys_after_fix: dict[str, tuple[float, bool]] = {}
 
     # -- lifecycle --------------------------------------------------------
 
@@ -878,25 +884,53 @@ class DataHubLink:
         if vin in self._journey_fix and fix_time <= self._journey_fix[vin]:
             return
         self._journey_fix[vin] = fix_time
-        self._journeys_after_fix.add(vin)
+        # Its own five minutes from its own fix, and a fresh retry with it.
+        self._journeys_after_fix[vin] = (time.monotonic() + JOURNEY_SETTLE, True)
         if self._journey_task is None or self._journey_task.done():
             self._journey_task = self.entry.async_create_background_task(
                 self.hass, self._async_journeys_shortly(), f"{DOMAIN} journeys"
             )
 
     async def _async_journeys_shortly(self) -> None:
-        # Round again for a fix that came in while a read was under way, which
-        # found this task still running and so started none of its own.
+        """Read each waiting car when its own fix is five minutes old.
+
+        One task for every car, sleeping until the earliest is due and then
+        reading only the cars that are, so a fix that comes in during a wait
+        keeps its full five minutes rather than riding the first fix's read
+        early. A car whose read found nothing newer than its last journey is
+        put back once, half an hour on: JLR had most likely not filed it yet.
+        """
         while self._journeys_after_fix and not self.signed_out:
-            await self._pause(JOURNEY_SETTLE)
-            vins, self._journeys_after_fix = self._journeys_after_fix, set()
+            target = min(due for due, _ in self._journeys_after_fix.values())
+            await self._pause(max(0.0, target - time.monotonic()))
+            # Chosen by due time, not by the clock now: a fix that arrived
+            # during the wait is due later and waits its own turn.
+            ready = {
+                vin: retry
+                for vin, (due, retry) in self._journeys_after_fix.items()
+                if due <= target
+            }
+            for vin in ready:
+                del self._journeys_after_fix[vin]
+            before = {vin: self.journeys.get(vin, {}).get("ended") for vin in ready}
             try:
-                await self._async_read_journeys(vins)
+                await self._async_read_journeys(set(ready))
             except DataHubAuthError as err:
                 self._signed_out(err)
+                return
             except DataHubError as err:
                 # The status loop's timer reads them later.
                 _LOGGER.debug("Data Hub journeys after a fix failed: %s", err)
+                continue
+            for vin, retry in ready.items():
+                found = self.journeys.get(vin, {}).get("ended") != before[vin]
+                if found or not retry or vin in self._journeys_after_fix:
+                    # Read it, or tried twice, or a newer fix has its own turn.
+                    continue
+                self._journeys_after_fix[vin] = (
+                    time.monotonic() + JOURNEY_UNFILED_RETRY,
+                    False,
+                )
 
     def _emit(self, vin: str) -> None:
         """Hand the car's current signals on, in the socket's shape.

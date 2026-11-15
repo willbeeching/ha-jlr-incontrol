@@ -1182,6 +1182,55 @@ class Pauses:
         self.waits.append(seconds)
 
 
+class Clock:
+    """Monotonic time for the link, moved on only by its own waits.
+
+    ``at`` runs a step once the clock reaches a time, so a fix can arrive in
+    the middle of a wait the way it would on the road.
+    """
+
+    def __init__(self, link: DataHubLink) -> None:
+        self.now = 1000.0
+        self.waits: list[float] = []
+        self.steps: list[tuple[float, Any]] = []
+        link._pause = self.pause
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def at(self, when: float, step: Any) -> None:
+        self.steps.append((when, step))
+
+    async def pause(self, seconds: float) -> None:
+        # Suspends, as a real wait does. Home Assistant starts background
+        # tasks eagerly, and a wait that never yields runs the whole task
+        # inside the call that started it.
+        await asyncio.sleep(0)
+        self.waits.append(seconds)
+        end = self.now + seconds
+        for when, step in sorted(self.steps, key=lambda s: s[0]):
+            if self.now < when <= end:
+                self.now = when
+                step()
+        self.now = end
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The link's clock, replaced; asyncio's own is left alone."""
+
+    def install(link: DataHubLink) -> Clock:
+        fake = Clock(link)
+        monkeypatch.setattr(
+            datahub_link,
+            "time",
+            type("FakeTime", (), {"monotonic": fake.monotonic, "time": time.time}),
+        )
+        return fake
+
+    return install
+
+
 class TestJourneys:
     async def test_the_last_journey_is_kept_without_where_it_went(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
@@ -1312,7 +1361,7 @@ class TestJourneys:
         )
         assert link._journey_task is not None
         await link._journey_task
-        assert pauses.waits == [datahub_link.JOURNEY_SETTLE]
+        assert pauses.waits == [pytest.approx(datahub_link.JOURNEY_SETTLE, abs=5)]
         assert link.journeys[KEPT]["distance"] == 30.0
 
     async def test_a_second_trip_soon_after_the_first_is_read(
@@ -1523,3 +1572,76 @@ class TestJourneys:
         assert "endLocation.latitude" in car["journey_shape"]
         assert "distance.unit" in car["journey_shape"]
         assert "87" not in repr(car) and "51.6000" not in repr(car)
+
+    async def test_a_fix_during_the_wait_keeps_its_own_five_minutes(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        # Two cars. The second's fix arrives four minutes into the first's
+        # wait; read with the first, it would have had one minute, not five.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        hub.datahub.tokens.vehicles = [KEPT, SOLD]
+        time_of = clock(link)
+        read: list[tuple[float, set[str]]] = []
+        reading = link._async_read_journeys
+
+        async def recorded(vins: set[str] | None = None) -> None:
+            read.append((time_of.now, set(vins or ())))
+            await reading(vins)
+
+        link._async_read_journeys = recorded
+        hub.datahub.journeys_result = journeys(SHORT)
+        other = f"account/acct-1/vehicles/{SOLD}/position"
+        time_of.at(
+            1240.0,
+            lambda: link._on_message(
+                other, json.dumps(fix("2026-11-08T18:34:34Z")).encode()
+            ),
+        )
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert read == [(1300.0, {KEPT}), (1540.0, {SOLD})]
+
+    async def test_a_journey_not_filed_yet_is_asked_for_once_more(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        # The read five minutes after the fix beat JLR to filing the drive.
+        # Half an hour later it is there; no third read either way.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        time_of = clock(link)
+        drive = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = [
+            journeys(SHORT),
+            journeys(SHORT),
+            journeys(SHORT, drive),
+        ]
+        await link._async_read_journeys()
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert time_of.waits == [
+            datahub_link.JOURNEY_SETTLE,
+            datahub_link.JOURNEY_UNFILED_RETRY,
+        ]
+        assert link.journeys[KEPT]["distance"] == 30.0
+        assert hub.datahub.calls.count("journeys 0") == 3
+
+    async def test_a_journey_never_filed_is_left_to_the_timer(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        clock(link)
+        hub.datahub.journeys_result = journeys(SHORT)
+        await link._async_read_journeys()
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        # The first read, the one after the fix, and one more: then the timer.
+        assert hub.datahub.calls.count("journeys 0") == 3
+        assert not link._journeys_after_fix

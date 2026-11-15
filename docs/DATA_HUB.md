@@ -101,7 +101,9 @@ client at data.jlr.com.
 - **Journeys**: for the **Last journey** sensors. Read when the link starts, five minutes after the
   stream sends the position that ends a journey, and every six hours in case the stream missed
   one. The stream resends its last position each time it reconnects, with the same time on it, so
-  that is recognised and not read again; the first one heard after a restart costs one read. JLR
+  that is recognised and not read again; the first one heard after a restart costs one read. If
+  the read after a journey finds nothing newer, JLR have most likely not filed it yet, and it is
+  asked for once more half an hour later rather than left to the six-hour read. JLR
   list journeys oldest first, twenty to a page, so this is one request, or two once a car
   has more than twenty. A car JLR refuse journeys for gains no journey sensors and is asked again
   once a day. Each journey JLR send includes where it started and ended; the integration does not
