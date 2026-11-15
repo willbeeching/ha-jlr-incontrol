@@ -347,7 +347,22 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 await self._snapshots_ready.wait()
         except TimeoutError as err:
             if not self._status:
+                waiting = dict(self.datahub.ev_waiting)
                 await self.datahub.async_stop()
+                if waiting:
+                    # Said here, not by the link: each retry starts a new link,
+                    # so a link's own count of failures never reaches its
+                    # warning on an account whose only car is held back.
+                    raise ConfigEntryNotReady(
+                        translation_domain=DOMAIN,
+                        translation_key="datahub_ev_waiting",
+                        translation_placeholders={
+                            "cars": ", ".join(
+                                sorted(vehicle_label(v) for v in waiting)
+                            ),
+                            "error": "; ".join(sorted(set(waiting.values()))),
+                        },
+                    ) from err
                 raise ConfigEntryNotReady(
                     translation_domain=DOMAIN,
                     translation_key="no_telemetry",
@@ -471,7 +486,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             assert self.datahub is not None
             # The Data Hub answers a status request directly; there is no
             # subscription to cycle.
-            ok = await self.datahub.async_read_now()
+            ok = await self.datahub.async_read_now(vin)
             return Resubscription.DONE if ok else Resubscription.FAILED
         arrived = self._snapshot_event(vin)
         # Under the lock, and only the lifecycle: the wait below does not

@@ -239,6 +239,35 @@ class TestTheOldApiIsLeftAlone:
         await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         assert entry.state is ConfigEntryState.SETUP_RETRY
+        assert "telemetry" in str(entry.reason)
+
+    async def test_setup_held_back_by_ev_says_so(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The only car's EV endpoint keeps failing, so its status is held back
+        # and setup gives up. Each retry starts a new link, whose own count of
+        # failures never reaches its warning, so setup has to be the one that
+        # says why, and not blame the telemetry connection.
+        monkeypatch.setattr(f"{Resubscription.__module__}.FIRST_SNAPSHOT_TIMEOUT", 0.05)
+        link_entry(entry, hass)
+        build = datahub_link.DataHubClient
+
+        def failing(*args: Any) -> Any:
+            fake = build(*args)
+            fake.ev_result = DataHubError("GET ev answered 500")
+            return fake
+
+        monkeypatch.setattr(datahub_link, "DataHubClient", failing)
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert entry.state is ConfigEntryState.SETUP_RETRY
+        assert "battery and charging" in str(entry.reason)
+        assert "GET ev answered 500" in str(entry.reason)
+        assert KEPT not in str(entry.reason)
 
 
 class Steps:

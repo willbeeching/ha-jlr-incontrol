@@ -19,7 +19,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, Doubles, FakeDataHub  # noqa: E402
+from doubles import KEPT, SOLD, Doubles, FakeDataHub  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from homeassistant.helpers import issue_registry as ir  # noqa: E402
@@ -711,6 +711,22 @@ class TestRefresh:
         hub.datahub.status_result = DataHubForbidden("status")
         assert await link.async_read_now() is False
 
+    async def test_a_press_is_for_its_own_car(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Two cars, one refused status. The other answering is not a refresh
+        # of the refused one, though it is of itself.
+        link = DataHubLink(hass, linked)
+        # The cars come from what the token covers.
+        hub.datahub.tokens.vehicles = [KEPT, SOLD]
+        answer = hub.datahub.status_result
+        hub.datahub.status_result = [DataHubForbidden("status"), answer]
+        assert await link.async_read_now(KEPT) is False
+        hub.datahub.status_result = [DataHubForbidden("status"), answer]
+        assert await link.async_read_now(SOLD) is True
+        hub.datahub.status_result = [DataHubForbidden("status"), answer]
+        assert await link.async_read_now() is True
+
     async def test_a_status_held_back_by_ev_is_not_a_successful_refresh(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
@@ -1298,6 +1314,25 @@ class TestJourneys:
         await link._journey_task
         assert pauses.waits == [datahub_link.JOURNEY_SETTLE]
         assert link.journeys[KEPT]["distance"] == 30.0
+
+    async def test_a_second_trip_soon_after_the_first_is_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # A short stop, then another short drive: its fix is minutes after the
+        # held journey ended, not the 34 seconds a redelivered fix is.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        link._pause = Pauses()
+        first = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = journeys(first)
+        await link._async_read_journeys()
+        second = journey("2026-11-08T18:33:00Z", "2026-11-08T18:38:00Z", 3.0)
+        hub.datahub.journeys_result = journeys(first, second)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:38:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert link.journeys[KEPT]["distance"] == 3.0
 
     async def test_a_fix_redelivered_on_reconnect_reads_nothing(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles

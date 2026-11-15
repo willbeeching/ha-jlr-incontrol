@@ -695,6 +695,9 @@
     },
     "auth_failed": {
       "message": "Jaguar Land Rover refused the stored sign-in ({error}). You will need to sign in again, with a fresh verification code."
+    },
+    "datahub_ev_waiting": {
+      "message": "Jaguar Land Rover answered the Data Hub status read, but its battery and charging data failed for {cars} ({error}). The car's status is held back until that answers, so a first reading without battery data cannot remove its battery sensors and their history. Home Assistant will keep retrying."
     }
   },
   "issues": {
