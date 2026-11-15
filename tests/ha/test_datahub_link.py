@@ -1212,6 +1212,10 @@ class Clock:
             if self.now < when <= end:
                 self.now = when
                 step()
+                # Room for the link to cut this wait short, leaving the
+                # clock where the step happened, as a real wait would.
+                for _ in range(5):
+                    await asyncio.sleep(0)
         self.now = end
 
 
@@ -1644,4 +1648,58 @@ class TestJourneys:
         await link._journey_task
         # The first read, the one after the fix, and one more: then the timer.
         assert hub.datahub.calls.count("journeys 0") == 3
+        assert not link._journeys_after_fix
+
+    async def test_a_fix_during_the_retry_wait_is_read_five_minutes_after_it(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        # The read after the first fix found nothing new, so the car waits
+        # half an hour for a retry. A new journey ends a minute into that:
+        # it is read five minutes after its own fix, not after the retry.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        time_of = clock(link)
+        read: list[float] = []
+        reading = link._async_read_journeys
+
+        async def recorded(vins: set[str] | None = None) -> None:
+            read.append(time_of.now)
+            await reading(vins)
+
+        drive = journey("2026-11-08T19:00:00Z", "2026-11-08T19:05:00Z", 4.0)
+        # Before the fix; after it, with nothing new; after the second fix.
+        hub.datahub.journeys_result = [
+            journeys(SHORT),
+            journeys(SHORT),
+            journeys(SHORT, drive),
+        ]
+        await link._async_read_journeys()
+        link._async_read_journeys = recorded
+        time_of.at(
+            1360.0,
+            lambda: link._on_message(
+                POSITION_TOPIC, json.dumps(fix("2026-11-08T19:05:34Z")).encode()
+            ),
+        )
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert read == [1300.0, 1660.0]
+        assert link.journeys[KEPT]["distance"] == 4.0
+
+    async def test_a_refusal_after_a_fix_is_not_retried(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        # Refused journeys are asked about daily. A retry naming the car
+        # would have gone round that half an hour later.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        clock(link)
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        assert link._journey_task is not None
+        await link._journey_task
+        assert hub.datahub.calls.count("journeys 0") == 1
+        assert link.journey_access[KEPT].startswith("refused")
         assert not link._journeys_after_fix

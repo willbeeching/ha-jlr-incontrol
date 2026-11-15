@@ -512,6 +512,10 @@ class DataHubLink:
         # Cars waiting on a read after a fix: when it is due, on the monotonic
         # clock, and whether a read that finds nothing new may try once more.
         self._journeys_after_fix: dict[str, tuple[float, bool]] = {}
+        # Set by a new fix, so a wait for a later read is cut short and the
+        # earlier deadline taken: half an hour into a retry, a fresh fix was
+        # otherwise read after the retry, not five minutes after itself.
+        self._journeys_wake = asyncio.Event()
 
     # -- lifecycle --------------------------------------------------------
 
@@ -886,6 +890,7 @@ class DataHubLink:
         self._journey_fix[vin] = fix_time
         # Its own five minutes from its own fix, and a fresh retry with it.
         self._journeys_after_fix[vin] = (time.monotonic() + JOURNEY_SETTLE, True)
+        self._journeys_wake.set()
         if self._journey_task is None or self._journey_task.done():
             self._journey_task = self.entry.async_create_background_task(
                 self.hass, self._async_journeys_shortly(), f"{DOMAIN} journeys"
@@ -902,7 +907,9 @@ class DataHubLink:
         """
         while self._journeys_after_fix and not self.signed_out:
             target = min(due for due, _ in self._journeys_after_fix.values())
-            await self._pause(max(0.0, target - time.monotonic()))
+            if not await self._wait_for_journeys(target):
+                # A fix came in during the wait: work the deadlines out again.
+                continue
             # Chosen by due time, not by the clock now: a fix that arrived
             # during the wait is due later and waits its own turn.
             ready = {
@@ -927,10 +934,35 @@ class DataHubLink:
                 if found or not retry or vin in self._journeys_after_fix:
                     # Read it, or tried twice, or a newer fix has its own turn.
                     continue
+                if self.journey_access.get(vin) != "permitted":
+                    # Refused, and asked again daily: a retry naming the car
+                    # would go round that. Failed in passing, and the timer
+                    # has it.
+                    continue
                 self._journeys_after_fix[vin] = (
                     time.monotonic() + JOURNEY_UNFILED_RETRY,
                     False,
                 )
+
+    async def _wait_for_journeys(self, target: float) -> bool:
+        """Wait until ``target``. False if a new fix cut the wait short."""
+        self._journeys_wake.clear()
+        sleeper = asyncio.ensure_future(
+            self._pause(max(0.0, target - time.monotonic()))
+        )
+        waker = asyncio.ensure_future(self._journeys_wake.wait())
+        try:
+            await asyncio.wait({sleeper, waker}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in (sleeper, waker):
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+        if sleeper.cancelled():
+            return False
+        sleeper.result()  # a failure in the wait is the caller's to see
+        return True
 
     def _emit(self, vin: str) -> None:
         """Hand the car's current signals on, in the socket's shape.
