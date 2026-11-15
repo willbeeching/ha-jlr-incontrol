@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import time
 from typing import Any
 
@@ -553,6 +554,22 @@ class TestWhatItReads:
         await link._async_read_status()
         assert KEPT not in link.reports
 
+    async def test_a_persistent_ev_failure_is_warned_about_once(
+        self,
+        hass: HomeAssistant,
+        linked: MockConfigEntry,
+        hub: Doubles,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.ev_result = DataHubError("500")
+        with caplog.at_level(
+            logging.WARNING, logger="custom_components.jlr_incontrol.datahub_link"
+        ):
+            for _ in range(datahub_link.EV_FAILURES_BEFORE_WARNING + 1):
+                await link._async_read_status()
+        assert caplog.text.count("held back") == 1
+
     async def test_the_snapshot_does_not_overwrite_a_newer_streamed_value(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
@@ -633,6 +650,49 @@ class TestWhatItReads:
         )
         assert link.signals[KEPT]["Vehicle.A"]["time"] is None
         assert link.reports == {}
+
+
+class TestRefresh:
+    """The button's on-demand read: what it touches, and what counts as done."""
+
+    async def test_a_press_reads_location_as_well_as_status(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        assert await link.async_read_now() is True
+        assert hub.datahub.calls.count("status") == 1
+        assert hub.datahub.calls.count("location") == 1
+        assert link.location[KEPT].startswith("refused")
+
+    async def test_a_press_leaves_journeys_to_their_own_clock(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        assert await link.async_read_now() is True
+        assert "journeys 0" not in hub.datahub.calls
+
+    async def test_a_location_failure_does_not_fail_the_press(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.location_result = DataHubError("500")
+        assert await link.async_read_now() is True
+        assert KEPT in link._read_in_full
+
+    async def test_a_refused_status_is_not_a_successful_refresh(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.status_result = DataHubForbidden("status")
+        assert await link.async_read_now() is False
+
+    async def test_a_status_held_back_by_ev_is_not_a_successful_refresh(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.ev_result = DataHubError("500")
+        assert await link.async_read_now() is False
+        assert KEPT not in link._read_in_full
 
 
 class TestWhatTheStreamProves:

@@ -133,6 +133,12 @@ LOCATION_INTERVAL = 60 * 60.0
 # car that is refused is asked again daily rather than every read, since what
 # it is refused for is its hardware, not anything an owner can change.
 EV_REFUSED_RETRY = 24 * 60 * 60.0
+# A car whose EV endpoint has never answered has its status held back until
+# one does, so a first status without battery data cannot delete a plug-in's
+# battery entities. That is right for a failure in passing and silent for a
+# permanent one, so warn once after this many consecutive failures. The count
+# resets on any answer, permitted or refused.
+EV_FAILURES_BEFORE_WARNING = 3
 # Journeys. The stream sends a fix only when a journey ends (about 34 seconds
 # after, measured November 2026), so a new fix is the cue to read the journey
 # it ended, a few minutes later so JLR have it filed. Five was enough on a Range
@@ -482,6 +488,9 @@ class DataHubLink:
         self.ev: dict[str, str] = {}
         self._status_refused: set[str] = set()
         self._ev_due: dict[str, float] = {}
+        # Consecutive transient failures per car, so a permanent one is said
+        # out loud once instead of holding the car back in silence.
+        self._ev_failures: dict[str, int] = {}
         # Cars with a full REST snapshot behind their signals. Until a car has
         # one, what the stream has sent is a few signals, not its status.
         self._read_in_full: set[str] = set()
@@ -700,16 +709,37 @@ class DataHubLink:
             )
 
     async def async_read_now(self) -> bool:
-        """One status read on demand, for the Refresh button. True if it worked."""
+        """One status and location read on demand, for the Refresh button.
+
+        True only if a car's status was adopted. Every car refusing status, or
+        a status held back until its EV endpoint answers, is not a refresh, and
+        the button turns False into an error rather than silence.
+
+        Location is read here as well, because the timer reads it with every
+        status: without it a press moves the status and leaves the pin where it
+        was until the next tick. Journeys keep their own clock, so a press does
+        not add two requests a car for a reading that is already taken after
+        every end-of-journey fix.
+        """
         try:
-            await self._async_read_status()
+            adopted = await self._async_read_status()
         except DataHubAuthError as err:
             self._signed_out(err)
             return False
         except DataHubError as err:
             _LOGGER.debug("Data Hub status read on demand failed: %s", err)
             return False
-        return True
+        try:
+            await self._async_probe_location()
+        except DataHubAuthError as err:
+            self._signed_out(err)
+            return False
+        except DataHubError as err:
+            # Status is the half a press is for; a location JLR refuse is
+            # already a repair, so a passing failure is worth a line, not a
+            # press that reports failure after doing its job.
+            _LOGGER.debug("Data Hub location read on demand failed: %s", err)
+        return adopted
 
     async def async_vehicle_details(self, vin: str) -> dict[str, Any]:
         """One car's details, as attributes. Raises DataHubError."""
@@ -863,9 +893,16 @@ class DataHubLink:
             vin, to_status(values, reported.isoformat() if reported else None)
         )
 
-    async def _async_read_status(self) -> None:
+    async def _async_read_status(self) -> bool:
+        """Read every car's status. True if one was adopted, not just answered.
+
+        ``answered`` is what the health timestamp means: JLR answered. A car
+        whose EV read held its status back answered without being adopted, and
+        the Refresh button must not call that a success.
+        """
         token = await self._async_access_token()
         answered = False
+        adopted = False
         for vin in self.vehicles:
             try:
                 body = await self.client.async_status(vin, token)
@@ -879,6 +916,7 @@ class DataHubLink:
             if not await self._async_read_ev(vin, token):
                 continue
             self._read_in_full.add(vin)
+            adopted = True
             _LOGGER.debug(
                 "Data Hub status for %s: reported %s, %d signals",
                 vehicle_label(vin),
@@ -895,6 +933,7 @@ class DataHubLink:
         )
         self._check_certificate()
         self._notify()
+        return adopted
 
     def _set_issue(self, issue: str, active: bool, **placeholders: str) -> None:
         """Raise or clear one of this link's repairs."""
@@ -987,16 +1026,30 @@ class DataHubLink:
             answer = f"refused: {err}"
             self._ev_due[vin] = now + EV_REFUSED_RETRY
         except DataHubError as err:
-            _LOGGER.debug(
-                "Data Hub EV data for %s failed, trying again next read: %s",
-                vehicle_label(vin),
-                err,
-            )
+            failures = self._ev_failures.get(vin, 0) + 1
+            self._ev_failures[vin] = failures
+            if failures == EV_FAILURES_BEFORE_WARNING and vin not in self.ev:
+                _LOGGER.warning(
+                    "Data Hub EV data for %s has failed %d times (%s). Its status "
+                    "is held back until that endpoint answers, because a first "
+                    "status without battery data would delete the car's battery "
+                    "entities and their history",
+                    vehicle_label(vin),
+                    failures,
+                    err,
+                )
+            else:
+                _LOGGER.debug(
+                    "Data Hub EV data for %s failed, trying again next read: %s",
+                    vehicle_label(vin),
+                    err,
+                )
             return vin in self.ev
         else:
             self._merge(vin, body)
             answer = "permitted"
             self._ev_due[vin] = 0.0
+        self._ev_failures.pop(vin, None)
         if answer != self.ev.get(vin):
             _LOGGER.debug("Data Hub EV data for %s: %s", vehicle_label(vin), answer)
         self.ev[vin] = answer
