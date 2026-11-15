@@ -3,10 +3,12 @@
 Optional. When it is set up and covers every car on the account, it is where
 vehicle status comes from, in place of the telemetry socket: the coordinator
 hands it a callback and it delivers socket-shaped status (see vss.py), so the
-entities neither know nor care which one is talking. Location still comes from
-the owner portal; the link asks JLR for it hourly in case that changes.
+entities neither know nor care which one is talking. Location comes from the
+Data Hub for each car declared at data.jlr.com, read with every status update;
+a car JLR refuse is asked hourly, and an owner-portal session, where one is
+signed in, feeds the same newest-wins handling.
 
-Two sources, both JLR's documented API:
+The sources, all of them JLR's documented API:
 
 - REST status, read when the link starts and then on a timer: every fifteen
   minutes until the stream has shown it delivers, hourly after that.
