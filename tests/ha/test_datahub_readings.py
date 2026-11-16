@@ -274,6 +274,11 @@ async def car(
             if ev_answer is not None:
                 self.ev_result = ev_answer
 
+    # The real link, reading the fake JLR client.
+    monkeypatch.setattr(
+        "custom_components.jlr_incontrol.coordinator.DataHubLink",
+        datahub_link.DataHubLink,
+    )
     monkeypatch.setattr(datahub_link, "DataHubClient", doubles.builder("datahub", Hub))
 
     async def parked(**kwargs: Any) -> str:

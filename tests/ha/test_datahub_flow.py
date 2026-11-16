@@ -83,6 +83,26 @@ def hub(monkeypatch: pytest.MonkeyPatch, doubles: Doubles) -> Doubles:
     return doubles
 
 
+@pytest.fixture
+def entry(hass: HomeAssistant) -> MockConfigEntry:
+    """An entry from the InControl sign-in, waiting for the Data Hub.
+
+    Since 3.0.0 the only entry that links from Configure: one set up on the
+    Data Hub has its link from the start, and offers linking again only when
+    it stops working.
+    """
+    created = MockConfigEntry(
+        domain="jlr_incontrol",
+        title="someone@example.com",
+        data={"username": "someone@example.com"},
+        unique_id="user-01H8XK4Q2N",
+        version=1,
+        minor_version=2,
+    )
+    created.add_to_hass(hass)
+    return created
+
+
 async def open_datahub(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
     result = await hass.config_entries.options.async_init(entry.entry_id)
     return await hass.config_entries.options.async_configure(
@@ -243,43 +263,10 @@ class TestLinking:
         assert result["reason"] == "datahub_expired"
 
 
-class TestUnlinking:
-    async def test_it_is_offered_only_once_linked_and_forgets_everything(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
-    ) -> None:
-        result = await finish(hass, await submit(hass, await open_datahub(hass, entry)))
-        await hass.async_block_till_done()
-        assert "datahub" in entry.data
-
-        menu = await hass.config_entries.options.async_init(entry.entry_id)
-        # Linking again is not offered over a link that works: it would only
-        # replace a good key.
-        assert menu["menu_options"] == [
-            "settings",
-            "datahub_remove",
-            "incontrol_remove",
-        ]
-        result = await hass.config_entries.options.async_configure(
-            menu["flow_id"], {"next_step_id": "datahub_remove"}
-        )
-        assert result["type"] is FlowResultType.FORM
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], {}
-        )
-        await hass.async_block_till_done()
-        assert result["type"] is FlowResultType.CREATE_ENTRY
-        assert "datahub" not in entry.data
-        assert entry.data["refresh_token"] == "a-refresh-token"
-        assert entry.runtime_data.datahub is None
-
-
 async def open_setup(hass: HomeAssistant) -> dict[str, Any]:
-    """Open "Add integration" and choose the Data Hub."""
-    menu = await hass.config_entries.flow.async_init(
+    """Open "Add integration": straight to the Data Hub since 3.0.0."""
+    return await hass.config_entries.flow.async_init(
         "jlr_incontrol", context={"source": "user"}
-    )
-    return await hass.config_entries.flow.async_configure(
-        menu["flow_id"], {"next_step_id": "datahub"}
     )
 
 
@@ -312,13 +299,11 @@ class TestSettingUpOnTheDataHub:
         # car details the coordinator caches are kept on the entry too.)
         assert not {"username", "password", "refresh_token"} & set(entry.data)
         assert entry.data["datahub"]["refresh_token"] == "offline-2"
-        # And it runs, on the Data Hub alone.
-        assert entry.runtime_data.status_source == "datahub"
-        assert hub.client.calls == []
-        # Nothing to unlink back to, so unlinking is not offered; signing in
-        # to InControl for location is.
+        # And it runs.
+        assert entry.runtime_data.datahub is not None
+        # A working link: nothing to link again.
         menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert menu["menu_options"] == ["settings", "location"]
+        assert menu["menu_options"] == ["settings"]
         await hass.config_entries.options.async_configure(
             menu["flow_id"], {"next_step_id": "settings"}
         )
@@ -367,115 +352,6 @@ class TestSettingUpOnTheDataHub:
         )
         assert result["type"] is FlowResultType.FORM
         assert result["errors"] == {"base": "datahub_rejected"}
-
-
-async def remove_incontrol(
-    hass: HomeAssistant, entry: MockConfigEntry
-) -> dict[str, Any]:
-    menu = await hass.config_entries.options.async_init(entry.entry_id)
-    assert "incontrol_remove" in menu["menu_options"]
-    return await hass.config_entries.options.async_configure(
-        menu["flow_id"], {"next_step_id": "incontrol_remove"}
-    )
-
-
-class TestRemovingTheInControlSignIn:
-    """The way off the reverse-engineered connection, for an owner on the Data Hub."""
-
-    async def test_it_is_not_offered_without_the_data_hub(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
-    ) -> None:
-        # With nothing else linked, removing it would leave the entry reading
-        # nothing at all.
-        menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert "incontrol_remove" not in menu["menu_options"]
-
-    async def test_it_forgets_the_sign_in_and_keeps_the_cars(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
-    ) -> None:
-        from homeassistant.helpers import issue_registry as ir
-
-        await finish(hass, await submit(hass, await open_datahub(hass, entry)))
-        await hass.async_block_till_done()
-        before = set(hass.states.async_entity_ids())
-        ir.async_create_issue(
-            hass,
-            "jlr_incontrol",
-            f"portal_signed_out_{entry.entry_id}",
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key="portal_signed_out",
-        )
-
-        form = await remove_incontrol(hass, entry)
-        assert form["type"] is FlowResultType.FORM
-        result = await hass.config_entries.options.async_configure(form["flow_id"], {})
-        await hass.async_block_till_done()
-
-        assert result["type"] is FlowResultType.CREATE_ENTRY
-        for key in (
-            "username",
-            "password",
-            "device_id",
-            "user_id",
-            "refresh_token",
-            "sso_cookies",
-            "portal_cookies",
-            "portal_base",
-        ):
-            assert key not in entry.data, key
-        assert "datahub" in entry.data
-        coordinator = entry.runtime_data
-        assert not coordinator.has_incontrol
-        assert coordinator.status_source == "datahub"
-        # Every entity and its history stays: same entry, same unique ids.
-        assert before <= set(hass.states.async_entity_ids())
-        assert (
-            ir.async_get(hass).async_get_issue(
-                "jlr_incontrol", f"portal_signed_out_{entry.entry_id}"
-            )
-            is None
-        )
-        # Nothing left asks for the InControl password just removed: the
-        # portal it would sign in to is not wanted on the Data Hub alone.
-        reauth = [
-            f
-            for f in hass.config_entries.flow.async_progress()
-            if f["context"].get("source") == "reauth"
-        ]
-        assert reauth == []
-        # One already standing, from a version without this, is withdrawn at
-        # the next refresh.
-        entry.async_start_reauth(hass)
-        await hass.async_block_till_done()
-        await entry.runtime_data.async_refresh()
-        await hass.async_block_till_done()
-        assert not [
-            f
-            for f in hass.config_entries.flow.async_progress()
-            if f["context"].get("source") == "reauth"
-        ]
-        # Now on the Data Hub alone, a location sign-in can be added back.
-        menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert "location" in menu["menu_options"]
-        assert "incontrol_remove" not in menu["menu_options"]
-
-    async def test_it_is_refused_while_the_link_is_not_working(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, hub: Doubles
-    ) -> None:
-        await finish(hass, await submit(hass, await open_datahub(hass, entry)))
-        await hass.async_block_till_done()
-        entry.runtime_data.datahub.signed_out = True
-        # Not offered over a link that is not working; linking again is.
-        menu = await hass.config_entries.options.async_init(entry.entry_id)
-        assert "incontrol_remove" not in menu["menu_options"]
-        assert "datahub_relink" in menu["menu_options"]
-        # And refused if reached anyway.
-        flow = hass.config_entries.options._progress[menu["flow_id"]]
-        result = await flow.async_step_incontrol_remove()
-        assert result["type"] is FlowResultType.ABORT
-        assert result["reason"] == "datahub_not_working"
-        assert entry.data["refresh_token"] == "a-refresh-token"
 
 
 class TestLinkingAgain:

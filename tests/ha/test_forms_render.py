@@ -42,22 +42,11 @@ except ImportError:  # the cores before it
 
 @pytest.mark.parametrize(
     "schema",
-    ["STEP_USER_SCHEMA", "STEP_REAUTH_SCHEMA", "STEP_CODE_SCHEMA", "OPTIONS_SCHEMA"],
+    ["STEP_DATAHUB_SCHEMA", "OPTIONS_SCHEMA"],
 )
 def test_each_schema_converts(schema: str) -> None:
     fields = render(getattr(config_flow, schema))
     assert fields, f"{schema} rendered as an empty form"
-
-
-async def test_the_sign_in_form_as_the_frontend_gets_it(hass: HomeAssistant) -> None:
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": "user"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "incontrol"}
-    )
-    names = {field["name"] for field in render(result["data_schema"])}
-    assert names == {"username", "password"}
 
 
 async def test_the_data_hub_setup_form_as_the_frontend_gets_it(
@@ -65,9 +54,6 @@ async def test_the_data_hub_setup_form_as_the_frontend_gets_it(
 ) -> None:
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": "user"}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "datahub"}
     )
     names = {field["name"] for field in render(result["data_schema"])}
     assert names == {"client_id"}

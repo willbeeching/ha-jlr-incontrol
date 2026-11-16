@@ -21,7 +21,6 @@ pytest.importorskip("pytest_homeassistant_custom_component")
 
 from doubles import KEPT, SOLD, Doubles, FakeDataHub  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
-from homeassistant.helpers import entity_registry as er  # noqa: E402
 from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
@@ -215,7 +214,7 @@ class TestSetUp:
         assert linked.data["datahub"]["refresh_token"] == "offline-2"
         # Everything else the link needs survives the write.
         assert linked.data["datahub"]["private_key"] == SETTINGS["private_key"]
-        assert linked.data["refresh_token"] == "a-refresh-token"
+        assert linked.data["datahub"]["client_id"] == SETTINGS["client_id"]
         assert await hass.config_entries.async_unload(linked.entry_id)
 
     async def test_unloading_stops_the_stream(

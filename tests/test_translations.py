@@ -145,11 +145,13 @@ class TestExceptionsAreWorded:
         worded = set(load("strings.json").get("exceptions", {}))
         # Entity translation keys live elsewhere; only the raised ones matter.
         raised = self.raised_keys() & (
-            worded | {"refresh_failed", "no_telemetry", "auth_failed"}
+            worded | {"refresh_failed", "no_status", "datahub_ev_waiting"}
         )
         assert raised <= worded, f"no wording for {sorted(raised - worded)}"
 
-    @pytest.mark.parametrize("key", ["refresh_failed", "no_telemetry", "auth_failed"])
+    @pytest.mark.parametrize(
+        "key", ["refresh_failed", "no_status", "datahub_ev_waiting"]
+    )
     def test_the_three_actionable_failures_are_worded(self, key: str) -> None:
         assert load("strings.json")["exceptions"][key]["message"]
 

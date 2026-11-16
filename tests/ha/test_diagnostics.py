@@ -54,11 +54,11 @@ class TestNothingIdentifyingGetsOut:
     async def test_the_vin_is_not_a_key_either(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        # The first leak was in key position: last_push was keyed by VIN, so
-        # the redaction applied to everything under it never saw them.
+        # The first leak was in key position: a map keyed by VIN, so the
+        # redaction applied to everything under it never saw them.
         diagnostics = await async_get_config_entry_diagnostics(hass, entry)
         assert KEPT not in diagnostics["vehicles"]
-        assert KEPT not in diagnostics["telemetry"]["last_push"]
+        assert KEPT not in json.dumps(diagnostics)
 
     async def test_one_car_is_still_followable_through_the_dump(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
@@ -68,7 +68,6 @@ class TestNothingIdentifyingGetsOut:
         diagnostics = await async_get_config_entry_diagnostics(hass, entry)
         (label,) = diagnostics["vehicles"]
         assert label.startswith("vehicle_")
-        assert label in diagnostics["telemetry"]["last_push"]
 
 
 class TestItIsStillWorthDownloading:
@@ -76,11 +75,14 @@ class TestItIsStillWorthDownloading:
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
         # Without this a dump of empty vehicles looks the same whether the
-        # socket is down or the car is.
-        telemetry = (await async_get_config_entry_diagnostics(hass, entry))["telemetry"]
-        assert telemetry["connected"] is True
-        assert telemetry["trusted"] is True
-        assert telemetry["vehicles_subscribed"] == 1
+        # link is down, the car is, or the entry is waiting to be linked.
+        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+        assert diagnostics["source"] == {
+            "waiting_for_datahub": False,
+            "trusted": True,
+            "vehicles": 1,
+        }
+        assert diagnostics["datahub"] == {"connected": True, "healthy": True}
 
     async def test_the_status_that_is_not_identifying_survives(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
@@ -89,16 +91,3 @@ class TestItIsStillWorthDownloading:
         (vehicle,) = diagnostics["vehicles"].values()
         assert vehicle["status"]["ODOMETER"] == "123456"
         assert vehicle["attributes"]["vehicleBrand"] == "Jaguar"
-
-    async def test_it_shows_the_trails_shape_and_not_its_route(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
-    ) -> None:
-        # Enough to tell one journey from several (#36), and nothing of where
-        # any of them went.
-        diagnostics = await async_get_config_entry_diagnostics(hass, entry)
-        (vehicle,) = diagnostics["vehicles"].values()
-        assert vehicle["trail"]["points"] == 3
-        assert vehicle["trail"]["span"] == "0:30:00"
-        text = json.dumps(diagnostics)
-        assert "51.5074" not in text
-        assert "-0.1278" not in text

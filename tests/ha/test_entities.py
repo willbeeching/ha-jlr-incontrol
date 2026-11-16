@@ -1,15 +1,13 @@
 """Entities appear when their vehicle does, and go unavailable honestly.
 
 Two bugs live here. Platforms used to run exactly once at setup, so a car
-added to the account afterwards was subscribed to telemetry and its data
-arrived for entities that had never been created. And availability used to be
-one flag for everything, so a dead socket hid a location the owner portal had
-fetched successfully minutes earlier.
+added to the account afterwards had its data arrive for entities that had
+never been created. And availability used to be one flag for everything, so a
+failing status read hid a location fetched successfully minutes earlier.
 """
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -26,9 +24,6 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
 
 from custom_components.jlr_incontrol import (  # noqa: E402
     async_remove_config_entry_device,
-)
-from custom_components.jlr_incontrol.const import (  # noqa: E402
-    TELEMETRY_GRACE,
 )
 
 
@@ -54,7 +49,9 @@ class TestVehiclesArrivingLater:
     ) -> None:
         before = entity_ids(hass, entry, "sensor")
 
-        loaded.client.vehicles.append({"vin": SOLD, "role": "Owner"})
+        # Added to the client at data.jlr.com: the link's next renewal lists
+        # it, and no reload follows.
+        loaded.link.vehicles.append(SOLD)
         await entry.runtime_data.async_refresh()
         loaded.link.push(SOLD)
         await hass.async_block_till_done()
@@ -63,52 +60,41 @@ class TestVehiclesArrivingLater:
         assert len(after) > len(before), "the new car created no entities"
         assert device_for(hass, entry, SOLD)
 
-    async def test_it_takes_no_reload_to_see_them(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
-    ) -> None:
-        loaded.client.vehicles.append({"vin": SOLD, "role": "Owner"})
-        await entry.runtime_data.async_refresh()
-        loaded.link.push(SOLD)
-        await hass.async_block_till_done()
-
-        assert loaded.telemetry.vins == sorted([KEPT, SOLD])
-
 
 class TestAvailability:
-    async def test_a_momentary_drop_does_not_flap_everything(
+    async def test_a_stream_that_drops_leaves_the_readings_alone(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        # The STOMP session is bound to a short-lived token, so it reconnects
-        # every few minutes as a matter of course. Marking the house
-        # unavailable each time would be noise, not honesty.
-        loaded.link.drop()
+        # The broker ends every session at an hour and the stream reconnects.
+        # While status reads are recent the readings stand.
+        loaded.link.connected = False
+        entry.runtime_data.async_update_listeners()
         await hass.async_block_till_done()
 
         for entity_id in entity_ids(hass, entry, "sensor"):
             assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
 
-    async def test_a_drop_that_outlasts_the_grace_makes_status_unavailable(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, freezer
+    async def test_a_link_that_stops_vouching_makes_status_unavailable(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        # The housekeeping poll keeps succeeding long after the socket dies,
-        # so the coordinator's own success flag says nothing useful here.
+        # The housekeeping keeps succeeding while status reads fail, so the
+        # coordinator's own success flag says nothing useful here.
         loaded.link.drop()
-        freezer.tick(TELEMETRY_GRACE + timedelta(minutes=1))
-        # Something has to make the entities look again; nothing is scheduled
-        # to re-evaluate availability on its own.
         entry.runtime_data.async_update_listeners()
         await hass.async_block_till_done()
 
         for entity_id in entity_ids(hass, entry, "sensor"):
-            assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+            if entity_id.endswith("_last_report_data_hub"):
+                # About the link, not a reading: it says when the car last
+                # reported, which is exactly what someone wants to see now.
+                continue
+            assert hass.states.get(entity_id).state == STATE_UNAVAILABLE, entity_id
 
-    async def test_a_dead_socket_does_not_hide_the_location(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles, freezer
+    async def test_but_not_the_location(
+        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        # Location comes from the owner portal, which is still working. Its
-        # honesty signal is the age of the fix, reported separately.
+        # Its honesty signal is the age of the fix, reported separately.
         loaded.link.drop()
-        freezer.tick(TELEMETRY_GRACE + timedelta(minutes=1))
         entry.runtime_data.async_update_listeners()
         await hass.async_block_till_done()
 
@@ -117,7 +103,7 @@ class TestAvailability:
         for entity_id in trackers:
             assert hass.states.get(entity_id).state != STATE_UNAVAILABLE
 
-    async def test_a_live_socket_leaves_everything_available(
+    async def test_a_healthy_link_leaves_everything_available(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
         for entity_id in entity_ids(hass, entry, "sensor"):
@@ -135,19 +121,18 @@ class TestDeletingASoldVehicle:
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
         device = device_for(hass, entry, KEPT)
-        loaded.client.vehicles.clear()
+        loaded.link.vehicles.clear()
         await entry.runtime_data.async_refresh()
         await hass.async_block_till_done()
 
         assert await async_remove_config_entry_device(hass, entry, device)
 
-    async def test_a_failed_listing_is_not_evidence_a_car_is_gone(
+    async def test_a_link_jlr_refuse_is_not_evidence_a_car_is_gone(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        from custom_components.jlr_incontrol.api import JlrApiError
-
         device = device_for(hass, entry, KEPT)
-        loaded.client.connect_error = JlrApiError("Jaguar Land Rover returned 503")
+        loaded.link.signed_out = True
+        loaded.link.vehicles.clear()
         await entry.runtime_data.async_refresh()
         await hass.async_block_till_done()
 
@@ -189,7 +174,7 @@ class TestTheTrackerWithholdsWhatItCannotVouchFor:
         assert made.longitude == -0.1
 
     def test_a_coordinate_that_is_not_a_number_is_not_reported(self) -> None:
-        # A portal that answers with something unexpected must not put the
+        # A location that answers with something unexpected must not put the
         # car at zero degrees north.
         made = self.tracker(
             position={"latitude": "somewhere", "longitude": None},

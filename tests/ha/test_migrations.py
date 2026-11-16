@@ -79,9 +79,9 @@ class TestEntitiesForHardwareTheCarDoesNotHave:
         doubles: Doubles,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from doubles import FakeClient
+        from doubles import FakeLink
 
-        async def attributes(self: FakeClient, vin: str) -> dict:
+        async def attributes(self: FakeLink, vin: str) -> dict:
             return {
                 "vehicleBrand": "Jaguar",
                 "fuelType": "Petrol",
@@ -89,7 +89,7 @@ class TestEntitiesForHardwareTheCarDoesNotHave:
                 "numberOfDoors": "2",
             }
 
-        monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+        monkeypatch.setattr(FakeLink, "async_vehicle_details", attributes)
         stale = plant(hass, entry, "binary_sensor", "door_rear_left")
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -189,18 +189,21 @@ class TestEntitiesTheCarStoppedReporting:
         or no signal must read as "not known yet" rather than "has none of
         them", or one bad night deletes a car's history.
         """
-        from doubles import FakeClient, FakeTelemetry
+        from doubles import FakeLink
 
-        async def vehicles(self: FakeClient) -> list[dict[str, Any]]:
-            return [{"vin": KEPT, "role": "Owner"}, {"vin": SOLD, "role": "Owner"}]
+        built = FakeLink.__init__
 
-        async def only_one_answers(self: FakeTelemetry) -> None:
+        def two_cars(self: FakeLink, *args: Any, **kwargs: Any) -> None:
+            built(self, *args, **kwargs)
+            self.vehicles = [KEPT, SOLD]
+
+        def only_one_answers(self: FakeLink) -> None:
+            self.started = True
             self.connected = True
-            self.on_connected(True)
             self.push(KEPT)
 
-        monkeypatch.setattr(FakeClient, "async_get_vehicles", vehicles)
-        monkeypatch.setattr(FakeTelemetry, "async_start", only_one_answers)
+        monkeypatch.setattr(FakeLink, "__init__", two_cars)
+        monkeypatch.setattr(FakeLink, "async_start", only_one_answers)
         # Setup genuinely waits this out, in real seconds.
         monkeypatch.setattr(
             "custom_components.jlr_incontrol.coordinator.FIRST_SNAPSHOT_TIMEOUT", 0.05
@@ -236,12 +239,12 @@ class TestTheEvJudgementIsNotEvidenceEnoughToDelete:
 
     @pytest.fixture
     def no_fuel_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from doubles import FakeClient
+        from doubles import FakeLink
 
-        async def attributes(self: FakeClient, vin: str) -> dict[str, Any]:
+        async def attributes(self: FakeLink, vin: str) -> dict[str, Any]:
             return {"vehicleBrand": "Jaguar", "nickname": "Test Car"}
 
-        monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+        monkeypatch.setattr(FakeLink, "async_vehicle_details", attributes)
 
     @pytest.mark.parametrize("key", ["ev_battery", "ev_charging_status"])
     async def test_an_ev_sensor_survives_when_the_fuel_type_is_unknown(
