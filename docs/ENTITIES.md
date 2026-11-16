@@ -11,19 +11,21 @@ judgement otherwise rests on a heuristic and deleting is not undoable.
 
 ## Where the data comes from
 
-There are three sources, on three different clocks, plus the Data Hub when it is linked. Knowing which one an entity uses tells you
-how fresh it can be and what happens when that source is down.
+Everything comes from the [JLR Data Hub](DATA_HUB.md), on a few different clocks. Knowing which
+one an entity uses tells you how fresh it can be and what happens when it fails.
 
-| Source | What it feeds | How often | If it fails |
+| What | What it feeds | How often | If it fails |
 | --- | --- | --- | --- |
-| Telemetry socket (STOMP over websocket) | every sensor and binary sensor below | pushed by the car; a full snapshot on each connection, then updates as the car reports | entities go unavailable after a 30-minute grace, because a value nobody can refresh is not a reading |
-| JLR Data Hub, when [linked](DATA_HUB.md) | replaces the telemetry socket for every sensor and binary sensor below, and the owner portal for `device_tracker` on cars declared at data.jlr.com | REST every 15 minutes (hourly once the stream delivers), location with it, plus the stream as the car reports | entities go unavailable after three hours without a good read; a revoked link falls back to the socket |
-| Owner web portal | `device_tracker`, and the vehicle's real name and registration | location every 30 minutes; names once a day | location holds its last fix and reports `trusted: false`; Home Assistant asks you to sign in again if the session has gone |
-| IF9 REST API | the vehicle list, and the account housekeeping | every 15 minutes | setup retries; nothing already on screen is lost |
+| Stream (MQTT) | every sensor and binary sensor below | as the car reports, about 16 seconds behind it | readings fall back to the status reads below; nothing goes unavailable |
+| Status (REST) | every sensor and binary sensor below | every 15 minutes, hourly once the stream has delivered | entities go unavailable after three hours without a good read or a connected stream, because a value nobody can refresh is not a reading |
+| Location (REST, and the stream's position topic) | `device_tracker` | with each status read, and about half a minute after a journey ends | the tracker holds its last fix and reports `trusted: false` once it is over three hours old |
+| Journeys (REST) | the last-journey sensors | five minutes after a journey ends, and every six hours | the sensors keep the last journey they read |
+| Vehicle details (REST) | the device's name, model and registration | once a day | the names already held are kept |
 
-The socket reconnects roughly every five minutes by design — the session is bound to an access
-token with about that lifetime — and each reconnect re-delivers a full snapshot. A reconnect is
-not an outage and does not flap entities.
+The vehicle list is the cars selected on the client you created at data.jlr.com; it is checked
+every 15 minutes, so adding or removing a car there shows up here without a restart. The stream
+reconnects about once an hour by design, when its session runs out; that is not an outage and
+does not flap entities.
 
 **Nothing here wakes the car.** Waking it took a remote command, which JLR now gate behind their
 app's device attestation. `DOOR_IS_ALL_DOORS_LOCKED` and `THEFT_ALARM_STATUS` in particular only
@@ -173,8 +175,8 @@ any of them on in the entity settings.
 | Charging (flag, off by default), charging cable connected, battery conditioning | `EV_IS_CHARGING`, `EV_IS_PLUGGED_IN`, `EV_IS_PRECONDITIONING` | EV/PHEV |
 | Data Hub stream (diagnostic) | — | cars on a linked Data Hub |
 
-**Data Hub** in the table means the reading comes only from the Data Hub: the telemetry socket had
-no key for it. The electric rows marked Data Hub are from JLR's published catalog, with the
+**Data Hub** in the table means the reading is new with the Data Hub: the InControl connection
+before 3.0 had no key for it. The electric rows marked Data Hub are from JLR's published catalog, with the
 catalog's units, and have not yet been checked against an electric car's own display; if one reads
 wrong on yours, please open an issue. The **Total range** is made only for plug-in hybrids: on a car
 with one source of energy it is that source's range again. **Climate run time** reads 30 with the climate
@@ -205,10 +207,10 @@ snapshot as central locking, so they are exactly as stale as it is — switch th
 detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
 whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
 
-With the [Data Hub linked](DATA_HUB.md), every entity above that reads a status key gets its value
-from the Data Hub instead of the telemetry socket: same entity, same key, different source.
+The entities kept the status keys the InControl connection used, so an install upgraded from 2.x
+kept its entity ids and history: the Data Hub's signal names are mapped onto those keys.
 
-The two Data Hub entities exist only once the Data Hub is linked. **Last report
+The two Data Hub entities are diagnostics about the link itself. **Last report
 (Data Hub)** is the time the car sent its latest reading, as JLR stamp it: the newest of the
 hourly status snapshot and every signal the stream delivers. **Data Hub stream** is on while the
 stream is connected; it is one connection for the account, so every linked car shows the same.
@@ -218,7 +220,7 @@ stream is connected; it is one connection for the account, so every linked car s
 | Entity | Notes |
 | --- | --- |
 | `device_tracker` — Location | Where the last completed journey ended, not a live position. Carries `timestamp` for the fix, `trusted` for whether it is recent enough to act on, and `stale` once over a day old. |
-| `button` — Refresh | Re-reads what JLR already hold: the vehicle list and location, and a fresh telemetry snapshot by resubscribing to the socket. It does not wake the car, and it does nothing more than the reconnect that happens on its own every few minutes — it just does it now. Rate-limited to one resubscription a minute, and says so rather than quietly skipping it. It reports success only once a snapshot has actually arrived, not when the connection comes up — those are a fraction of a second apart, and a broker that accepts the subscription and then sends nothing would otherwise look like one that answered. |
+| `button` — Refresh | Reads the status and location JLR already hold, now rather than at the next scheduled read. It does not wake the car. Rate-limited to one read a minute, and says so rather than quietly skipping it. It reports success only if this car's status was actually read: JLR answering for another car on the account, or refusing this one, is reported as a failure. |
 
 ## Readings from a car caught mid-use
 
@@ -254,24 +256,20 @@ withheld: the last figure is still the best answer available.
 None of this makes the data fresher. The delay is in Jaguar Land Rover's copy and nothing here
 reaches past it. It stops a guess being displayed as a fact.
 
-## Out-of-order snapshots
+## Out-of-order readings
 
-A snapshot whose odometer reads lower than the one already held is discarded.
-JLR deliver late and out of order, and a week-old snapshot has overwritten a
-current one before now. The odometer is the only ordering key these cars give
-us: they send no timestamp of their own, and the message envelope's is when the
-broker sent it rather than when the car recorded it. Equal readings are still
-adopted, which is the common case — a parked car redelivers the same snapshot
-every four minutes.
+A status reading older than the one already held, by the car's own report time, is discarded.
+The stream and the status reads overlap, and either can deliver a reading the other has already
+overtaken. Equal times are still adopted, which is the common case: a parked car's hourly read
+returns what the stream already said.
 
 ## Degraded behaviour
 
 | What is wrong | What you see |
 | --- | --- |
-| Socket down under 30 minutes | nothing; reconnects are routine and flapping every entity would be noise |
-| Socket down over 30 minutes | status entities unavailable; location and the refresh button keep working, because they do not come from the socket |
-| Portal session expired | Home Assistant prompts you to sign in again, on the integration and in **Settings → Repairs**; location stops updating and reports `trusted: false`; everything else is unaffected |
-| Portal slow or erroring | retried; nothing is reported to you unless it keeps failing |
-| Refresh token spent | Home Assistant asks you to sign in again, with a fresh emailed code |
-| JLR outage or rate limit | retried with a growing backoff; no reauthentication prompt, because an outage says nothing about your credentials |
+| Stream down | nothing; status is read every 15 minutes instead, and the stream reconnects with a growing backoff |
+| Stream and status reads both failing for over three hours | status entities unavailable; location and the refresh button keep working, because they do not depend on the latest read |
+| JLR refuse a car's status or location | a repair names the car and what to change at data.jlr.com; that car's other readings are unaffected |
+| The link is revoked at data.jlr.com, or its certificate has run out | a repair asks you to link the Data Hub again; entities go unavailable but are kept, with their history |
+| JLR outage or rate limit | retried with a growing backoff; no repair, because an outage says nothing about your link |
 | A vehicle leaves the account | its entities disappear, its cached details are dropped, and its device can be deleted |

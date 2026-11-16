@@ -9,38 +9,33 @@ redacted, so it is safe to attach to a public issue.
 
 ---
 
-## "It keeps asking me to sign in again"
+## "Home Assistant asks me to link the Data Hub"
 
-Signing in costs an emailed code, so this is the most expensive failure here and the one worth
-getting right.
+- **The repair says the entry was set up on the InControl sign-in.** Version 3.0.0 removed that
+  sign-in, and an entry that had only it reads nothing until the Data Hub is linked. Its devices,
+  entities and their history are all kept. Follow [DATA_HUB.md](DATA_HUB.md) from **Configure →
+  Link the JLR Data Hub**; the entities pick up again as soon as it is linked. Deleting and
+  re-adding the integration instead loses the entity ids your automations and dashboards use.
+- **The repair says the link stopped working.** JLR no longer accept it: the client was deleted
+  at data.jlr.com, its certificate was replaced, or consent was withdrawn. Choose **Configure →
+  Link the JLR Data Hub again**; the entities are kept.
+- **The repair says the link needs renewing.** The certificate lasts a year. **Link the JLR Data
+  Hub again** makes a new one to paste at data.jlr.com, the same way as the first time.
 
-- **Every few days, or after a restart.** Expected up to a point: JLR rotate the refresh token on
-  every renewal and retire the old one immediately. The integration persists each new token, so a
-  restart should not cost a sign-in. If it does, the entry is not being written — attach
-  diagnostics.
-- **Immediately after signing in.** The account may be signed in on another device that has
-  invalidated this session. Sign in once more and leave it.
-- **Only location stopped, and you are being asked to sign in again.** That is the *other* session —
-  the owner web portal's — not your credentials. Follow the prompt, or use **⋮ → Reconfigure**: it signs in
-  again and keeps every entity id, so your automations and dashboards survive. Deleting and
-  re-adding the integration does not.
-
-An outage, a rate limit or a 403 from JLR will **not** ask you to sign in. If you were asked, the
-credentials genuinely were refused.
+An outage, a rate limit or a refusal for one car will **not** ask you to link again. If you were
+asked, JLR genuinely refused the link.
 
 ## "Location is missing, or in the wrong place"
 
-- **It has never appeared.** Location comes from the owner web portal, not the telemetry socket.
-  An entry created before the portal was used has no session for it — **Reconfigure** adopts one.
-- **It is out of date.** It is where the last *completed* journey ended, not a live position, and
-  JLR can take hours to process one. The tracker carries a `timestamp` attribute for the fix.
+- **It has never appeared.** JLR refuse a car's location until it is declared at data.jlr.com;
+  see [below](#there-is-no-location).
+- **It is out of date.** It is where the last *completed* journey ended, not a live position:
+  JLR send no position while the car is driven, as their own app hides it then. The tracker
+  carries a `timestamp` attribute for the fix.
 - **It went to unknown.** Deliberate. When the fix cannot be refreshed the tracker reports nothing
   rather than serving an old one — an old fix still resolves to a zone, so serving it anyway gives
   a confident wrong answer instead of a cautious one. Check the `trusted` attribute in automations
   that act on the car being home.
-- **Jaguar owners specifically.** Both brands share one identity, so signing in succeeds either
-  way; only the right brand's portal has your car. This was broken for Jaguar-only accounts before
-  v1.5.0 — if you are on something older, update.
 
 ## "The doors show as open but they are not"
 
@@ -83,13 +78,16 @@ for all of them at once, set **Distance unit** to Kilometres under Configure. Se
 
 ## "Everything is unavailable"
 
-- **For under half an hour.** Give it time. The telemetry socket reconnects every few minutes by
-  design and there is a 30-minute grace before anything is marked unavailable.
-- **For longer.** The socket is genuinely down. Check **Settings → System → Logs** for
-  `telemetry socket dropped`; the reason is on that line. The integration keeps retrying with a
-  growing backoff and recovers on its own once JLR do.
-- **Location and the refresh button still work.** That is correct — they do not come from the
-  socket.
+- **After upgrading to 3.0.** The entry was on the InControl sign-in alone; see
+  [above](#home-assistant-asks-me-to-link-the-data-hub).
+- **With a repair about the link.** Do what it says; see
+  [above](#home-assistant-asks-me-to-link-the-data-hub).
+- **Otherwise.** Readings are kept for three hours after the last good read before anything is
+  marked unavailable, so this means JLR have not answered for that long. Check **Settings → System
+  → Logs** for `Data Hub status read failed` or `Data Hub stream:`; the reason is on that line. The
+  integration keeps retrying with a growing backoff and recovers on its own once JLR do.
+- **Location and the refresh button still work.** That is correct — they do not depend on the
+  latest read.
 
 ## "A car I sold is still there"
 
@@ -100,8 +98,9 @@ a failed listing is not evidence anyone's car is gone.
 
 ## "A car I just added is missing"
 
-It appears within 15 minutes without a restart. If it does not, check the logs for
-`owner portal listed N vehicle(s)` and attach diagnostics.
+Only the cars selected on the client you created at data.jlr.com are shared. Edit the client
+there and select the new car, with all data categories; it then appears within 15 minutes without
+a restart. If it does not, attach diagnostics.
 
 ## "Some sensors exist on one car and not the other"
 
@@ -119,10 +118,9 @@ behind permanently greyed out.
 Two things are never removed. A car that is silent — flat 12V, no signal — keeps every entity it
 has, because "not reporting anything" and "does not have it" are not the same thing; removal only
 happens for a car that has just sent a snapshot. And the EV entities are kept whenever the car has
-not told us its fuel type, which is the usual case while JLR keep the attributes endpoint behind
-app attestation. Deciding a car is not electric from the absence of a battery reading is a good
-enough reason not to create a sensor and nowhere near good enough to delete one, so on those
-accounts an unwanted EV entity on a petrol car stays until the fuel type is known.
+not told us its fuel type. Deciding a car is not electric from the absence of a battery reading is
+a good enough reason not to create a sensor and nowhere near good enough to delete one, so an
+unwanted EV entity on a petrol car stays until the fuel type is known.
 
 Removals are logged at INFO, which most installs do not show. To see them, turn on debug logging
 for the integration *before* the restart that will do the removing.
@@ -132,7 +130,7 @@ for the integration *before* the restart that will do the removing.
 Three are off by default — 12V battery charge, EVCC status and the charge-now override. Switch
 them on in the entity's settings. See [ENTITIES.md](ENTITIES.md) for why each one is off.
 
-## "I set up on the Data Hub and there is no location"
+## "There is no location"
 
 Home Assistant says which car under **Settings → Repairs**. JLR refuse each car's location until
 the car is **declared** at data.jlr.com. Open your vehicle
@@ -140,15 +138,12 @@ list there and complete the declaration for each car, saying whether you are its
 **shared user**. The next read picks it up, within the hour; diagnostics show the answer per car
 under `datahub` → `location` (`refused: …` before, `permitted` after).
 
-If you would rather not declare, choose **InControl sign-in for location** in the integration's
-options instead; the car's location then comes from JLR's owner portal.
-
 ## "There are no Last journey sensors, or they show an old journey"
 
 - **None at all.** They are created only once JLR answer with a journey for the car, and JLR
   refused journeys to every owner account until November 2026. Look in the diagnostics under
   `datahub` → `journeys`: `refused` means JLR still refuse them for that car, and the integration
-  asks again once a day. They are only on the Data Hub; the InControl sign-in has no journeys.
+  asks again once a day.
 - **An old journey.** JLR's list starts on 30 October 2026, so nothing before that appears. The
   integration reads five minutes after the stream reports the journey's end, and again every six
   hours. On a Range Rover the journey was there at that first read, but one owner's recent drives
@@ -177,8 +172,8 @@ MESSAGE" flashes up for a few seconds. One owner captured the response behind it
 developer tools: a `502 Bad Gateway` from `/v1/categories` saying **"Powertrain data is missing from
 the vehicle record"**. JLR's own record for the car is incomplete, and only they can fix it.
 Contact JLR's Data Hub support, linked from developer.jlr.com, with that message and the
-`correlationId` from the same response. The InControl sign-in works in the meantime, and the Data Hub can be linked
-to the same entry later without losing anything.
+`correlationId` from the same response. An entry upgraded from 2.x keeps its entities while it
+waits, and picks them up again once the Data Hub is linked.
 
 ## Turning on debug logging
 

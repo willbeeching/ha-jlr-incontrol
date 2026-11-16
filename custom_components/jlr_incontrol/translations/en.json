@@ -622,7 +622,7 @@
   "issues": {
     "datahub_signed_out": {
       "title": "JLR Data Hub link stopped working for {title}",
-      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub again**."
+      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Until it is linked again your cars stop updating, but their entities and history are kept. To link it again, open the integration's options and choose **Link the JLR Data Hub again**."
     },
     "datahub_stream_off": {
       "title": "JLR Data Hub stream is switched off for {title}",

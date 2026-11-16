@@ -1,17 +1,19 @@
 # Vehicle data model → Home Assistant entities
 
-Reverse-engineered from the vehicle status DTOs and mappers. The IF9
-`healthstatus` response is a `coreStatus` list of `{key, value}` pairs (plus a separate `evStatus`
-list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
+The status keys below are the ones InControl's IF9 `healthstatus` response used: a `coreStatus`
+list of `{key, value}` pairs, reverse-engineered from the vehicle status DTOs and mappers. The
+entities have been named after these keys from the start, so they are kept.
 
 > [!NOTE]
-> **Where this data comes from.** Vehicle status is pushed to the integration in real time rather
-> than polled, and location and vehicle names are read separately. The payload shape below is
-> unchanged either way — every key maps exactly as it always did.
+> **Where this data comes from.** Since 3.0.0 every reading comes from the
+> [JLR Data Hub](DATA_HUB.md), whose signals are named after the Vehicle Signal Specification
+> (`Vehicle.Body.Trunk.Rear.IsOpen` and so on). `vss.py` maps each one onto the key it
+> replaced, so an entity reads the same key whichever name JLR send it under. Laid side by side on
+> real cars every value matched; the mapping is a renaming, not a conversion.
 >
-> Freshness comes from the per-item timestamps where a vehicle supplies them, and from observed
-> change where it does not. The transport's own message time is deliberately not used: it advances
-> on every reconnect and would report a permanently fresh vehicle.
+> Freshness comes from the car's own report time, which the Data Hub sends with each reading. The
+> InControl socket had none, and its message time was when the broker sent it, not when the car
+> recorded it.
 
 ## Core status keys (confirmed from mappers)
 - **EV / charging**: `EV_STATE_OF_CHARGE`, `EV_CHARGING_STATUS`
@@ -44,48 +46,25 @@ list and a `vehicleAlerts` feed). Key groups below; HA mapping at the end.
 - **Vehicle state** (`VehicleState$State`): KEY_REMOVED, KEY_ON_ENGINE_OFF, KEY_ON_ENGINE_ON,
   ENGINE_ON_PARK, ENGINE_ON_MOVING, ENGINE_ON_REMOTE_START.
 
-## Attributes / capabilities (`VehicleAttributes`)
-Identity: `vin`, `registrationNumber`, `market`, `modelYear`, `brand`, `model`, `nickname`,
-`numberOfDoors`, `telematicsDevice.serialNumber`. Powertrain: `FuelType` (PETROL/DIESEL/EV/PHEV),
-`PowerTrainType` (BEV/PHEV/INTERNAL_COMBUSTION). Feature-gating combines three sources:
-`services` (availableServices, matched to `ServiceName` codes), `vehicleCapability` (fitted-hardware
-option codes), and `computedValues` (pre-computed booleans, e.g. `remoteDoorPermitted`,
-`selectableClimateCapable`, `iceDepartureAvailable`, `isWebsocketV2`).
+## Vehicle details
+Read from the Data Hub's vehicle details once a day and kept in the config entry, so a restart
+does not cost every vehicle its name and model. `to_attributes` in `vss.py` renames them onto the
+attribute names InControl used: `vehicleBrand`, `vehicleType`/`model`, `modelYear`,
+`registrationNumber`, `fuelType`, `bodyType`, `numberOfDoors`, `colour`. A nickname read from
+InControl's owner portal before 3.0.0 is kept, since the Data Hub has no nickname.
 
 ## Position
-`VehiclePositionResponse.position` = `{ longitude, latitude, timestamp }` only — **no heading or
-speed**. Reverse-geocoded into street/city/postcode/country for display.
+`{ latitude, longitude, timestamp }` only — **no heading or speed**. It comes from the Data Hub's
+location endpoint, read with each status read, and from the stream's `/position` topic, which
+delivers a fix about half a minute after a journey ends and never during a drive.
 
-Location is the end of the last completed journey rather than a live position, and it updates when
-a trip completes and syncs. Vehicle attributes are cached in the config entry so a restart does not
-cost every vehicle its name and model.
+Location is the end of the last completed journey rather than a live position. JLR refuse it per
+car until the owner declares the car at data.jlr.com.
 
-### The owner portal's trail
-The position actually comes from the owner portal's dashboard page, which embeds
-`let waypoints = [...]`: points of `{ position: { latitude, longitude }, timestamp }`, the timestamp
-in epoch milliseconds. Either half can be null on the final entries, so the parked fix takes the
-last coordinates and the last timestamp independently. Points also carry `odometer`,
-`fuelConsumption` and `electricalConsumption`/`electricalRegeneration`, and positions `speed` and
-`heading` (seen on an ICE F-Pace, #36). Nothing else in the trail is used yet.
-
-What the trail covers is **unconfirmed** — one journey, the last day, or the last few hundred fixes.
-The first sample (#36) was one 14-minute drive, points about nine seconds apart with no gap over 15
-seconds; a drive with a stop in it, and a car parked overnight, are still to be seen.
-A last-journey sensor (#36) is only honest if it is one journey, so diagnostics carry a `trail` block
-per vehicle, and debug logging writes the same summary whenever it changes:
-
-| Field | Meaning |
-| --- | --- |
-| `points`, `located`, `timed` | Entries in the trail; how many have coordinates; how many have a time |
-| `earliest`, `latest`, `span` | The first and last times, and the time between them |
-| `longest_gaps` | The three longest pauses between consecutive times |
-| `in_order` | Whether the times run forwards through the array |
-| `point_keys`, `position_keys` | Every key the points and their positions carry — names only |
-| `page_variables` | Names of the page's script variables, up to 40, in case a journey summary sits outside the trail |
-| `odometer_points`, `odometer_change`, `odometer_rising` | How many points carry a numeric odometer; how far it moved from the first timed reading to the last, in the page's own unit; whether it ever went backwards. Set beside the distance the app shows for the same drive, the change says whether that unit is kilometres, miles or metres. Never a reading — those are the car's total mileage |
-
-No coordinates. A trail of one drive has no gap longer than a stop in traffic; a trail of several
-has one as long as the car stood parked between them.
+Before 3.0.0 the position came from InControl's owner portal, whose dashboard page carried the
+recent trail of points. The Data Hub's journeys endpoint replaced the reason for reading it: each
+journey arrives with its distance, duration, speeds and energy used. The journey's start and end
+coordinates are dropped on purpose.
 
 ## HA entity mapping
 | Platform | Entities |
@@ -93,13 +72,13 @@ has one as long as the car stood parked between them.
 | `sensor` | battery charge %, fuel level %, fuel range, electric range, odometer, charging status, time-to-full, charge rate, distance-to-service, AdBlue range, tyre pressures, climate remaining runtime, last-updated; diagnostic: VIN, reg, model year, fuel type |
 | `binary_sensor` | all-doors-locked, per-door/bonnet/boot open, per-window open, roof/sunroof, alarm triggered, charge cable connected, is-being-driven, low tyre/oil/brake/washer/coolant, service due, DEF low |
 | `device_tracker` | lat/lon + reverse-geocoded address attributes |
-| `button` | refresh (re-reads the polled data, including location) |
+| `button` | refresh (reads status and location now) |
 
 Door lock state is a binary sensor and the charge-now override a `charge_now_setting` enum sensor.
 There are no control entities. Remote commands require the manufacturer's own app.
 
-Feature-gate every entity on the vehicle's `services` + `vehicleCapability` + `computedValues`
-rather than assuming all exist for every VIN.
+Every entity is created only if the car reports the key behind it, rather than assuming all exist
+for every VIN; see [ENTITIES.md](ENTITIES.md).
 
 ## JLR model codes (InControl-capable)
 

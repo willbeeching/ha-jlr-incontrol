@@ -15,8 +15,8 @@ diagnostics; extend it rather than working around it.
 **Be a polite client.** JLR's backend is not ours and the users are signed in
 with their own accounts. Every poll interval, retry and reconnect in here was
 chosen to stay quiet, and a change that talks to JLR more often needs a reason
-better than "it would feel more responsive". Floors like `PORTAL_FORCE_FLOOR`
-and `RESUBSCRIBE_FLOOR` are there to stop a button press becoming a hammer.
+better than "it would feel more responsive". Floors like `RESUBSCRIBE_FLOOR`
+on the refresh button are there to stop a button press becoming a hammer.
 
 **Stay read-only.** Remote control (lock, climate, charging, honk) was removed
 in v1.4.0 and is not coming back by accident.
@@ -111,11 +111,12 @@ floor.
 Re-deriving these has cost days. They are documented at length in
 `docs/ENTITIES.md` and `docs/DATA_MODEL.md`.
 
-- **There is no timestamp anywhere in what JLR sends.** Not in the status
-  payload, not in the STOMP frame headers. The envelope's `t` is delivery
-  time — measured to the millisecond against a payload three hours old. The
-  odometer is the only ordering key, which is what `_is_older_by_odometer`
-  uses.
+- **Order status by the car's own report time.** The Data Hub sends one
+  (`LAST_UPDATED_TIME` after mapping), and `_handle_status` keeps the newest;
+  the stream and the REST reads overlap and either can arrive late. The
+  InControl socket sent none — its envelope's `t` was delivery time, measured
+  against a payload three hours old — which is why ordering used to be by
+  odometer.
 - **`ENGINE_COOLANT_TEMP` is latched at shutdown**, not live. It is not a
   usable "engine is running" signal and was wrongly used as one; coolant now
   decays on age instead.
@@ -125,20 +126,16 @@ Re-deriving these has cost days. They are documented at length in
   hours. Anything that withholds readings while unsettled has to be
   asymmetric — withhold the reading that claims the car is open or unlocked,
   show the reassuring one — or it hides a dozen correct sensors.
-- The vehicle endpoints sit behind Approov attestation and answer 498 without
-  it; position and vehicle names come from the owner web portal session
-  instead.
-- Tokens last about four minutes, which is what drives the socket reconnect
-  and resubscribe — and the resubscribe is what makes JLR redeliver its
-  retained snapshot.
 
 ## The JLR Data Hub
 
-JLR's documented owner API (developer.jlr.com), and where the integration is
-heading. The reverse-engineered InControl connection is **discontinued from 1
-December 2026**, announced in the 2.1.2 release notes and the README: releases
-from that date are Data Hub only. Until then it gets fixes for things that
-break, and nothing new is built on it (the owner portal's trail included).
+JLR's documented owner API (developer.jlr.com), and since 3.0.0 the only
+source. The reverse-engineered InControl connection (`api.py`, `auth.py`,
+`portal.py`, `telemetry.py`) was removed in 3.0.0, as announced in the 2.1.2
+release notes for 1 December 2026; 2.1.x is the last line with it, and it is
+in git history from there. It is not coming back: its vehicle endpoints sit
+behind JLR's app attestation, and the Data Hub is the owner API JLR document.
+
 Canada was the first owner outside the UK and EU on the Data Hub: a Defender
 there works, location included. Australia followed: a Defender works, possibly
 declared with a UK or EU region (both November 2026). `docs/DATA_HUB.md` has
@@ -146,16 +143,19 @@ the user-facing detail; what matters when changing the code:
 
 - `datahub.py` is the client (private_key_jwt sign-in, DPoP on REST),
   `stream.py` a minimal MQTT client, `datahub_link.py` the running link, and
-  `vss.py` maps Data Hub signal names onto the socket's status keys so the
-  entities do not change. Laid side by side on real cars every value matched;
-  keep it a renaming.
-- A linked entry takes cars, details and status from the Data Hub and never
-  calls the old vehicle API. An entry set up on the Data Hub alone has no
-  InControl tokens at all; an optional InControl sign-in on it keeps only the
-  portal's session cookies, for location. Do not let either path start
-  writing InControl tokens into such an entry.
+  `vss.py` maps Data Hub signal names onto the status keys the InControl
+  socket used, so entities upgraded from 2.x keep their ids and history.
+  Laid side by side on real cars every value matched; keep it a renaming.
+- Upgrading from 2.x is a config entry migration to minor version 2, which
+  strips every InControl credential (`INCONTROL_KEYS`, the password among
+  them). An entry that had no Data Hub link loads dormant: it reads nothing,
+  raises the `incontrol_retired` repair, keeps its devices and entities, and
+  refuses to let a device be deleted, because listing no cars is not
+  evidence a car has gone. Linking from the options brings them back. Never
+  start storing InControl credentials in an entry again.
 - Measured, not documented: access tokens last 5 minutes, the refresh token
-  is offline with no expiry, the broker in the portal does not resolve, and
+  is offline with no expiry but rotates on every use (so renewal is behind
+  `_token_lock`), the broker in the portal does not resolve, and
   the broker in the docs accepts only the client id as both MQTT username and
   client id, and only exact topics (no wildcards). Location is refused per
   car until the owner completes the car's declaration at data.jlr.com (sole

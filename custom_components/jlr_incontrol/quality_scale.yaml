@@ -63,27 +63,35 @@ rules:
   entity-unavailable:
     status: done
     comment: >-
-      Availability follows the source each entity actually reads from, rather
-      than every entity depending on the telemetry socket.
+      Status entities go unavailable once the Data Hub link can no longer vouch
+      for them: three hours without a good read and no stream connected, or a
+      link JLR have revoked. Location and the refresh button do not depend on
+      the latest read and stay available; location's own honesty signal is the
+      trusted attribute, about the age of the fix.
   integration-owner: done
   log-when-unavailable:
-    status: done
+    status: todo
     comment: >-
-      Once on the way down and once on the way back, both at info as the rule
-      asks, with the retries in between at debug. It was marked done while
-      every failed connection attempt filed its own warning and recovery was
-      logged at debug only — an outage announced loudly that appeared never to
-      end. The rate-limited branch kept its own warning for a round after
-      that, so throttling still filed one a minute.
+      Was done for the InControl telemetry socket, which 3.0.0 removed. The
+      Data Hub link logs every failed status read and every failed stream
+      connection at warning, so an outage files one line per status interval
+      and per reconnect (at most every 15 minutes each, with backoff) rather
+      than one on the way down and one on the way back.
   parallel-updates: done
-  reauthentication-flow: done
+  reauthentication-flow:
+    status: todo
+    comment: >-
+      Was done for the InControl sign-in, which 3.0.0 removed. A Data Hub link
+      JLR stop accepting raises a repair pointing to the options' "Link the JLR
+      Data Hub again", which runs the same steps as the first link and keeps
+      every entity. It is not yet offered as a reauth flow.
   test-coverage:
     status: done
     comment: >-
-      98% of the package, and every module at or above the 95% this rule asks
+      99% of the package, and every module at or above the 95% this rule asks
       for — checked per module in CI, not just as an average, because the
       average is the number that hides one module rotting. Run against both
-      the oldest supported core and the newest. The config flow is at 100%.
+      the oldest supported core and the newest. The config flow is at 98%.
 
       What is left uncovered is the handful of branches that need a real JLR
       server to reach — a 403 from an edge appliance mid-request, an endpoint
@@ -120,20 +128,27 @@ rules:
   exception-translations:
     status: done
     comment: >-
-      All three failures a person can act on carry a translation key: the
-      refresh that could not reach JLR, setup finding no telemetry, and a
-      stored sign-in being refused.
+      Every failure a person can act on carries a translation key: a refresh
+      that read nothing, a refresh pressed again inside the minute, setup
+      finding no status for any car, and setup held back while a car's EV
+      readings are failing.
   icon-translations: done
-  reconfiguration-flow: done
-  repair-issues:
-    status: exempt
+  reconfiguration-flow:
+    status: todo
     comment: >-
-      The one condition needing a person is an expired owner-portal session,
-      and that is a reauth flow rather than a repair. It was a repair, raised
-      with is_fixable=False, which described the steps and left the user to go
-      and carry them out; its only button dismissed it. A reauth flow is what
-      the rule means by actionable, and what every other integration uses to
-      ask for a sign-in.
+      Was done for the InControl sign-in, which 3.0.0 removed. Linking the Data
+      Hub again, to a new client or certificate, lives in the options menu
+      rather than in a reconfigure flow.
+  repair-issues:
+    status: done
+    comment: >-
+      Each condition that needs a person is a repair naming what to do and
+      where: an entry from the InControl sign-in waiting for the Data Hub, a
+      link JLR no longer accept, a certificate within 30 days of running out,
+      the stream switched off, and a car whose status or location JLR refuse.
+      None is fixable from Home Assistant alone, because the fix is at
+      data.jlr.com or is the options' linking steps, so each says how and
+      goes away by itself once the condition clears.
   stale-devices: done
 
   # ---------------------------------------------------------------- platinum
@@ -143,17 +158,8 @@ rules:
   inject-websession:
     status: done
     comment: >-
-      The API and telemetry clients take Home Assistant's shared session. The
-      sign-in journey and the owner portal need their own cookie jars — the
-      journey pins server affinity across several cookies and the portal
-      carries a different session cookie to each of two hosts — so those are
-      created with async_create_clientsession, which is the helper meant for
-      exactly that and hands Home Assistant the lifetime.
-
-      They are released with detach rather than close: the helper builds on
-      Home Assistant's shared connector without giving up ownership of it, so
-      closing one of these sessions would take that connector down for every
-      other integration.
+      The Data Hub client takes Home Assistant's shared session. The stream is
+      MQTT over its own TLS socket, which aiohttp has no part in.
   strict-typing:
     status: done
     comment: >-

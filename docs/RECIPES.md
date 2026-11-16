@@ -14,25 +14,25 @@ data varies between generations.
 
 ## A note on politeness
 
-This integration is read-only and mostly push-driven: vehicle data arrives over a telemetry
-socket rather than being asked for. **Refresh** is the one button, and it re-reads what JLR
+This integration is read-only and mostly push-driven: vehicle data arrives on the JLR Data Hub's
+stream as the car reports, rather than being asked for. **Refresh** is the one button, and it re-reads what JLR
 already hold rather than waking the car — there is no longer any way to wake a vehicle from
 Home Assistant, because that took a remote command and JLR now gate those behind the app's
 device attestation.
 
-That does not make polling free. Every refresh is a request to JLR's servers, reached through
-an unofficial API that they can withdraw. Prefer event-driven refreshes (a state change,
+That does not make polling free. Every refresh is a request to JLR's servers, made with your
+own Data Hub client, and JLR can rate-limit it. Prefer event-driven refreshes (a state change,
 arriving home, opening a dashboard) over a timer, and count down locally rather than re-asking.
 
 ## Preconditioning countdown
 
 **Problem:** `sensor.<car>_preconditioning_time_remaining` is a snapshot, not a countdown. The
-car sets it once when preconditioning starts and only refreshes it on a VHS, so it sits still
+car sets it once when preconditioning starts and does not update it as it runs, so it sits still
 instead of ticking down.
 
 **Approach:** seed a local template sensor from the integration's value when preconditioning
-starts, then decrement it every minute in Home Assistant. Only fall back to a single VHS call if
-the initial value comes back as 0.
+starts, then decrement it every minute in Home Assistant. Press **Refresh** once if the initial
+value comes back as 0.
 
 ### Local preconditioning countdown
 

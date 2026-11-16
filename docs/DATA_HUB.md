@@ -1,56 +1,51 @@
-# JLR Data Hub (beta)
+# JLR Data Hub
 
-JLR now publish an official API for owners, the **JLR Data Hub**, under the EU Data Act. It is
+JLR publish an official API for owners, the **JLR Data Hub**, under the EU Data Act. It is
 documented at [developer.jlr.com](https://developer.jlr.com/docs/getting-started). Despite the EU
 origin it is not limited to the UK and EU: an owner in Canada has it working with location, the
 car declared as outside the UK and the EU, and an owner in Australia has it working too. If
 data.jlr.com lists your cars, it should work wherever you are.
 
-From 2.0 the integration can be set up on it from **Add integration**, with no InControl email or
-password, and an existing InControl entry can be linked to it from the options. Either way,
-**vehicle status comes from the Data Hub** instead of the InControl telemetry socket: doors, locks, windows, tyres, fuel, mileage,
-warnings, the 12 V battery and the rest. The entities are the same ones, with the same ids and
-history; only where their values come from changes. Linking is optional, and an install that does
-not link carries on exactly as before.
+Since 3.0.0 it is the only way this integration reads a car: doors, locks, windows, tyres, fuel,
+mileage, warnings, the 12 V battery, battery and charging, location and journeys. The entities are
+the ones the InControl connection gave, with the same ids and history.
 
-- **The cars and their details** (brand, model, year, fuel type) come from the Data Hub too: the
-  cars are the ones selected on the client at data.jlr.com. The older vehicle list is not used.
-- **Location** comes from the Data Hub too, once each car is **declared** at data.jlr.com: say
-  whether you are its sole user or a shared user (and, if shared, that the other drivers agree).
-  JLR refuse a car's location until that is done; confirmed on two cars in November 2026, which
-  were refused before the declaration and permitted straight after it. A car that is not declared
-  can take its location from JLR's owner portal instead, which needs an InControl sign-in: on an
-  entry set up on the Data Hub, choose **InControl sign-in for location** in the options. Only the
-  portal's session is kept, not your password, and it is used for location and car names only.
-- **Moving off InControl.** An entry that started on the InControl sign-in and has the Data Hub
-  linked can drop the sign-in: **Configure → Remove the InControl sign-in**. Every entity and its
-  history stays. What goes is the fallback below, and portal location for a car not declared at
-  data.jlr.com. It is refused while the link is not working, since the entry would then read
-  nothing.
+- **The cars and their details** (brand, model, year, fuel type) come from the Data Hub: the cars
+  are the ones selected on the client at data.jlr.com.
+- **Location** comes from the Data Hub once each car is **declared** at data.jlr.com: say whether
+  you are its sole user or a shared user (and, if shared, that the other drivers agree). JLR refuse
+  a car's location until that is done; confirmed on two cars in November 2026, which were refused
+  before the declaration and permitted straight after it.
 - **If the link stops working** (the client deleted, its certificate replaced, consent
-  withdrawn), a repair says so. An entry that also has an InControl sign-in falls back to the
-  telemetry socket by itself, so the sensors keep working while you link it again; one set up on
-  the Data Hub alone keeps its last readings until you link it again from the options.
+  withdrawn), a repair says so, and the entry keeps its last readings until you link it again
+  from **Configure**.
 - **Select every car** on the client at data.jlr.com. A car left off it is not on the integration.
 
-Linking also adds two entities to each car, and a `datahub` section in diagnostics:
+**Coming from the InControl sign-in?** 3.0.0 removed it. On upgrade, everything that sign-in kept
+in the entry, the password among it, is deleted. An entry that also had the Data Hub linked carries
+on as before. One that had only the InControl sign-in keeps its cars, entities and history, reads
+nothing, and shows a repair until you link it: **Configure → Link the JLR Data Hub**, then the
+steps below. Every entity comes back as it was. A car that had its location from the owner portal
+needs declaring at data.jlr.com to keep it.
+
+Each car also has two entities about the link, and diagnostics a `datahub` section:
 
 - **Last report (Data Hub)**: the time the car itself sent its latest reading. Nothing else in
   JLR's data has ever carried that.
 - **Data Hub stream**: whether the live stream is connected.
 
-How the Data Hub's signals map onto the socket's keys is in
-[`vss.py`](../custom_components/jlr_incontrol/vss.py). Side by side on two cars, every value
-matched exactly, so the mapping is a renaming. The electric signals are the exception: they come
-from JLR's catalog and have not yet been checked against an electric car.
+How the Data Hub's signals map onto the status keys the entities read, the names the InControl
+connection used, is in [`vss.py`](../custom_components/jlr_incontrol/vss.py). Side by side on
+two cars, every value matched exactly, so the mapping is a renaming.
 
 ## Linking it
 
 You need a JLR account whose cars appear at [data.jlr.com](https://data.jlr.com), and a few
 minutes with your phone to hand.
 
-1. In Home Assistant, open **Settings → Devices & Services → Jaguar Land Rover InControl →
-   Configure → Link the JLR Data Hub**. It shows a certificate. Leave the page open.
+1. In Home Assistant, open **Settings → Devices & Services → Add Integration → Jaguar Land Rover
+   InControl** (or, on an entry from the InControl sign-in, **Configure → Link the JLR Data
+   Hub**). It shows a certificate. Leave the page open.
 2. At [data.jlr.com](https://data.jlr.com), sign in and create a client:
    - credential type **device-based**
    - select your vehicles
@@ -64,14 +59,14 @@ minutes with your phone to hand.
    submit.
 5. Home Assistant shows a link and a code. Open the link on your phone, sign in with your JLR
    account and approve it. The page in Home Assistant moves on by itself, and the integration
-   reloads with the link in place.
+   starts with the link in place.
 
 The certificate is public. The private key that matches it was made inside Home Assistant, is
 stored only in the integration's config entry, and is never shown or sent anywhere. It signs
 every request to JLR, which is why the link cannot be used by anyone who only has a token.
 
-To remove the link, choose **Unlink the JLR Data Hub** in the same options, then delete the
-client at data.jlr.com.
+To remove the link, delete the integration in Home Assistant, then delete the client at
+data.jlr.com.
 
 ## How it talks to JLR
 
@@ -83,10 +78,10 @@ client at data.jlr.com.
   good key.
 - **Status**: one REST read per car when the link starts, then every 15 minutes until the stream
   has delivered a reading newer than the car's last report, and hourly after that. A message that
-  only repeats what REST already brought does not count. Fifteen minutes is the cadence the integration's
-  housekeeping already keeps; it is there because the REST read is the only source of change
-  until the stream is shown to work. The **Refresh** button reads status and location on demand, at most once a
-  minute.
+  only repeats what REST already brought does not count. Fifteen minutes is the cadence the
+  integration's housekeeping already keeps; it is there because the REST read is the only source
+  of change until the stream is shown to work. The **Refresh** button reads status and location on
+  demand, at most once a minute.
 - **Location**: read with each status read for every car JLR allow it for, so every 15 minutes
   until the stream proves itself and hourly after. A car JLR refuse (not declared at data.jlr.com)
   is asked once an hour instead, so a declaration made later is picked up within the hour without
@@ -200,8 +195,7 @@ Also measured:
   not read it yet. Download diagnostics and look at `datahub`.
 - **Settings → Repairs** says, in plain words and with what to do at data.jlr.com, each of the
   things only the owner can put right: the link has stopped working, the stream is switched off,
-  a car's location is refused because it is not declared (not raised when the InControl sign-in
-  gives the portal's location instead), a car's readings are refused because it or its data
+  a car's location is refused because it is not declared, a car's readings are refused because it or its data
   categories are not selected on the client, and the certificate has under 30 days left. Each one
   goes away by itself once it is put right.
 - **Data Hub stream stays off**: Home Assistant says so under **Settings → Repairs**. Check
@@ -216,7 +210,10 @@ Also measured:
   account id in capitals, and the first car alone. `accepted_login` and `topics` in diagnostics show where it got to. If a
   round ends with nothing working it leaves the stream for six hours before trying again.
 - **A repair says the link stopped working**: the client was deleted, its certificate replaced,
-  or consent withdrawn. Link it again from the options; a new certificate is made each time.
+  or consent withdrawn. Link it again from **Configure → Link the JLR Data Hub again**; a new
+  certificate is made each time.
+- **A repair says to link the Data Hub**: the entry was set up on the InControl sign-in, which
+  3.0.0 removed. It reads nothing until it is linked; **Configure → Link the JLR Data Hub**.
 - **The stream is connected but nothing arrives from it**: diagnostics count, under `stats`,
   every `messages` the broker sent, the `fresh` ones that moved a car's last report forward, and
   the `unread` ones with no reading the link could place, with `last_message` (when one last
