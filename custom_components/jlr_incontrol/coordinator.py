@@ -22,7 +22,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
@@ -123,6 +123,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 entry,
                 on_status=self._handle_status,
                 on_position=self._handle_position,
+                on_signed_out=self._handle_signed_out,
             )
             if entry.data.get(CONF_DATAHUB)
             else None
@@ -204,13 +205,22 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ir.async_delete_issue(self.hass, DOMAIN, self.retired_issue_id)
         self._awaiting = set(self._vehicles)
         self._snapshots_ready.clear()
-        if not self._vehicles or self.datahub.signed_out:
-            # A link JLR have stopped accepting: its repair has said why.
+        if not self._vehicles or self._link_refused():
+            # A link JLR have stopped accepting: its reauth has said why.
             return
         self.datahub.async_start()
         try:
             async with asyncio.timeout(FIRST_SNAPSHOT_TIMEOUT):
                 await self._snapshots_ready.wait()
+            if self._link_refused():
+                # Not ready-and-retry: each retry would spend another request
+                # on a refresh token JLR have already refused, for as long as
+                # nobody relinked. Auth failed stops the retries, and its
+                # reauth is the way back.
+                await self.datahub.async_stop()
+                raise ConfigEntryAuthFailed(
+                    translation_domain=DOMAIN, translation_key="datahub_signed_out"
+                )
         except TimeoutError as err:
             if not self._status:
                 waiting = dict(self.datahub.ev_waiting)
@@ -240,6 +250,14 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
                 FIRST_SNAPSHOT_TIMEOUT,
             )
+
+    def _link_refused(self) -> bool:
+        """Asked fresh each time: the link signs out while setup awaits it."""
+        return self.datahub is not None and self.datahub.signed_out
+
+    def _handle_signed_out(self) -> None:
+        """Wake a setup still waiting for status that will now never come."""
+        self._snapshots_ready.set()
 
     @property
     def retired_issue_id(self) -> str:

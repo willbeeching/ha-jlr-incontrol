@@ -197,7 +197,8 @@ asking on a timer only where it must, and backing off when JLR ask it to.
   reports it once when preconditioning starts and it then sits still rather than ticking down.
   For a countdown that actually counts, see [docs/RECIPES.md](docs/RECIPES.md).
 - If the link stops working — the client deleted at data.jlr.com, its certificate replaced or
-  consent withdrawn — Home Assistant says so under **Settings → Repairs**, with what to do.
+  consent withdrawn — the integration asks to be reconfigured under **Settings → Devices &
+  Services**. That runs the linking steps again on the same entry, and every entity is kept.
 
 ## What people use it for
 

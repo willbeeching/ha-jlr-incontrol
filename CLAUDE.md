@@ -153,6 +153,10 @@ the user-facing detail; what matters when changing the code:
   refuses to let a device be deleted, because listing no cars is not
   evidence a car has gone. Linking from the options brings them back. Never
   start storing InControl credentials in an entry again.
+- A link JLR refuse (`DataHubAuthError`) goes through `_signed_out`, which
+  starts a reauth; at startup the coordinator raises `ConfigEntryAuthFailed`
+  so setup stops retrying a refused token. Failures are logged once down and
+  once back (`_went_down`, `_came_back`); do not add a warning per retry.
 - Measured, not documented: access tokens last 5 minutes, the refresh token
   is offline with no expiry but rotates on every use (so renewal is behind
   `_token_lock`), the broker in the portal does not resolve, and

@@ -17,8 +17,8 @@ the ones the InControl connection gave, with the same ids and history.
   a car's location until that is done; confirmed on two cars in November 2026, which were refused
   before the declaration and permitted straight after it.
 - **If the link stops working** (the client deleted, its certificate replaced, consent
-  withdrawn), a repair says so, and the entry keeps its last readings until you link it again
-  from **Configure**.
+  withdrawn), the integration asks to be reconfigured under **Settings → Devices & Services**.
+  That runs the linking steps again on the same entry; its entities and history are kept.
 - **Select every car** on the client at data.jlr.com. A car left off it is not on the integration.
 
 **Coming from the InControl sign-in?** 3.0.0 removed it. On upgrade, everything that sign-in kept
@@ -194,7 +194,7 @@ Also measured:
 - **Last report (Data Hub) stays unknown**: the car has not been allowed status, or the link has
   not read it yet. Download diagnostics and look at `datahub`.
 - **Settings → Repairs** says, in plain words and with what to do at data.jlr.com, each of the
-  things only the owner can put right: the link has stopped working, the stream is switched off,
+  things only the owner can put right: the stream is switched off,
   a car's location is refused because it is not declared, a car's readings are refused because it or its data
   categories are not selected on the client, and the certificate has under 30 days left. Each one
   goes away by itself once it is put right.
@@ -209,9 +209,11 @@ Also measured:
   status alone per car, every category per car, each car with no category, the whole account, the
   account id in capitals, and the first car alone. `accepted_login` and `topics` in diagnostics show where it got to. If a
   round ends with nothing working it leaves the stream for six hours before trying again.
-- **A repair says the link stopped working**: the client was deleted, its certificate replaced,
-  or consent withdrawn. Link it again from **Configure → Link the JLR Data Hub again**; a new
-  certificate is made each time.
+- **The integration asks to be reconfigured**: JLR stopped accepting the link, because the
+  client was deleted, its certificate replaced, or consent withdrawn. Choose **Reconfigure** on
+  it under **Settings → Devices & Services** and follow the same steps as the first link; a new
+  certificate is made each time. **Configure → Link the JLR Data Hub again** does the same.
+  Linking a client from a different JLR account is refused, since its cars are not this entry's.
 - **A repair says to link the Data Hub**: the entry was set up on the InControl sign-in, which
   3.0.0 removed. It reads nothing until it is linked; **Configure → Link the JLR Data Hub**.
 - **The stream is connected but nothing arrives from it**: diagnostics count, under `stats`,

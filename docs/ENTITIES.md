@@ -270,6 +270,6 @@ returns what the stream already said.
 | Stream down | nothing; status is read every 15 minutes instead, and the stream reconnects with a growing backoff |
 | Stream and status reads both failing for over three hours | status entities unavailable; location and the refresh button keep working, because they do not depend on the latest read |
 | JLR refuse a car's status or location | a repair names the car and what to change at data.jlr.com; that car's other readings are unaffected |
-| The link is revoked at data.jlr.com, or its certificate has run out | a repair asks you to link the Data Hub again; entities go unavailable but are kept, with their history |
-| JLR outage or rate limit | retried with a growing backoff; no repair, because an outage says nothing about your link |
+| The link is revoked at data.jlr.com, or its certificate has run out | the integration asks to be reconfigured, which links the Data Hub again; entities go unavailable but are kept, with their history |
+| JLR outage or rate limit | retried with a growing backoff, and logged once at info when it starts and once when it ends; no prompt, because an outage says nothing about your link |
 | A vehicle leaves the account | its entities disappear, its cached details are dropped, and its device can be deleted |

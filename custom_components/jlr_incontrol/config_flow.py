@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from typing import Any
 
 # Core 2026.10 replaced voluptuous with probatio, and types every flow schema
@@ -18,6 +19,7 @@ except ImportError:
     import voluptuous as vol  # type: ignore[no-redef]
 
 from homeassistant.config_entries import (
+    SOURCE_REAUTH,
     ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
@@ -159,6 +161,23 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         """Straight to the Data Hub: since 3.0.0 it is the only way in."""
         return await self.async_step_datahub(user_input)
 
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """JLR stopped accepting the link: link a client to the same entry."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Say why before the certificate, which otherwise arrives unexplained."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="reauth_confirm",
+                description_placeholders={"title": self._get_reauth_entry().title},
+            )
+        return await self.async_step_datahub()
+
     async def async_step_datahub(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -199,6 +218,8 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
         makes a new client.
         """
         settings = self._linker.settings()
+        if self.source == SOURCE_REAUTH:
+            return self._async_relink(settings)
         await self.async_set_unique_id(
             settings[DATAHUB_ACCOUNT_ID] or settings[DATAHUB_CLIENT_ID]
         )
@@ -212,6 +233,23 @@ class JlrConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Say why the link was not made."""
         return self.async_abort(reason=self._linker.error)
+
+    def _async_relink(self, settings: dict[str, Any]) -> ConfigFlowResult:
+        """Put the new link on the entry being reauthenticated, and reload.
+
+        Matched on the Data Hub account rather than the entry's unique id: an
+        entry from the InControl sign-in is identified by that account, not
+        this one. Another owner's account would hang different cars on these
+        devices, and the next listing would forget every car the entry has.
+        """
+        entry = self._get_reauth_entry()
+        held = (entry.data.get(CONF_DATAHUB) or {}).get(DATAHUB_ACCOUNT_ID)
+        new = settings[DATAHUB_ACCOUNT_ID]
+        if held and new and held != new:
+            return self.async_abort(reason="wrong_account")
+        return self.async_update_reload_and_abort(
+            entry, data={**entry.data, CONF_DATAHUB: settings}
+        )
 
 
 class DataHubLinker:

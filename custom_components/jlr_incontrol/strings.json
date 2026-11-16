@@ -1,6 +1,10 @@
 {
   "config": {
     "step": {
+      "reauth_confirm": {
+        "title": "Link the JLR Data Hub again",
+        "description": "JLR no longer accept the Data Hub link for {title}. That happens when its client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Until it is linked again its cars stop updating, but their entities and history are kept.\n\nThe next step makes a new certificate. Paste it into the client at data.jlr.com, or create a new client with it, the same way as when you first linked it."
+      },
       "datahub": {
         "title": "Link the JLR Data Hub",
         "description": "A few minutes at the JLR portal, with your phone to hand for the last step. The [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories. For location, also complete each car's declaration there and say whether you are its **sole user** or a **shared user**: JLR refuse a car's location until it is declared.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
@@ -17,11 +21,13 @@
       "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown on this page. If you opened this step more than once, the certificate changed: paste the current one into the client again, or create a new client with it."
     },
     "abort": {
-      "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
+      "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it. Delete the existing entry first if you'd rather start fresh.",
       "datahub_denied": "The link was declined on the JLR sign-in page.",
       "datahub_expired": "The code expired before it was approved. Start adding the integration again to get a new one; the certificate will be new too, so paste it into the client again.",
       "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
-      "unknown": "The link could not be completed."
+      "reauth_successful": "The JLR Data Hub is linked again.",
+      "unknown": "The link could not be completed.",
+      "wrong_account": "That client belongs to a different JLR account from the one this entry reads. Link a client created with the same account, or add the other account as a new entry."
     },
     "progress": {
       "datahub_link": "Open [{url}]({url}) on your phone and approve the link with your JLR account. If it asks for a code, enter **{code}**.\n\nThis page moves on by itself once you have approved it. The code lasts 10 minutes; if it runs out, open the options again to get a new one."
@@ -606,24 +612,23 @@
     }
   },
   "exceptions": {
+    "datahub_ev_waiting": {
+      "message": "Jaguar Land Rover answered the Data Hub status read, but its battery and charging data failed for {cars} ({error}). The car's status is held back until that answers, so a first reading without battery data cannot remove its battery sensors and their history. Home Assistant will keep retrying."
+    },
+    "datahub_signed_out": {
+      "message": "JLR no longer accept the Data Hub link. Link it again from the integration's card in Settings → Devices & Services."
+    },
+    "no_status": {
+      "message": "Linked to the JLR Data Hub, but no vehicle status arrived within {seconds} seconds. Home Assistant will keep retrying."
+    },
     "refresh_failed": {
       "message": "Could not refresh from Jaguar Land Rover. Nothing already on screen is lost, and the next scheduled read tries again on its own. Pressing again in a moment is worth a try."
     },
     "refresh_too_soon": {
       "message": "Refreshed less than a minute ago. Jaguar Land Rover answer with what the car last reported, so asking again this soon would return what you already have. Try again shortly."
-    },
-    "datahub_ev_waiting": {
-      "message": "Jaguar Land Rover answered the Data Hub status read, but its battery and charging data failed for {cars} ({error}). The car's status is held back until that answers, so a first reading without battery data cannot remove its battery sensors and their history. Home Assistant will keep retrying."
-    },
-    "no_status": {
-      "message": "Linked to the JLR Data Hub, but no vehicle status arrived within {seconds} seconds. Home Assistant will keep retrying."
     }
   },
   "issues": {
-    "datahub_signed_out": {
-      "title": "JLR Data Hub link stopped working for {title}",
-      "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Until it is linked again your cars stop updating, but their entities and history are kept. To link it again, open the integration's options and choose **Link the JLR Data Hub again**."
-    },
     "datahub_stream_off": {
       "title": "JLR Data Hub stream is switched off for {title}",
       "description": "The Data Hub link works, but its stream is switched off, so your cars' readings are only read every 15 minutes instead of arriving as the car reports them.\n\nTo switch it on, sign in at data.jlr.com, open the client you created for Home Assistant and turn **Toggle your stream** on. Home Assistant notices within the hour and this notice goes away by itself."

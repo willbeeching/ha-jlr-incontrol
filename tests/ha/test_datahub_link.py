@@ -148,6 +148,15 @@ def bare_link(
     return link, pause
 
 
+def reauths(hass: HomeAssistant, entry: MockConfigEntry) -> list[Any]:
+    return [
+        flow
+        for flow in hass.config_entries.flow.async_progress_by_handler(DOMAIN)
+        if flow["context"].get("source") == "reauth"
+        and flow["context"].get("entry_id") == entry.entry_id
+    ]
+
+
 async def run_status(link: DataHubLink) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await link._async_status_loop()
@@ -156,6 +165,106 @@ async def run_status(link: DataHubLink) -> None:
 async def run(link: DataHubLink) -> None:
     with contextlib.suppress(asyncio.CancelledError):
         await link._async_run()
+
+
+class TestAnOutageInTheLog:
+    """Said once on the way down and once on the way back, at info.
+
+    Every failed read and reconnect used to file its own warning: up to four
+    an hour each, for as long as JLR were down, while the entities stayed
+    available for three hours on what had already been read.
+    """
+
+    @staticmethod
+    def lines(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
+        return [
+            (record.levelno, record.getMessage())
+            for record in caplog.records
+            if record.name == datahub_link.__name__ and record.levelno >= logging.INFO
+        ]
+
+    async def test_failing_reads_are_said_once_and_their_recovery_once(
+        self,
+        hass: HomeAssistant,
+        linked: MockConfigEntry,
+        hub: Doubles,
+        broker: Broker,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        link, _ = bare_link(hass, linked, 3)
+        good = hub.datahub.status_result
+        hub.datahub.status_result = [DataHubError("502"), DataHubError("502"), good]
+        with caplog.at_level(logging.DEBUG, logger=datahub_link.__name__):
+            await run_status(link)
+        said = self.lines(caplog)
+        assert [level for level, _ in said] == [logging.INFO, logging.INFO]
+        assert "reads failing: 502" in said[0][1]
+        assert "reads working again" in said[1][1]
+
+    async def test_a_rate_limit_is_an_outage_like_any_other(
+        self,
+        hass: HomeAssistant,
+        linked: MockConfigEntry,
+        hub: Doubles,
+        broker: Broker,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        link, _ = bare_link(hass, linked, 2)
+        hub.datahub.status_result = [DataHubRateLimited(900), DataHubRateLimited(900)]
+        with caplog.at_level(logging.INFO, logger=datahub_link.__name__):
+            await run_status(link)
+        said = self.lines(caplog)
+        assert len(said) == 1
+        assert "asked to slow down for 900s" in said[0][1]
+
+    async def test_a_failing_stream_is_said_once_and_its_recovery_once(
+        self,
+        hass: HomeAssistant,
+        linked: MockConfigEntry,
+        hub: Doubles,
+        broker: Broker,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        link, _ = bare_link(hass, linked, 3)
+        hub.datahub.stream_result = [
+            DataHubError("503"),
+            DataHubError("503"),
+            hub.datahub.stream_result,
+        ]
+        broker.sessions.append(([], "time limit"))
+        with caplog.at_level(logging.DEBUG, logger=datahub_link.__name__):
+            await run(link)
+        said = [message for _, message in self.lines(caplog)]
+        failing = [message for message in said if "stream failing" in message]
+        assert len(failing) == 1
+        assert "503" in failing[0]
+        assert any("stream working again" in message for message in said)
+        assert not [
+            record
+            for record in caplog.records
+            if record.name == datahub_link.__name__
+            and record.levelno >= logging.WARNING
+        ]
+
+    async def test_reads_and_stream_are_told_apart(
+        self,
+        hass: HomeAssistant,
+        linked: MockConfigEntry,
+        hub: Doubles,
+        broker: Broker,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # One failing while the other works is half an outage, and the line
+        # should say which half.
+        link, _ = bare_link(hass, linked, 1)
+        with caplog.at_level(logging.INFO, logger=datahub_link.__name__):
+            link._went_down("stream", "503")
+            link._came_back("reads")
+            link._went_down("reads", "502")
+        said = [message for _, message in self.lines(caplog)]
+        assert len(said) == 2
+        assert "stream failing" in said[0]
+        assert "reads failing" in said[1]
 
 
 class TestSetUp:
@@ -317,7 +426,7 @@ class TestTheLoop:
         await run(link)
         assert 600 <= pause.waits[0] <= 720
 
-    async def test_a_revoked_link_stops_and_raises_a_repair(
+    async def test_a_revoked_link_stops_and_asks_to_be_linked_again(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
     ) -> None:
         link, pause = bare_link(hass, linked, 5)
@@ -325,27 +434,18 @@ class TestTheLoop:
         link.async_add_listener(lambda: updates.append(True))
         hub.datahub.refresh_result = DataHubAuthError("invalid_grant")
         await run_status(link)
+        await hass.async_block_till_done()
         assert link.signed_out
         assert pause.waits == []  # no retrying an answer that cannot change
         assert updates
-        issue = ir.async_get(hass).async_get_issue(
-            DOMAIN, f"datahub_signed_out_{linked.entry_id}"
+        assert reauths(hass, linked)
+        # A reauth, not the repair that used to say the same thing.
+        assert (
+            ir.async_get(hass).async_get_issue(
+                DOMAIN, f"datahub_signed_out_{linked.entry_id}"
+            )
+            is None
         )
-        assert issue is not None
-
-    async def test_a_working_renewal_clears_that_repair(
-        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
-    ) -> None:
-        link, _ = bare_link(hass, linked, 1)
-        hub.datahub.refresh_result = DataHubAuthError("invalid_grant")
-        await run_status(link)
-        hub.datahub.refresh_result = hub.datahub.tokens
-        link._tokens = None
-        await link._async_access_token()
-        issue = ir.async_get(hass).async_get_issue(
-            DOMAIN, f"datahub_signed_out_{linked.entry_id}"
-        )
-        assert issue is None
 
     async def test_a_stream_switched_off_is_asked_about_hourly(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker
@@ -382,11 +482,12 @@ class TestTheLoop:
         hub.datahub.stream_result = DataHubForbidden("not enabled")
         await link._async_stream_once()
         link._signed_out(DataHubAuthError("revoked"))
+        await hass.async_block_till_done()
         assert (
             issues.async_get_issue(DOMAIN, f"datahub_stream_off_{linked.entry_id}")
             is None
         )
-        assert issues.async_get_issue(DOMAIN, f"datahub_signed_out_{linked.entry_id}")
+        assert reauths(hass, linked)
 
     async def test_a_rejected_login_tries_each_way_once_on_one_broker(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, broker: Broker

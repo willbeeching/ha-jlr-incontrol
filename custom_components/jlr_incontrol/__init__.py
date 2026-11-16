@@ -15,6 +15,7 @@ from .const import (
     DATAHUB_ISSUES,
     DOMAIN,
     INCONTROL_KEYS,
+    ISSUE_DATAHUB_SIGNED_OUT,
     ISSUE_INCONTROL_RETIRED,
     ISSUE_PORTAL_SIGNED_OUT,
     PLATFORMS,
@@ -63,6 +64,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: JlrConfigEntry) -> bool:
     # Repairs raised before the id was scoped to the entry. Nothing will ever
     # clear these, so they would sit in Repairs forever.
     ir.async_delete_issue(hass, DOMAIN, ISSUE_PORTAL_SIGNED_OUT)
+    # Before 3.0.0-beta.2 a revoked link was a repair; it is a reauth now, and
+    # nothing raises or clears the repair any more.
+    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_DATAHUB_SIGNED_OUT}_{entry.entry_id}")
 
     entry.runtime_data = coordinator
     _async_drop_removed_platforms(hass, entry)

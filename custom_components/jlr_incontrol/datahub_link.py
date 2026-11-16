@@ -55,7 +55,6 @@ from .const import (
     DOMAIN,
     ISSUE_DATAHUB_CERTIFICATE,
     ISSUE_DATAHUB_LOCATION_REFUSED,
-    ISSUE_DATAHUB_SIGNED_OUT,
     ISSUE_DATAHUB_STATUS_REFUSED,
     ISSUE_DATAHUB_STREAM_OFF,
 )
@@ -434,6 +433,11 @@ class DataHubLink:
         self.account_id: str | None = settings.get(DATAHUB_ACCOUNT_ID)
         self._tokens: Tokens | None = None
         self._token_lock = asyncio.Lock()
+        # What is failing right now ("reads", "stream"), so an outage is said
+        # once on the way down and once on the way back rather than at every
+        # retry, which was up to four warnings an hour each for as long as it
+        # lasted.
+        self._down: set[str] = set()
         self._task: asyncio.Task[None] | None = None
         self._status_task: asyncio.Task[None] | None = None
         self._journey_task: asyncio.Task[None] | None = None
@@ -589,14 +593,16 @@ class DataHubLink:
                 self._signed_out(err)
                 return
             except DataHubRateLimited as err:
-                _LOGGER.warning(
-                    "Data Hub asked us to slow down for %.0fs", err.retry_after
+                self._went_down(
+                    "reads", f"asked to slow down for {err.retry_after:.0f}s"
                 )
                 wait = max(err.retry_after, wait)
             except DataHubError as err:
-                _LOGGER.warning("Data Hub status read failed: %s", err)
+                self._went_down("reads", str(err))
             except Exception:  # noqa: BLE001 - a background loop must not die
                 _LOGGER.exception("unexpected failure reading Data Hub status")
+            else:
+                self._came_back("reads")
             await self._pause(wait)
 
     async def _async_run(self) -> None:
@@ -625,8 +631,8 @@ class DataHubLink:
                 self._signed_out(err)
                 return
             except DataHubRateLimited as err:
-                _LOGGER.warning(
-                    "Data Hub asked us to slow down for %.0fs", err.retry_after
+                self._went_down(
+                    "stream", f"asked to slow down for {err.retry_after:.0f}s"
                 )
                 delay = max(err.retry_after, RECONNECT_FLOOR)
             except MqttRejected as err:
@@ -642,7 +648,7 @@ class DataHubLink:
             except (DataHubError, MqttError) as err:
                 self.stats["last_error"] = str(err)
                 delay = min(delay * 2, RECONNECT_CEILING)
-                _LOGGER.warning("Data Hub stream: %s; retrying in %.0fs", err, delay)
+                self._went_down("stream", f"{err}; retrying in {delay:.0f}s")
             except Exception:  # noqa: BLE001 - a background loop must not die
                 delay = min(delay * 2, RECONNECT_CEILING)
                 _LOGGER.exception("unexpected failure in the Data Hub stream")
@@ -654,29 +660,48 @@ class DataHubLink:
         """Every wait in the loop, in one place a test can stand in for."""
         await asyncio.sleep(seconds)
 
+    def _went_down(self, what: str, reason: str) -> None:
+        """Say a failure once at info, as the quality scale asks, then quietly.
+
+        Status falls back to the stream and the stream to status, and the
+        entities only go unavailable hours later, so a failure is news but
+        not yet a fault: info, not warning.
+        """
+        if what in self._down:
+            _LOGGER.debug("Data Hub %s still failing: %s", what, reason)
+            return
+        self._down.add(what)
+        _LOGGER.info(
+            "Data Hub %s failing: %s. Retrying; this is said again only once "
+            "it recovers",
+            what,
+            reason,
+        )
+
+    def _came_back(self, what: str) -> None:
+        if what in self._down:
+            self._down.discard(what)
+            _LOGGER.info("Data Hub %s working again", what)
+
     def _signed_out(self, err: Exception) -> None:
         _LOGGER.warning(
-            "JLR Data Hub no longer accepts this link (%s). Set it up again from "
-            "the integration's options.",
+            "JLR Data Hub no longer accepts this link (%s). Home Assistant will "
+            "ask for it to be linked again.",
             err,
         )
         self.signed_out = True
         self._set_connected(False)
         if self._on_signed_out is not None:
             self._on_signed_out()
-        # The link itself has gone, which is the repair that matters.
+        # The link itself has gone, which is what the owner needs to hear.
         ir.async_delete_issue(
             self.hass, DOMAIN, f"{ISSUE_DATAHUB_STREAM_OFF}_{self.entry.entry_id}"
         )
-        ir.async_create_issue(
-            self.hass,
-            DOMAIN,
-            f"{ISSUE_DATAHUB_SIGNED_OUT}_{self.entry.entry_id}",
-            is_fixable=False,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=ISSUE_DATAHUB_SIGNED_OUT,
-            translation_placeholders={"title": self.entry.title},
-        )
+        # A reauth rather than the repair this used to raise. The repair could
+        # only describe the linking steps and leave the owner to find them in
+        # the options; the reauth flow is those steps, on the integration's
+        # card, and keeps every entity.
+        self.entry.async_start_reauth(self.hass)
         self._notify()
 
     def _token_in_hand(self) -> str | None:
@@ -706,9 +731,6 @@ class DataHubLink:
                 self.vehicles = tokens.vehicles
             if tokens.account_id:
                 self.account_id = tokens.account_id
-            ir.async_delete_issue(
-                self.hass, DOMAIN, f"{ISSUE_DATAHUB_SIGNED_OUT}_{self.entry.entry_id}"
-            )
             self._persist(tokens)
             return tokens.access_token
 
@@ -1369,6 +1391,7 @@ class DataHubLink:
         self.broker = host
         self._login = login
         self._shape = shape
+        self._came_back("stream")
         self.stats["sessions"] += 1
         self._set_connected(True)
 

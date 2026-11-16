@@ -16,7 +16,9 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
+from conftest import DATAHUB  # noqa: E402
 from doubles import KEPT, Doubles, FakeDataHub  # noqa: E402
+from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -399,3 +401,106 @@ class TestLinkingAgain:
         )
         menu = await hass.config_entries.options.async_init(entry.entry_id)
         assert "datahub_relink" in menu["menu_options"]
+
+
+class TestLinkingAgainWhenJlrStopAccepting:
+    """A revoked link is a reauth: the linking steps, on the entry's own card."""
+
+    @pytest.fixture
+    def entry(self, hass: HomeAssistant) -> MockConfigEntry:
+        """An entry on the Data Hub, whose client JLR will stop accepting."""
+        created = MockConfigEntry(
+            domain="jlr_incontrol",
+            title="JLR Data Hub",
+            data={"datahub": {**DATAHUB, "client_id": "dsas-old"}},
+            unique_id="acct-1",
+            version=1,
+            minor_version=2,
+        )
+        created.add_to_hass(hass)
+        return created
+
+    async def revoked(self, hass: HomeAssistant, entry: MockConfigEntry) -> str:
+        """Set it up, have JLR refuse it, and return the reauth JLR's no started."""
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        entry.runtime_data.datahub._signed_out(DataHubAuthError("invalid_grant"))
+        await hass.async_block_till_done()
+        (flow,) = [
+            flow
+            for flow in hass.config_entries.flow.async_progress_by_handler(
+                "jlr_incontrol"
+            )
+            if flow["context"]["source"] == "reauth"
+        ]
+        return str(flow["flow_id"])
+
+    async def relink(self, hass: HomeAssistant, flow_id: str) -> dict[str, Any]:
+        result = await hass.config_entries.flow.async_configure(flow_id)
+        assert result["step_id"] == "reauth_confirm"
+        result = await hass.config_entries.flow.async_configure(flow_id, {})
+        # The same certificate step as the first link.
+        assert result["step_id"] == "datahub"
+        result = await hass.config_entries.flow.async_configure(
+            flow_id, {"client_id": "dsas-new"}
+        )
+        return await finish_setup(hass, result)
+
+    async def test_it_links_the_same_entry_again(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        result = await self.relink(hass, await self.revoked(hass, entry))
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "reauth_successful"
+        stored = entry.data["datahub"]
+        assert stored["client_id"] == "dsas-new"
+        assert stored["private_key"] == credentials().private_key
+        assert stored["refresh_token"] == "offline-2"
+        # One entry still, reloaded and reading again.
+        assert len(hass.config_entries.async_entries("jlr_incontrol")) == 1
+        assert not entry.runtime_data.datahub.signed_out
+
+    async def test_another_accounts_client_is_refused(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        flow_id = await self.revoked(hass, entry)
+        hass.config_entries.async_update_entry(
+            entry,
+            data={"datahub": {**entry.data["datahub"], "account_id": "acct-2"}},
+        )
+        result = await self.relink(hass, flow_id)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "wrong_account"
+        assert entry.data["datahub"]["client_id"] == "dsas-old"
+
+    async def test_a_link_refused_at_startup_stops_retrying_and_asks(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Retrying setup would spend a request on the refused token each time,
+        # for as long as nobody relinked.
+        build = datahub_link.DataHubClient
+
+        def refused(*args: Any, **kwargs: Any) -> Any:
+            fake = build(*args, **kwargs)
+            fake.refresh_result = DataHubAuthError("invalid_grant")
+            return fake
+
+        monkeypatch.setattr(datahub_link, "DataHubClient", refused)
+        started = time.monotonic()
+        await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        # Woken by the refusal, not by the first-status timeout.
+        assert time.monotonic() - started < 10
+        assert entry.state is ConfigEntryState.SETUP_ERROR
+        assert [
+            flow
+            for flow in hass.config_entries.flow.async_progress_by_handler(
+                "jlr_incontrol"
+            )
+            if flow["context"]["source"] == "reauth"
+        ]

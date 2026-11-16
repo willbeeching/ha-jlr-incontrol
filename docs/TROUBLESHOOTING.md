@@ -16,9 +16,10 @@ redacted, so it is safe to attach to a public issue.
   entities and their history are all kept. Follow [DATA_HUB.md](DATA_HUB.md) from **Configure →
   Link the JLR Data Hub**; the entities pick up again as soon as it is linked. Deleting and
   re-adding the integration instead loses the entity ids your automations and dashboards use.
-- **The repair says the link stopped working.** JLR no longer accept it: the client was deleted
-  at data.jlr.com, its certificate was replaced, or consent was withdrawn. Choose **Configure →
-  Link the JLR Data Hub again**; the entities are kept.
+- **The integration asks to be reconfigured.** JLR no longer accept the link: the client was
+  deleted at data.jlr.com, its certificate was replaced, or consent was withdrawn. Choose
+  **Reconfigure** on it under **Settings → Devices & Services**; it runs the same steps as the
+  first link, on the same entry, and the entities are kept.
 - **The repair says the link needs renewing.** The certificate lasts a year. **Link the JLR Data
   Hub again** makes a new one to paste at data.jlr.com, the same way as the first time.
 
@@ -80,12 +81,15 @@ for all of them at once, set **Distance unit** to Kilometres under Configure. Se
 
 - **After upgrading to 3.0.** The entry was on the InControl sign-in alone; see
   [above](#home-assistant-asks-me-to-link-the-data-hub).
-- **With a repair about the link.** Do what it says; see
+- **With the integration asking to be reconfigured, or a repair about the link.** Do what it
+  says; see
   [above](#home-assistant-asks-me-to-link-the-data-hub).
 - **Otherwise.** Readings are kept for three hours after the last good read before anything is
-  marked unavailable, so this means JLR have not answered for that long. Check **Settings → System
-  → Logs** for `Data Hub status read failed` or `Data Hub stream:`; the reason is on that line. The
-  integration keeps retrying with a growing backoff and recovers on its own once JLR do.
+  marked unavailable, so this means JLR have not answered for that long. The integration keeps
+  retrying with a growing backoff and recovers on its own once JLR do. It says so once when reads
+  or the stream start failing (`Data Hub reads failing: …`, `Data Hub stream failing: …`, with the
+  reason) and once when they work again. Those lines are at info, which Home Assistant does not
+  show by default: [turn on debug logging](#turning-on-debug-logging) to see them.
 - **Location and the refresh button still work.** That is correct — they do not depend on the
   latest read.
 

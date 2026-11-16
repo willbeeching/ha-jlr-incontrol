@@ -16,6 +16,7 @@ from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
+from homeassistant.helpers import issue_registry as ir  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
@@ -52,6 +53,24 @@ class TestSetup:
     ) -> None:
         assert loaded.link.started
         assert loaded.link.details_asked == 1
+
+    async def test_a_repair_an_earlier_version_left_is_cleared(
+        self, hass: HomeAssistant, entry: MockConfigEntry, doubles: Doubles
+    ) -> None:
+        # A revoked link was a repair before 3.0.0-beta.2 and is a reauth now,
+        # so nothing else would ever take the old one down.
+        issue_id = f"datahub_signed_out_{entry.entry_id}"
+        ir.async_create_issue(
+            hass,
+            "jlr_incontrol",
+            issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="datahub_signed_out",
+        )
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert ir.async_get(hass).async_get_issue("jlr_incontrol", issue_id) is None
 
 
 class TestSetupFailures:

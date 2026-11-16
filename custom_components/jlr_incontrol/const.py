@@ -49,8 +49,8 @@ DATAHUB_CERTIFICATE = "certificate"
 DATAHUB_REFRESH_TOKEN = "refresh_token"
 DATAHUB_VEHICLES = "vehicles"
 DATAHUB_ACCOUNT_ID = "account_id"
-# Raised when JLR stop accepting the link (client deleted, certificate
-# replaced, consent withdrawn). Only setting it up again can fix that.
+# Raised before 3.0.0-beta.2 when JLR stopped accepting the link. That is a
+# reauth now; the id is kept only to clear a repair an earlier version left.
 ISSUE_DATAHUB_SIGNED_OUT = "datahub_signed_out"
 # The stream is a switch on the client at data.jlr.com that setup asks for and
 # nothing else checks. Off, everything still works, a reading at a time on the

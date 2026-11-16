@@ -70,21 +70,25 @@ rules:
       trusted attribute, about the age of the fix.
   integration-owner: done
   log-when-unavailable:
-    status: todo
+    status: done
     comment: >-
-      Was done for the InControl telemetry socket, which 3.0.0 removed. The
-      Data Hub link logs every failed status read and every failed stream
-      connection at warning, so an outage files one line per status interval
-      and per reconnect (at most every 15 minutes each, with backoff) rather
-      than one on the way down and one on the way back.
+      Once on the way down and once on the way back, at info, for the Data
+      Hub's reads and its stream separately, with the retries in between at
+      debug. The 3.0.0-beta.1 link logged every failed read and reconnect at
+      warning, up to four lines an hour each for as long as an outage lasted;
+      the InControl socket had been put right the same way before it was
+      removed.
   parallel-updates: done
   reauthentication-flow:
-    status: todo
+    status: done
     comment: >-
-      Was done for the InControl sign-in, which 3.0.0 removed. A Data Hub link
-      JLR stop accepting raises a repair pointing to the options' "Link the JLR
-      Data Hub again", which runs the same steps as the first link and keeps
-      every entity. It is not yet offered as a reauth flow.
+      A Data Hub link JLR stop accepting starts a reauth, which runs the same
+      steps as the first link on the same entry and keeps every entity. Found
+      at startup it fails setup as auth failed rather than not ready, so a
+      refresh token JLR have refused is not tried again on every retry. A
+      client from a different JLR account is refused, since its cars are not
+      this entry's. Until 3.0.0-beta.2 this was a repair that could only
+      describe the steps.
   test-coverage:
     status: done
     comment: >-
@@ -130,8 +134,8 @@ rules:
     comment: >-
       Every failure a person can act on carries a translation key: a refresh
       that read nothing, a refresh pressed again inside the minute, setup
-      finding no status for any car, and setup held back while a car's EV
-      readings are failing.
+      finding no status for any car, setup held back while a car's EV
+      readings are failing, and setup finding the link refused.
   icon-translations: done
   reconfiguration-flow:
     status: todo
@@ -142,9 +146,10 @@ rules:
   repair-issues:
     status: done
     comment: >-
-      Each condition that needs a person is a repair naming what to do and
-      where: an entry from the InControl sign-in waiting for the Data Hub, a
-      link JLR no longer accept, a certificate within 30 days of running out,
+      Each condition that needs a person, other than a refused link (a
+      reauth), is a repair naming what to do and where: an entry from the
+      InControl sign-in waiting for the Data Hub, a certificate within 30 days
+      of running out,
       the stream switched off, and a car whose status or location JLR refuse.
       None is fixable from Home Assistant alone, because the fix is at
       data.jlr.com or is the options' linking steps, so each says how and
