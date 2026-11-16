@@ -277,7 +277,16 @@ class TestSetUp:
     ) -> None:
         broker.sessions.append(
             (
-                [(TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T15:00:00Z"))],
+                [
+                    (
+                        TOPIC,
+                        message(
+                            "Vehicle.TraveledDistance",
+                            "2026-11-07T15:00:00Z",
+                            12350000,
+                        ),
+                    )
+                ],
                 "x",
             )
         )
@@ -828,6 +837,135 @@ class TestRefresh:
         hub.datahub.ev_result = DataHubError("500")
         assert await link.async_read_now() is False
         assert KEPT not in link._read_in_full
+
+
+def in_unit(name: str, when: str, value: Any, unit: str | None) -> bytes:
+    """A streamed signal in the broker's own shape, numbers as text."""
+    return json.dumps(
+        [
+            {
+                "dataType": "double",
+                "signalName": name.removeprefix("Vehicle."),
+                "vssIdentifier": name,
+                "signalTimestamp": when,
+                "signalValue": str(value),
+                "unit": unit,
+            }
+        ]
+    ).encode()
+
+
+class TestStreamedDistances:
+    """The stream says its own unit, and it is not always REST's.
+
+    A Defender's odometer came down the stream as 19156 while REST held it in
+    metres, some 30.8 million, and read 11 miles until the next REST read.
+    """
+
+    @pytest.fixture
+    async def link(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> DataHubLink:
+        return DataHubLink(hass, linked)
+
+    async def statuses(self, hass: HomeAssistant, link: DataHubLink) -> Any:
+        seen: list[dict[str, str]] = []
+        link._on_status = lambda _, status: seen.append(status)
+        await link._async_read_status()
+        return seen
+
+    async def test_an_odometer_in_miles_is_read_as_miles(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        assert seen[-1]["ODOMETER_METER"] == "12345000"
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "1794830000000", 7671, "mi"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "12345278"
+        assert seen[-1]["ODOMETER_MILES"] == "7671"
+        assert link.diagnostics()["stats"]["units"] == {
+            "Vehicle.TraveledDistance": "mi"
+        }
+
+    @pytest.mark.parametrize(
+        ("value", "unit", "expected"),
+        [
+            (12346, "km", "12346000"),
+            (12346000, "m", "12346000"),
+            (12346000, None, "12346000"),
+        ],
+    )
+    async def test_an_odometer_in_km_or_metres_is_read_as_such(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        value: int,
+        unit: str | None,
+        expected: str,
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", value, unit)
+        )
+        assert seen[-1]["ODOMETER_METER"] == expected
+
+    async def test_a_lower_odometer_is_not_taken(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # Whatever the reason, unit or otherwise: taken, Home Assistant counts
+        # a total_increasing sensor going down as the meter being reset, and
+        # adds the whole mileage again when the right figure returns.
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", 19156, None)
+        )
+        assert seen[-1]["ODOMETER_METER"] == "12345000"
+        assert link.stats["unconverted"] == 1
+
+    async def test_a_range_in_miles_is_read_in_km(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC,
+            in_unit(
+                "Vehicle.Powertrain.FuelSystem.Range", "1794830000000", 125, "miles"
+            ),
+        )
+        assert seen[-1]["DISTANCE_TO_EMPTY_FUEL"] == "201.2"
+
+    async def test_a_unit_not_known_here_is_left_for_rest(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        before = seen[-1].get("DISTANCE_TO_EMPTY_FUEL")
+        link._on_message(
+            TOPIC,
+            in_unit(
+                "Vehicle.Powertrain.FuelSystem.Range", "1794830000000", 9, "furlong"
+            ),
+        )
+        assert seen[-1].get("DISTANCE_TO_EMPTY_FUEL") == before
+        assert link.stats["unconverted"] == 1
+        assert link.stats["units"]["Vehicle.Powertrain.FuelSystem.Range"] == "furlong"
+
+    async def test_a_reading_that_is_not_a_distance_keeps_its_unit(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC,
+            in_unit(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+                "1794830000000",
+                55,
+                "percent",
+            ),
+        )
+        assert seen[-1]["FUEL_LEVEL_PERC"] == "55"
 
 
 class TestWhatTheStreamProves:
