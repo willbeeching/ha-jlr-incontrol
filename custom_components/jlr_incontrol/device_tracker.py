@@ -35,9 +35,9 @@ async def async_setup_entry(
 class JlrDeviceTracker(JlrVehicleEntity, TrackerEntity):
     """Reports the vehicle's last known GPS position.
 
-    Read from the owner web portal, not the telemetry socket — the two fail
-    independently, and a socket outage must not hide a position the portal
-    fetched successfully minutes ago.
+    From the Data Hub's location, read with status and delivered by the stream
+    when a journey ends. Its age is its own honesty signal, so a status read
+    failing does not hide a position fetched minutes ago.
     """
 
     _requires_telemetry = False

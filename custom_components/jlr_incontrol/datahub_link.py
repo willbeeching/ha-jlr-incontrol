@@ -1,12 +1,9 @@
-"""The running link to the JLR Data Hub, for an entry that has one set up.
+"""The running link to the JLR Data Hub: where every reading comes from.
 
-Optional. When it is set up and covers every car on the account, it is where
-vehicle status comes from, in place of the telemetry socket: the coordinator
-hands it a callback and it delivers socket-shaped status (see vss.py), so the
-entities neither know nor care which one is talking. Location comes from the
-Data Hub for each car declared at data.jlr.com, read with every status update;
-a car JLR refuse is asked hourly, and an owner-portal session, where one is
-signed in, feeds the same newest-wins handling.
+The coordinator hands it callbacks and it delivers status in the shape the
+old InControl socket used (see vss.py), so the entities did not change when
+the source did. Location comes from the Data Hub for each car declared at
+data.jlr.com, read with every status update; a car JLR refuse is asked hourly.
 
 The sources, all of them JLR's documented API:
 
@@ -48,8 +45,6 @@ from homeassistant.util.ssl import client_context
 
 from .const import (
     CONF_DATAHUB,
-    CONF_REFRESH_TOKEN,
-    CONF_SSO_COOKIES,
     DATAHUB_ACCOUNT_ID,
     DATAHUB_CERTIFICATE,
     DATAHUB_CLIENT_ID,
@@ -806,14 +801,9 @@ class DataHubLink:
                 0.0 if answer.startswith("permitted") else now + LOCATION_INTERVAL
             )
         refused = {v for v, a in self.location.items() if a.startswith("refused")}
-        # Not for an owner who has the portal's location instead: they chose
-        # that, and the tracker is not missing anything.
-        portal = self.entry.data.get(CONF_SSO_COOKIES) or self.entry.data.get(
-            CONF_REFRESH_TOKEN
-        )
         self._set_issue(
             ISSUE_DATAHUB_LOCATION_REFUSED,
-            bool(refused) and not portal,
+            bool(refused),
             cars=self._car_names(refused),
         )
 

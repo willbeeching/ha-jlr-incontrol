@@ -1,46 +1,9 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Connect to Jaguar Land Rover",
-        "description": "There are two ways to connect, and both give the same entities. Starting with the InControl sign-in does not shut you out of the Data Hub: it can be linked later from the integration's options, keeping every entity and its history.\n\n**JLR Data Hub**: JLR's official API for owners, not limited to the UK and EU. Use it if data.jlr.com lists your cars.\n- You need a JLR account with your cars listed at data.jlr.com, and your phone to approve the link.\n- No InControl email or password.\n- Status is read every 15 minutes, and arrives as it happens once JLR's stream is delivering.\n- Location comes from it too, once each car is declared at data.jlr.com as having a sole or shared user.\n- A beta: new, and still being tested.\n\n**InControl sign-in**: the connection JLR's own app uses, worked out from the app rather than documented by JLR.\n- For anyone whose cars data.jlr.com does not list, or who cannot use the Data Hub.\n- You need your InControl email and password, and your inbox open for the code JLR email you.\n- Status is pushed within minutes. Location and car names come from JLR's owner portal.\n- JLR could change it or switch it off without notice.",
-        "menu_options": {
-          "datahub": "JLR Data Hub (recommended)",
-          "incontrol": "InControl sign-in"
-        }
-      },
-      "incontrol": {
-        "title": "Jaguar Land Rover InControl",
-        "description": "The connection JLR's own app uses. Sign in with the email and password for your Land Rover Remote or InControl account. JLR will email you a verification code to finish, so have your inbox open; the code expires quickly.\n\nIn the UK or the EU? The JLR Data Hub is JLR's official route and needs no password: go back and choose it instead.",
-        "data": {
-          "username": "Email",
-          "password": "Password"
-        }
-      },
-      "code": {
-        "title": "Enter your verification code",
-        "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.\n\nThe code expires quickly, so enter it as soon as it arrives — if the sign-in session times out you'll be asked for your password again.",
-        "data": {
-          "code": "Verification code"
-        }
-      },
-      "reauth_confirm": {
-        "title": "Sign in to Jaguar Land Rover again",
-        "description": "The saved sign-in for {email} has expired, so vehicle location and names can no longer be refreshed. Live vehicle status is unaffected and keeps working throughout. Enter your password and JLR will email a new verification code. Your entities, history and automations are kept.",
-        "data": {
-          "password": "Password"
-        }
-      },
-      "reconfigure": {
-        "title": "Sign in again",
-        "description": "Signing in again for {email}. This keeps your existing entities, history and automations — nothing is removed.\n\nIt also refreshes the session used to read your vehicle's location and name, which cannot be renewed automatically. Jaguar Land Rover will email you a verification code, so have your inbox open.",
-        "data": {
-          "password": "Password"
-        }
-      },
       "datahub": {
         "title": "Link the JLR Data Hub",
-        "description": "A few minutes at the JLR portal, with your phone to hand for the last step. This is a beta; the [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories. For location, also complete each car's declaration there and say whether you are its **sole user** or a **shared user**: JLR refuse a car's location until it is declared.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
+        "description": "A few minutes at the JLR portal, with your phone to hand for the last step. The [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories. For location, also complete each car's declaration there and say whether you are its **sole user** or a **shared user**: JLR refuse a car's location until it is declared.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
         "data": {
           "client_id": "Client ID"
         },
@@ -50,20 +13,11 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid email or password.",
       "cannot_connect": "Could not reach the Jaguar Land Rover servers.",
-      "invalid_code": "That verification code was not accepted. Check the email and try again.",
-      "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details.",
-      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit.",
-      "api_rejected": "Signed in successfully, but Jaguar Land Rover then refused the connection. Check the logs for the reason and please report it.",
-      "cannot_reach_api": "Signed in successfully, but Home Assistant could not reach Jaguar Land Rover's vehicle servers — this looks like a DNS or network problem on your side rather than a problem with your account. Check that your DNS can resolve jlrmotor.com, including any Pi-hole, AdGuard or router-level filtering.",
       "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown on this page. If you opened this step more than once, the certificate changed: paste the current one into the client again, or create a new client with it."
     },
     "abort": {
       "already_configured": "This account is already set up. If you can't see it, the existing entry may be disabled — go to Settings → Devices & Services, find Jaguar Land Rover InControl and enable it (it will then ask you to sign in again). Delete the existing entry first if you'd rather start fresh.",
-      "reauth_successful": "Signed in again successfully.",
-      "unknown_entry": "That integration entry no longer exists.",
-      "reconfigure_successful": "Signed in again successfully.",
       "datahub_denied": "The link was declined on the JLR sign-in page.",
       "datahub_expired": "The code expired before it was approved. Start adding the integration again to get a new one; the certificate will be new too, so paste it into the client again.",
       "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
@@ -79,10 +33,7 @@
         "title": "Jaguar Land Rover InControl options",
         "menu_options": {
           "settings": "Units and readings",
-          "datahub": "Link the JLR Data Hub (beta)",
-          "datahub_remove": "Unlink the JLR Data Hub",
-          "location": "InControl sign-in for location",
-          "incontrol_remove": "Remove the InControl sign-in",
+          "datahub": "Link the JLR Data Hub",
           "datahub_relink": "Link the JLR Data Hub again"
         }
       },
@@ -99,36 +50,13 @@
       },
       "datahub": {
         "title": "Link the JLR Data Hub",
-        "description": "JLR's Data Hub is their official API for owners. Once it is linked, your cars' status (doors, locks, windows, tyres, fuel, mileage and the rest) comes from it instead of the InControl connection, under the same entities, with the time each car actually reported. Location comes from the Data Hub as well for each car declared at the portal (see step 1); a car that is not keeps its location from the owner portal. If the link ever stops working, the integration falls back to the InControl connection by itself.\n\nThis is a beta. The [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories. For location, also complete each car's declaration there and say whether you are its **sole user** or a **shared user**: JLR refuse a car's location until it is declared.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
+        "description": "JLR's Data Hub is their official API for owners, and since version 3.0.0 the only way this integration reads your cars. Once it is linked, every entity comes back as it was, with its history. The [setup guide]({guide}) has more detail.\n\n1. Sign in at [{portal}]({portal}) with your JLR account and create a client. Choose **device-based**, select your vehicles and all data categories. For location, also complete each car's declaration there and say whether you are its **sole user** or a **shared user**: JLR refuse a car's location until it is declared.\n2. When it asks for a public certificate, paste this whole block, including the BEGIN and END lines. The private key that matches it was made here and never leaves Home Assistant. A new certificate is made each time you open this step, so always paste the one shown here.\n\n```\n{certificate}\n```\n\n3. Turn **Toggle your stream** on for the client. You do not need the portal's **Link your device** button: Home Assistant gives you its own link on the next step.\n4. Copy the client ID it shows and enter it below.",
         "data": {
           "client_id": "Client ID"
         },
         "data_description": {
           "client_id": "Shown on the client's page at data.jlr.com, and looks like dsas-0123456789ab."
         }
-      },
-      "datahub_remove": {
-        "title": "Unlink the JLR Data Hub",
-        "description": "Home Assistant forgets the link and its key. The client you created at data.jlr.com stays until you delete it there, which you can now do."
-      },
-      "location": {
-        "title": "Sign in to InControl for location",
-        "description": "The Data Hub gives location for each car declared at data.jlr.com as having a sole or shared user, and that is the simpler route. If you would rather not declare, JLR's owner portal gives location instead, and needs your InControl sign-in. It is used for location and your cars' names only; status keeps coming from the Data Hub, and your password is not kept.",
-        "data": {
-          "username": "Email",
-          "password": "Password"
-        }
-      },
-      "location_code": {
-        "title": "Enter your verification code",
-        "description": "JLR has emailed a code to {email}. Enter it here to finish signing in.\n\nThe code expires quickly, so enter it as soon as it arrives — if the sign-in session times out you'll be asked for your password again.",
-        "data": {
-          "code": "Verification code"
-        }
-      },
-      "incontrol_remove": {
-        "title": "Remove the InControl sign-in",
-        "description": "Home Assistant forgets your InControl email, sign-in and owner portal session, and uses only the JLR Data Hub from now on. Every entity and its history is kept: status, cars and location keep coming from the Data Hub.\n\nWhat goes with it:\n- the fallback: if the Data Hub link ever stops working, the readings stop until you link it again, instead of switching to the InControl connection;\n- location from the owner portal for any car not declared at data.jlr.com. Declare it there to get its location from the Data Hub.\n\nYou can sign in to InControl again later from these options, for location only."
       }
     },
     "progress": {
@@ -136,19 +64,13 @@
     },
     "error": {
       "datahub_rejected": "JLR did not accept this client. Check the client ID, and that the certificate pasted at data.jlr.com is the one shown on this page. If you opened this step more than once, the certificate changed: paste the current one into the client again, or create a new client with it.",
-      "cannot_connect": "Could not reach the Jaguar Land Rover servers.",
-      "invalid_auth": "Invalid email or password.",
-      "invalid_code": "That verification code was not accepted. Check the email and try again.",
-      "unsupported_journey": "JLR's sign-in did not follow the expected steps for this account. Please open an issue on GitHub with the details."
+      "cannot_connect": "Could not reach the Jaguar Land Rover servers."
     },
     "abort": {
       "datahub_denied": "The link was declined on the JLR sign-in page.",
       "datahub_expired": "The code expired before it was approved. Open the options and choose **Link the JLR Data Hub** again to get a new one; the certificate will be new too, so paste it into the client again.",
       "datahub_rejected": "JLR stopped accepting this client during sign-in. Check it at data.jlr.com and start again.",
-      "unknown": "The link could not be completed.",
-      "location_failed": "The InControl sign-in did not complete. Try again from the options; status from the Data Hub is unaffected.",
-      "session_expired": "Your sign-in session with JLR expired before the code was accepted — the window is short. Enter your password again and JLR will send a new code; have your email open before you submit.",
-      "datahub_not_working": "The Data Hub link is not working, so the InControl sign-in is the only thing this entry has. Link the Data Hub again first."
+      "unknown": "The link could not be completed."
     }
   },
   "selector": {
@@ -685,26 +607,19 @@
   },
   "exceptions": {
     "refresh_failed": {
-      "message": "Could not refresh from Jaguar Land Rover. Nothing already on screen is lost, and the telemetry socket reconnects on its own every few minutes, so this usually clears itself. Pressing again in a moment is worth a try."
+      "message": "Could not refresh from Jaguar Land Rover. Nothing already on screen is lost, and the next scheduled read tries again on its own. Pressing again in a moment is worth a try."
     },
     "refresh_too_soon": {
-      "message": "Refreshed less than a minute ago. The account housekeeping has just run, but the parked location and the vehicle snapshot are each floored at one forced read a minute — asking Jaguar Land Rover again this soon would return what you already have. Try again shortly."
-    },
-    "no_telemetry": {
-      "message": "Signed in to Jaguar Land Rover, but no vehicle data arrived over the telemetry connection within {seconds} seconds. Home Assistant will keep retrying."
-    },
-    "auth_failed": {
-      "message": "Jaguar Land Rover refused the stored sign-in ({error}). You will need to sign in again, with a fresh verification code."
+      "message": "Refreshed less than a minute ago. Jaguar Land Rover answer with what the car last reported, so asking again this soon would return what you already have. Try again shortly."
     },
     "datahub_ev_waiting": {
       "message": "Jaguar Land Rover answered the Data Hub status read, but its battery and charging data failed for {cars} ({error}). The car's status is held back until that answers, so a first reading without battery data cannot remove its battery sensors and their history. Home Assistant will keep retrying."
+    },
+    "no_status": {
+      "message": "Linked to the JLR Data Hub, but no vehicle status arrived within {seconds} seconds. Home Assistant will keep retrying."
     }
   },
   "issues": {
-    "portal_signed_out": {
-      "title": "Sign in again to restore vehicle location",
-      "description": "Jaguar Land Rover's sign-in session has expired. Live vehicle status is unaffected and keeps working, but location and vehicle names cannot be refreshed until you sign in again — and the location is reported as unknown rather than showing a position that may be out of date.\n\nGo to the Jaguar Land Rover InControl entry, open the menu on it and choose **Reconfigure**, then enter your password and the code JLR emails you. Your entities, history and automations are kept."
-    },
     "datahub_signed_out": {
       "title": "JLR Data Hub link stopped working for {title}",
       "description": "JLR no longer accept the Data Hub link for this account. That happens when the client is deleted or its certificate replaced at data.jlr.com, or consent is withdrawn. Everything else carries on. To link it again, open the integration's options and choose **Link the JLR Data Hub again**."
@@ -724,6 +639,10 @@
     "datahub_certificate_expiring": {
       "title": "The JLR Data Hub link for {title} needs renewing by {date}",
       "description": "The certificate behind the Data Hub link lasts a year, and JLR stop accepting it on {date}. After that the cars stop updating.\n\nTo renew it: open the integration's options and choose **Link the JLR Data Hub again**. It shows a new certificate to paste at data.jlr.com, the same way as when you first set it up. Everything keeps working until then."
+    },
+    "incontrol_retired": {
+      "title": "Link the JLR Data Hub for {title}",
+      "description": "This entry was set up on the InControl sign-in, which version 3.0.0 removed. Until the JLR Data Hub is linked it reads nothing, but its devices, entities and their history are all kept.\n\nTo link it: **Settings → Devices & Services → Jaguar Land Rover InControl → Configure → Link the JLR Data Hub**. You will need to sign in at data.jlr.com, create a client for your cars and approve the link on your phone. For location, also declare each car there as having a sole or shared user. Once it is linked, every entity comes back as it was."
     }
   }
 }

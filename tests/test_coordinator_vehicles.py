@@ -1,10 +1,9 @@
 """Selling a car has to actually remove it, not just hide it.
 
-The vehicle list from JLR is authoritative, and the coordinator already
-stopped showing a car that has left the account. What it went on doing was
-everything else: asking the owner portal for that car's location on every
-cycle, and keeping its nickname and registration in the config entry, where
-diagnostics would report them indefinitely.
+The cars on the Data Hub link are authoritative, and the coordinator already
+stopped showing a car that has left the account. What it went on doing, in an
+earlier version, was everything else: keeping its nickname and registration
+in the config entry, where diagnostics would report them indefinitely.
 
 These need a real Home Assistant to import the coordinator at all, so they are
 skipped where one is not installed and run in the CI lane that has one.
@@ -23,31 +22,9 @@ pytest.importorskip("homeassistant", reason="coordinator behaviour needs a core"
 
 from homeassistant.util import dt as dt_util  # noqa: E402
 from jlr.coordinator import JlrCoordinator  # noqa: E402
-from jlr.portal import Dashboard  # noqa: E402
 
 KEPT = "SAJAA1234567890AB"
 SOLD = "SALBB9876543210CD"
-
-
-class FakePortal:
-    """Records which vehicles it was asked about."""
-
-    configured = True
-    session_age = "0:01:00"
-
-    def __init__(self, listing: dict[str, dict[str, Any]] | None = None) -> None:
-        self._listing = listing or {}
-        self.asked: list[str] = []
-        self.position: dict[str, Any] = {"latitude": 51.5, "longitude": -0.1}
-        self.trail: dict[str, Any] = {"points": 3, "span": "0:30:00"}
-
-    async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
-        # Copies: the real caller pops "portal_id" out of each record.
-        return {vin: dict(record) for vin, record in self._listing.items()}
-
-    async def async_read_dashboard(self, portal_id: str) -> Dashboard:
-        self.asked.append(portal_id)
-        return Dashboard(dict(self.position), dict(self.trail))
 
 
 def coordinator(**state: Any) -> JlrCoordinator:
@@ -63,24 +40,16 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_attributes": {},
         "_attributes_attempted": {},
         "_status": {},
-        "_pushed_at": {},
         "_position": {},
-        "_portal_ids": {},
         "_last_status_seen": {},
         "_last_changed": {},
         "_unsettled_since": {},
         "_volatile_seen": {},
-        "_snapshot_seen": {},
         "_decayed_since": {},
         "_decayed_seen": {},
         "_position_read_at": {},
-        "_trail": {},
         "_awaiting": set(),
         "_snapshots_ready": asyncio.Event(),
-        "_portal_signed_out": None,
-        "_portal_due": None,
-        "_portal_vehicles_due": None,
-        "_portal_read_at": None,
     }
     for name, value in {**defaults, **state}.items():
         setattr(instance, name, value)
@@ -98,18 +67,14 @@ def with_both_cars(**state: Any) -> JlrCoordinator:
         "_attributes": {KEPT: {"nickname": "Keeper"}, SOLD: {"nickname": "Sold"}},
         "_attributes_attempted": {KEPT: 1.0, SOLD: 1.0},
         "_status": {KEPT: {"ODOMETER": "1"}, SOLD: {"ODOMETER": "2"}},
-        "_pushed_at": {KEPT: "t1", SOLD: "t2"},
         "_position": {KEPT: {"latitude": 1}, SOLD: {"latitude": 2}},
-        "_portal_ids": {KEPT: "id-kept", SOLD: "id-sold"},
         "_last_status_seen": {KEPT: {}, SOLD: {}},
         "_last_changed": {KEPT: "t1", SOLD: "t2"},
         "_unsettled_since": {KEPT: "t1", SOLD: "t2"},
         "_volatile_seen": {KEPT: {}, SOLD: {}},
-        "_snapshot_seen": {KEPT: asyncio.Event(), SOLD: asyncio.Event()},
         "_decayed_since": {KEPT: "t1", SOLD: "t2"},
         "_decayed_seen": {KEPT: {}, SOLD: {}},
         "_position_read_at": {},
-        "_trail": {KEPT: {"points": 1}, SOLD: {"points": 2}},
     }
     return coordinator(**{**both, **state})
 
@@ -118,17 +83,13 @@ CACHES = (
     "_attributes",
     "_attributes_attempted",
     "_status",
-    "_pushed_at",
     "_position",
-    "_portal_ids",
     "_last_status_seen",
     "_last_changed",
     "_unsettled_since",
     "_volatile_seen",
-    "_snapshot_seen",
     "_decayed_since",
     "_decayed_seen",
-    "_trail",
 )
 
 
@@ -158,137 +119,6 @@ class TestForgetting:
         assert coord._snapshots_ready.is_set(), "nothing left to wait for"
 
 
-class TestPositionRequests:
-    """A removed car must stop being asked after by name."""
-
-    async def test_only_current_vehicles_are_located(self) -> None:
-        portal = FakePortal()
-        coord = with_both_cars(
-            _vehicles={KEPT: {"vin": KEPT}},
-            _portal_vehicles_due=dt_util.utcnow() + timedelta(hours=1),
-        )
-        coord.portal = portal
-        coord._async_clear_signed_out_issue = lambda: None
-
-        await coord._async_read_portal()
-
-        assert coord._portal_read_at is not None, "the read reached its end"
-        assert portal.asked == ["id-kept"]
-        assert "id-sold" not in portal.asked
-
-    async def test_a_vehicle_with_no_portal_id_is_skipped(self) -> None:
-        portal = FakePortal()
-        coord = with_both_cars(
-            _vehicles={KEPT: {"vin": KEPT}, SOLD: {"vin": SOLD}},
-            _portal_ids={SOLD: "id-sold"},
-            _portal_vehicles_due=dt_util.utcnow() + timedelta(hours=1),
-        )
-        coord.portal = portal
-        coord._async_clear_signed_out_issue = lambda: None
-
-        await coord._async_read_portal()
-
-        assert portal.asked == ["id-sold"]
-
-
-class TestTheTrailShape:
-    """Kept per car for diagnostics, and logged only when it moves (#36)."""
-
-    def reading(self, portal: FakePortal) -> JlrCoordinator:
-        coord = coordinator(
-            _vehicles={KEPT: {"vin": KEPT}},
-            _portal_ids={KEPT: "id-kept"},
-            _portal_vehicles_due=dt_util.utcnow() + timedelta(hours=1),
-        )
-        coord.portal = portal
-        coord._async_clear_signed_out_issue = lambda: None
-        return coord
-
-    async def read(self, coord: JlrCoordinator) -> None:
-        # Past the half-hour gate, as the next scheduled read would be.
-        coord._portal_due = None
-        await coord._async_read_portal()
-
-    async def test_it_is_kept_against_the_car(self) -> None:
-        coord = self.reading(FakePortal())
-        await self.read(coord)
-        assert coord._trail[KEPT] == {"points": 3, "span": "0:30:00"}
-
-    async def test_an_unchanged_trail_is_logged_once(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        # Read every half hour and unchanged until the car drives again. What
-        # is worth a line is the read where it moved.
-        portal = FakePortal()
-        coord = self.reading(portal)
-        caplog.set_level(logging.DEBUG, logger="jlr.coordinator")
-
-        await self.read(coord)
-        await self.read(coord)
-        portal.trail = {"points": 5, "span": "1:10:00"}
-        await self.read(coord)
-
-        lines = [r.getMessage() for r in caplog.records if "portal trail" in r.message]
-        assert len(lines) == 2
-        assert "'points': 5" in lines[-1]
-        assert KEPT not in caplog.text, "the car is named by its label"
-
-    async def test_a_car_with_no_trail_keeps_its_old_position(self) -> None:
-        # An empty trail still says something about the page, so it is kept;
-        # it just has no fix in it to replace the one already held.
-        portal = FakePortal()
-        portal.position, portal.trail = {}, {"points": 0}
-        coord = self.reading(portal)
-        coord._position[KEPT] = {"latitude": 1.0, "longitude": 2.0}
-
-        await self.read(coord)
-
-        assert coord._position[KEPT]["latitude"] == 1.0
-        assert coord._trail[KEPT] == {"points": 0}
-
-
-class TestPortalListing:
-    """The listing replaces the id cache; it does not accumulate into it."""
-
-    async def test_a_vehicle_absent_from_the_listing_loses_its_id(self) -> None:
-        coord = with_both_cars()
-        coord.portal = FakePortal({KEPT: {"portal_id": "id-kept-new"}})
-
-        await coord._async_read_portal_vehicles(dt_util.utcnow())
-
-        assert coord._portal_ids == {KEPT: "id-kept-new"}
-
-    async def test_an_empty_garage_clears_every_id(self) -> None:
-        # An unreadable reply raises rather than arriving here empty, so this
-        # really does mean the account has no vehicles.
-        coord = with_both_cars()
-        coord.portal = FakePortal({})
-
-        await coord._async_read_portal_vehicles(dt_util.utcnow())
-
-        assert coord._portal_ids == {}
-
-    async def test_an_empty_listing_still_sets_the_next_due_time(self) -> None:
-        coord = with_both_cars()
-        coord.portal = FakePortal({})
-
-        await coord._async_read_portal_vehicles(dt_util.utcnow())
-
-        assert coord._portal_vehicles_due is not None
-
-    async def test_a_listed_vehicle_keeps_its_id_when_the_record_omits_one(
-        self,
-    ) -> None:
-        # The setup link is absent while a car is mid-enrolment. Losing the id
-        # there would cost it its location for no reason at all.
-        coord = with_both_cars()
-        coord.portal = FakePortal({KEPT: {"nickname": "Keeper"}})
-
-        await coord._async_read_portal_vehicles(dt_util.utcnow())
-
-        assert coord._portal_ids == {KEPT: "id-kept"}
-
-
 class FakeEntry:
     def __init__(self, data: dict[str, Any]) -> None:
         self.data = data
@@ -308,16 +138,10 @@ class FakeHass:
         self.config_entries = FakeConfigEntries()
 
 
-class FakeClient:
-    user_id = None
-    refresh_token = None
-
-
 def persisting(stored: dict[str, Any], attributes: dict[str, Any]) -> JlrCoordinator:
     coord = coordinator(_attributes=attributes)
     coord.hass = FakeHass()
     coord.entry = FakeEntry({"attributes": stored})
-    coord.client = FakeClient()
     return coord
 
 
@@ -338,8 +162,8 @@ class TestPersistingAttributes:
         assert coord.entry.data["attributes"] == {KEPT: {"nickname": "Keeper"}}
 
     def test_an_unchanged_cache_writes_nothing(self) -> None:
-        # Every token rotation calls this. A write it does not need fires the
-        # entry update listener, and that used to mean a reload every few
+        # Every housekeeping calls this. A write it does not need fires the
+        # entry update listeners, and that once meant a reload every few
         # minutes.
         coord = persisting(
             {KEPT: {"nickname": "Keeper"}}, {KEPT: {"nickname": "Keeper"}}
@@ -351,7 +175,6 @@ class TestPersistingAttributes:
         coord = coordinator(_attributes={})
         coord.hass = FakeHass()
         coord.entry = FakeEntry({})
-        coord.client = FakeClient()
         coord._persist()
         assert coord.hass.config_entries.writes == []
 
@@ -428,27 +251,6 @@ class TestChargeNowSetting:
         assert self.coordinator_with({}).charge_now_setting("nobody") is None
 
 
-class TestNamingACarWithoutAskingJlr:
-    """The attributes endpoint is behind the attestation wall much of the time."""
-
-    def test_the_vin_prefix_names_the_brand(self) -> None:
-        coord = coordinator()
-        coord._seed_identity(KEPT, {"vin": KEPT})
-        assert coord._attributes[KEPT]["vehicleBrand"]
-
-    def test_a_name_already_known_is_not_overwritten(self) -> None:
-        # A real attributes document beats a guess, and the guess must not
-        # undo it on the next poll.
-        coord = coordinator(_attributes={KEPT: {"vehicleBrand": "Jaguar"}})
-        coord._seed_identity(KEPT, {"vin": KEPT})
-        assert coord._attributes[KEPT]["vehicleBrand"] == "Jaguar"
-
-    def test_a_vehicle_record_with_nothing_in_it_adds_nothing(self) -> None:
-        coord = coordinator()
-        coord._seed_identity("", {})
-        assert coord._attributes == {}
-
-
 class TestPushedData:
     def quiet(self) -> JlrCoordinator:
         coord = with_both_cars(_last_status_seen={}, _last_changed={})
@@ -461,15 +263,9 @@ class TestPushedData:
         coord._persist = lambda: None
         return coord
 
-    def test_a_status_push_is_adopted(self) -> None:
+    def test_a_status_without_a_report_time_still_lands(self) -> None:
         coord = self.quiet()
-        coord._handle_status(KEPT, {"ODOMETER": "999"}, "2026-08-26T08:00:00Z")
-        assert coord._status[KEPT] == {"ODOMETER": "999"}
-        assert coord._pushed_at[KEPT] == "2026-08-26T08:00:00Z"
-
-    def test_a_push_without_a_send_time_still_lands(self) -> None:
-        coord = self.quiet()
-        coord._handle_status(KEPT, {"ODOMETER": "999"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "999"})
         assert coord._status[KEPT] == {"ODOMETER": "999"}
 
     def test_a_position_push_is_adopted(self) -> None:
@@ -482,15 +278,15 @@ class TestPushedData:
         # every few minutes. Treating each as a change would make "last
         # changed" mean "last reconnected".
         coord = self.quiet()
-        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "1"})
         first = coord._last_changed.get(KEPT)
-        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "1"})
         assert coord._last_changed.get(KEPT) == first
 
     def test_a_real_change_is(self) -> None:
         coord = self.quiet()
-        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
-        coord._handle_status(KEPT, {"ODOMETER": "2"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "1"})
+        coord._handle_status(KEPT, {"ODOMETER": "2"})
         assert coord._last_changed.get(KEPT)
 
     def test_a_position_push_is_not_a_status_change(self) -> None:
@@ -500,8 +296,8 @@ class TestPushedData:
         # of a door reading from the night before, so an open window looked
         # current all day.
         coord = self.quiet()
-        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"}, None)
-        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"}, None)
+        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"})
+        coord._handle_status(KEPT, {"DOOR_IS_ALL_DOORS_LOCKED": "FALSE"})
         before = coord._last_changed.get(KEPT)
 
         coord._handle_position(KEPT, {"latitude": 52.0, "longitude": -1.0})
@@ -515,66 +311,10 @@ class TestPushedData:
         # The other half: separating the two must not make a real change
         # invisible just because a fix arrived alongside it.
         coord = self.quiet()
-        coord._handle_status(KEPT, {"ODOMETER": "1"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "1"})
         coord._handle_position(KEPT, {"latitude": 52.0})
-        coord._handle_status(KEPT, {"ODOMETER": "2"}, None)
+        coord._handle_status(KEPT, {"ODOMETER": "2"})
         assert coord._last_changed.get(KEPT)
-
-
-class TestASnapshotThatArrivesLate:
-    """The only ordering key these cars give us.
-
-    They send no timestamp of their own, and the envelope's is when the broker
-    sent the message rather than when the car recorded it — measured to the
-    millisecond against a payload three hours old. An odometer is different:
-    it never counts down, so a lower one is proof the snapshot predates what
-    is already held. JLR deliver late and out of order, and a week-old
-    snapshot has overwritten a current one before now.
-    """
-
-    def test_a_lower_odometer_is_not_adopted(self) -> None:
-        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546"}})
-        coord._push = lambda: None
-        coord._persist = lambda: None
-
-        coord._handle_status(KEPT, {"ODOMETER_MILES": "18540"}, None)
-
-        assert coord._status[KEPT]["ODOMETER_MILES"] == "18546"
-
-    def test_a_higher_one_is(self) -> None:
-        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546"}})
-        coord._push = lambda: None
-        coord._persist = lambda: None
-
-        coord._handle_status(KEPT, {"ODOMETER_MILES": "18549"}, None)
-
-        assert coord._status[KEPT]["ODOMETER_MILES"] == "18549"
-
-    def test_an_equal_one_is_too(self) -> None:
-        # The common case by a long way: a parked car redelivering the same
-        # snapshot every four minutes. Rejecting those would freeze every
-        # other field in them.
-        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": "18546", "A": "1"}})
-        coord._push = lambda: None
-        coord._persist = lambda: None
-
-        coord._handle_status(KEPT, {"ODOMETER_MILES": "18546", "A": "2"}, None)
-
-        assert coord._status[KEPT]["A"] == "2"
-
-    @pytest.mark.parametrize("held,arriving", [(None, "1"), ("1", None), ("x", "1")])
-    def test_an_unreadable_odometer_never_rejects(
-        self, held: Any, arriving: Any
-    ) -> None:
-        # A car that does not report one, or reports something that is not a
-        # number, must not have every snapshot thrown away.
-        coord = coordinator(_status={KEPT: {"ODOMETER_MILES": held} if held else {}})
-        coord._push = lambda: None
-        coord._persist = lambda: None
-
-        coord._handle_status(KEPT, {"ODOMETER_MILES": arriving, "SEEN": "yes"}, None)
-
-        assert coord._status[KEPT]["SEEN"] == "yes"
 
 
 class TestPositionTrustIsPerVehicle:
@@ -626,69 +366,20 @@ class TestVehiclesSoldWhileTheLightsWereOff:
         assert SOLD in coord._known_vins()
 
 
-class TestForcingAPortalRead:
-    """What the Refresh button clears, and the floor under it.
+class TestTheBrandFromTheVin:
+    """The one thing a VIN says for certain, as a floor under the details."""
 
-    The portal is read on a half-hourly cadence, and the button used to share
-    that gate — so for twenty-nine minutes in every thirty a press did nothing
-    at all, silently. Clearing the gate is what makes the button mean
-    something; the floor is what stops it meaning too much.
-    """
+    def test_a_jaguar(self) -> None:
+        from jlr.coordinator import brand_from_vin
 
-    def test_it_clears_the_gate_when_the_last_read_is_old(self) -> None:
-        coord = coordinator(
-            _portal_due=dt_util.utcnow() + timedelta(minutes=20),
-            _portal_read_at=dt_util.utcnow() - timedelta(minutes=10),
-        )
-        assert coord.async_force_portal_read() is True
-        assert coord._portal_due is None, "the next read is still gated"
+        assert brand_from_vin(KEPT) == {"vehicleBrand": "Jaguar"}
 
-    def test_it_refuses_inside_the_floor(self) -> None:
-        # Somebody leaning on the button is not a reason to hammer somebody
-        # else's server.
-        due = dt_util.utcnow() + timedelta(minutes=20)
-        coord = coordinator(
-            _portal_due=due,
-            _portal_read_at=dt_util.utcnow() - timedelta(seconds=5),
-        )
-        assert coord.async_force_portal_read() is False
-        assert coord._portal_due == due, "the gate was cleared anyway"
+    def test_a_land_rover(self) -> None:
+        from jlr.coordinator import brand_from_vin
 
-    def test_a_first_press_is_never_refused(self) -> None:
-        # Nothing has been read yet, so there is nothing to be too soon after.
-        coord = coordinator(_portal_due=None, _portal_read_at=None)
-        assert coord.async_force_portal_read() is True
+        assert brand_from_vin(SOLD) == {"vehicleBrand": "Land Rover"}
 
+    def test_anything_else_says_nothing(self) -> None:
+        from jlr.coordinator import brand_from_vin
 
-class TestAttributesBehindTheWall:
-    async def test_a_refusal_leaves_what_we_already_had(self) -> None:
-        # Losing the name because JLR blocked one request would rename every
-        # car on the dashboard until the wall lifted.
-        from jlr.api import JlrApiError
-
-        coord = coordinator(_attributes={KEPT: {"nickname": "Keeper"}})
-
-        async def refuses(vin: str) -> dict[str, Any]:
-            raise JlrApiError("returned 498")
-
-        coord.client = type("C", (), {"async_get_attributes": staticmethod(refuses)})()
-        await coord._async_refresh_attributes(KEPT)
-        assert coord._attributes[KEPT]["nickname"] == "Keeper"
-
-    async def test_a_recent_attempt_is_not_repeated(self) -> None:
-        # The clock here is wall time, not monotonic: the retry window is
-        # hours, and it is compared against dt_util.utcnow().
-        asked = 0
-
-        async def counts(vin: str) -> dict[str, Any]:
-            nonlocal asked
-            asked += 1
-            return {}
-
-        coord = coordinator(
-            _attributes={KEPT: {"nickname": "Keeper"}},
-            _attributes_attempted={KEPT: dt_util.utcnow()},
-        )
-        coord.client = type("C", (), {"async_get_attributes": staticmethod(counts)})()
-        await coord._async_refresh_attributes(KEPT)
-        assert asked == 0
+        assert brand_from_vin("WVWZZZ1JZXW000001") == {}

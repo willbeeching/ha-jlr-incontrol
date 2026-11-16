@@ -31,7 +31,7 @@ def async_add_vehicle_entities(
     """Create entities per vehicle, now and whenever a new one turns up.
 
     Platforms used to run exactly once, at setup. A car added to the account
-    afterwards was picked up by housekeeping and subscribed to telemetry, and
+    afterwards was picked up by housekeeping and read, and
     its data then arrived for entities that had never been created — so it
     stayed invisible until the user reloaded the integration.
 
@@ -199,10 +199,10 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
     _attr_has_entity_name = True
 
-    # Whether this entity's value comes from the telemetry socket. Most do, and
-    # for those a dead socket means the reading is meaningless. Location comes
-    # from the owner portal and an action needs no reading at all, so those set
-    # this False rather than inheriting a dependency they do not have.
+    # Whether this entity's value stops meaning anything when the link has not
+    # read successfully for hours. Most readings do. A location carries its own
+    # age (position_trusted) and an action needs no reading at all, so those
+    # set this False rather than inheriting a dependency they do not have.
     _requires_telemetry = True
 
     def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
@@ -239,16 +239,14 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
     def available(self) -> bool:
         """Available while the vehicle is known and this entity's source is up.
 
-        The coordinator's own success flag only covers the housekeeping poll,
-        which keeps succeeding long after the data socket has died — so it is
-        not on its own a statement about whether these values mean anything.
+        The coordinator's own success flag only covers housekeeping, which
+        keeps succeeding while status reads fail — so it is not on its own a
+        statement about whether these values mean anything.
 
-        But the socket is not every entity's source. Requiring it for all of
-        them meant a telemetry outage hid a location the owner portal had
-        fetched successfully minutes earlier, and greyed out the refresh button
-        at the moment someone would reach for it. Location survives a dead
-        socket by design; its honesty signal is ``position_trusted``, which is
-        about the age of the fix and reported separately.
+        Not every entity needs the link healthy. Requiring it for all of them
+        once hid a location fetched minutes earlier, and greyed out the
+        refresh button at the moment someone would reach for it. Location's
+        honesty signal is ``position_trusted``, about the age of the fix.
         """
         if not super().available:
             return False
@@ -276,7 +274,7 @@ class JlrVehicleEntity(CoordinatorEntity[JlrCoordinator]):
 
 
 class JlrDataHubEntity(JlrVehicleEntity):
-    """An entity fed by the optional Data Hub link rather than the socket.
+    """An entity about the Data Hub link itself rather than a reading.
 
     Still a coordinator entity, for the device and for the vehicle list; its
     values come from the link, which tells it when they change.

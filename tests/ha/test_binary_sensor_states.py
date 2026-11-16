@@ -14,7 +14,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, STATUS, Doubles, FakeClient  # noqa: E402
+from doubles import KEPT, STATUS, Doubles, FakeLink  # noqa: E402
 from homeassistant.const import STATE_UNKNOWN  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
@@ -35,15 +35,9 @@ DOORS = {
 
 def reporting(monkeypatch: pytest.MonkeyPatch, extra: dict[str, str]) -> None:
     """Make the car's first snapshot carry more than the shared default."""
-    from doubles import FakeTelemetry
+    from doubles import FakeLink
 
-    async def start(self: FakeTelemetry) -> None:
-        self.connected = True
-        self.on_connected(True)
-        for vin in self.vins:
-            self.push(vin, {**STATUS, **extra})
-
-    monkeypatch.setattr(FakeTelemetry, "async_start", start)
+    monkeypatch.setattr(FakeLink, "first_status", {**STATUS, **extra})
 
 
 def state_of(hass: HomeAssistant, key: str) -> str | None:
@@ -67,7 +61,7 @@ class TestBodiesWithoutRearDoors:
         the front seats, permanently reading closed.
         """
 
-        async def two_door(self: FakeClient, vin: str) -> dict[str, Any]:
+        async def two_door(self: FakeLink, vin: str) -> dict[str, Any]:
             return {
                 "vehicleBrand": "Jaguar",
                 "fuelType": "Petrol",
@@ -75,7 +69,7 @@ class TestBodiesWithoutRearDoors:
                 "numberOfDoors": "2",
             }
 
-        monkeypatch.setattr(FakeClient, "async_get_attributes", two_door)
+        monkeypatch.setattr(FakeLink, "async_vehicle_details", two_door)
         reporting(monkeypatch, DOORS)
 
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -126,7 +120,7 @@ class TestValuesThatMeanNothing:
         # Central locking is inverted — on means a door is unlocked.
         assert state_of(hass, "doors_locked") == "off"
         dropped = {k: v for k, v in STATUS.items() if k != "DOOR_IS_ALL_DOORS_LOCKED"}
-        loaded.telemetry.push(KEPT, dropped)
+        loaded.link.push(KEPT, dropped)
         await hass.async_block_till_done()
         assert state_of(hass, "doors_locked") == STATE_UNKNOWN
 
@@ -245,7 +239,7 @@ class TestEachDoorsOwnLock:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Same rule, and the same reason, as the rear doors themselves.
-        async def two_door(self: FakeClient, vin: str) -> dict[str, Any]:
+        async def two_door(self: FakeLink, vin: str) -> dict[str, Any]:
             return {
                 "vehicleBrand": "Jaguar",
                 "fuelType": "Petrol",
@@ -253,7 +247,7 @@ class TestEachDoorsOwnLock:
                 "numberOfDoors": "2",
             }
 
-        monkeypatch.setattr(FakeClient, "async_get_attributes", two_door)
+        monkeypatch.setattr(FakeLink, "async_vehicle_details", two_door)
         reporting(monkeypatch, LOCKS)
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
@@ -302,7 +296,7 @@ class TestSayingWhyItIsUnknown:
     ) -> None:
         caplog.set_level(logging.DEBUG)
         dropped = {k: v for k, v in STATUS.items() if k != "DOOR_IS_ALL_DOORS_LOCKED"}
-        loaded.telemetry.push(KEPT, dropped)
+        loaded.link.push(KEPT, dropped)
         await hass.async_block_till_done()
 
         (line,) = self.why(caplog, "doors_locked")
@@ -315,7 +309,7 @@ class TestSayingWhyItIsUnknown:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         caplog.set_level(logging.DEBUG)
-        loaded.telemetry.push(KEPT, {**STATUS, "DOOR_IS_ALL_DOORS_LOCKED": "UNKNOWN"})
+        loaded.link.push(KEPT, {**STATUS, "DOOR_IS_ALL_DOORS_LOCKED": "UNKNOWN"})
         await hass.async_block_till_done()
 
         (line,) = self.why(caplog, "doors_locked")
@@ -333,12 +327,12 @@ class TestSayingWhyItIsUnknown:
         caplog.set_level(logging.DEBUG)
         dropped = {k: v for k, v in STATUS.items() if k != "DOOR_IS_ALL_DOORS_LOCKED"}
         for snapshot in (dropped, dropped, dropped):
-            loaded.telemetry.push(KEPT, snapshot)
+            loaded.link.push(KEPT, snapshot)
             await hass.async_block_till_done()
         assert len(self.why(caplog, "doors_locked")) == 1
 
-        loaded.telemetry.push(KEPT, STATUS)
+        loaded.link.push(KEPT, STATUS)
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, dropped)
+        loaded.link.push(KEPT, dropped)
         await hass.async_block_till_done()
         assert len(self.why(caplog, "doors_locked")) == 2

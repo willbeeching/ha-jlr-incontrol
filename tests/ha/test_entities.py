@@ -56,7 +56,7 @@ class TestVehiclesArrivingLater:
 
         loaded.client.vehicles.append({"vin": SOLD, "role": "Owner"})
         await entry.runtime_data.async_refresh()
-        loaded.telemetry.push(SOLD)
+        loaded.link.push(SOLD)
         await hass.async_block_till_done()
 
         after = entity_ids(hass, entry, "sensor")
@@ -68,7 +68,7 @@ class TestVehiclesArrivingLater:
     ) -> None:
         loaded.client.vehicles.append({"vin": SOLD, "role": "Owner"})
         await entry.runtime_data.async_refresh()
-        loaded.telemetry.push(SOLD)
+        loaded.link.push(SOLD)
         await hass.async_block_till_done()
 
         assert loaded.telemetry.vins == sorted([KEPT, SOLD])
@@ -81,7 +81,7 @@ class TestAvailability:
         # The STOMP session is bound to a short-lived token, so it reconnects
         # every few minutes as a matter of course. Marking the house
         # unavailable each time would be noise, not honesty.
-        loaded.telemetry.drop()
+        loaded.link.drop()
         await hass.async_block_till_done()
 
         for entity_id in entity_ids(hass, entry, "sensor"):
@@ -92,7 +92,7 @@ class TestAvailability:
     ) -> None:
         # The housekeeping poll keeps succeeding long after the socket dies,
         # so the coordinator's own success flag says nothing useful here.
-        loaded.telemetry.drop()
+        loaded.link.drop()
         freezer.tick(TELEMETRY_GRACE + timedelta(minutes=1))
         # Something has to make the entities look again; nothing is scheduled
         # to re-evaluate availability on its own.
@@ -107,7 +107,7 @@ class TestAvailability:
     ) -> None:
         # Location comes from the owner portal, which is still working. Its
         # honesty signal is the age of the fix, reported separately.
-        loaded.telemetry.drop()
+        loaded.link.drop()
         freezer.tick(TELEMETRY_GRACE + timedelta(minutes=1))
         entry.runtime_data.async_update_listeners()
         await hass.async_block_till_done()

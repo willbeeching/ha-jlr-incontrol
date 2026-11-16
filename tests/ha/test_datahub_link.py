@@ -108,6 +108,11 @@ def broker(monkeypatch: pytest.MonkeyPatch) -> Broker:
 
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch, doubles: Doubles) -> Doubles:
+    # The real link, reading the fake JLR client below.
+    monkeypatch.setattr(
+        "custom_components.jlr_incontrol.coordinator.DataHubLink",
+        datahub_link.DataHubLink,
+    )
     monkeypatch.setattr(
         datahub_link, "DataHubClient", doubles.builder("datahub", FakeDataHub)
     )
@@ -155,17 +160,6 @@ async def run(link: DataHubLink) -> None:
 
 
 class TestSetUp:
-    async def test_without_a_link_nothing_changes(
-        self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
-    ) -> None:
-        assert entry.runtime_data.datahub is None
-        registry = er.async_get(hass)
-        ids = {
-            e.unique_id
-            for e in er.async_entries_for_config_entry(registry, entry.entry_id)
-        }
-        assert f"{KEPT}_datahub_last_report" not in ids
-
     async def test_a_link_adds_its_two_entities_and_reads_status(
         self,
         hass: HomeAssistant,

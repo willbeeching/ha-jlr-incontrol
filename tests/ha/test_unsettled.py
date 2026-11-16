@@ -81,7 +81,7 @@ class TestACarCaughtMidUse:
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
         # Thirty seconds after the key came out is not stale, it is current.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
         assert locking(hass).state == "on"
 
@@ -92,7 +92,7 @@ class TestACarCaughtMidUse:
         loaded: Doubles,
         freezer: Any,
     ) -> None:
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, minutes=45)
@@ -111,7 +111,7 @@ class TestACarCaughtMidUse:
     ) -> None:
         # The case that rules out blanking on age alone. A car left with a
         # window genuinely open, parked for a day, is reporting the truth.
-        loaded.telemetry.push(KEPT, SETTLED)
+        loaded.link.push(KEPT, SETTLED)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, hours=26)
@@ -128,7 +128,7 @@ class TestACarCaughtMidUse:
         # Only two values have ever been seen. A car reporting a third must
         # behave as it does today rather than have its readings hidden on the
         # strength of a guess about what the word means.
-        loaded.telemetry.push(
+        loaded.link.push(
             KEPT, {**CAUGHT_MID_USE, "VEHICLE_STATE_TYPE": "SOMETHING_NEW"}
         )
         await hass.async_block_till_done()
@@ -145,7 +145,7 @@ class TestACarCaughtMidUse:
         freezer: Any,
     ) -> None:
         # An odometer from an hour ago is still the best answer there is.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, hours=3)
@@ -169,7 +169,7 @@ class TestACarCaughtMidUse:
             entry, options={"unsettled_minutes": "0"}
         )
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, hours=3)
@@ -193,7 +193,7 @@ class TestTheClockItRunsOn:
         coord = entry.runtime_data
         coord._last_changed.pop(KEPT, None)
         coord._last_status_seen.pop(KEPT, None)
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, minutes=45)
@@ -210,12 +210,12 @@ class TestTheClockItRunsOn:
         # The 12V voltage moves on a parked car. If any field moving counts
         # as the car reporting, a battery slowly discharging keeps a door
         # reading from last night looking current indefinitely.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         for volts in ("12.5", "12.4", "12.3", "12.2"):
             freezer.tick(timedelta(minutes=12))
-            loaded.telemetry.push(KEPT, {**CAUGHT_MID_USE, "BATTERY_VOLTAGE": volts})
+            loaded.link.push(KEPT, {**CAUGHT_MID_USE, "BATTERY_VOLTAGE": volts})
             await hass.async_block_till_done()
 
         assert (
@@ -268,7 +268,7 @@ class TestTheClockSurvivesARestart:
     ) -> None:
         # Restarts are not rare, and one that reset this would trust a
         # mid-shutdown snapshot for another half hour every time.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
         entry.runtime_data._persist()
         freezer.tick(timedelta(minutes=45))
@@ -283,7 +283,7 @@ class TestTheClockSurvivesARestart:
         # What the broker actually does on a resubscription: hands back the
         # same snapshot it was already holding. The clock must not treat that
         # as the car having just reported.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         assert locking(hass).state == STATE_UNKNOWN
@@ -441,7 +441,7 @@ class TestARestartThatMissesAChange:
         freezer: Any,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
         entry.runtime_data._persist()
         await age(hass, entry, freezer, minutes=45)
@@ -468,7 +468,7 @@ class TestARestartThatMissesAChange:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The other half, and the reason the guard is there at all.
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
         entry.runtime_data._persist()
         await age(hass, entry, freezer, minutes=45)
@@ -509,7 +509,7 @@ class TestOnlyTheUnsecureSideIsWithheld:
         loaded: Doubles,
         freezer: Any,
     ) -> None:
-        loaded.telemetry.push(KEPT, self.SHUT)
+        loaded.link.push(KEPT, self.SHUT)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, hours=15)
@@ -525,7 +525,7 @@ class TestOnlyTheUnsecureSideIsWithheld:
         loaded: Doubles,
         freezer: Any,
     ) -> None:
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, hours=15)
@@ -545,7 +545,7 @@ class TestOnlyTheUnsecureSideIsWithheld:
         import logging
 
         caplog.set_level(logging.DEBUG)
-        loaded.telemetry.push(KEPT, CAUGHT_MID_USE)
+        loaded.link.push(KEPT, CAUGHT_MID_USE)
         await hass.async_block_till_done()
         await age(hass, entry, freezer, hours=15)
 
@@ -661,7 +661,7 @@ class TestCoolantAfterADrive:
     async def test_it_shows_just_after_the_car_was_used(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
     ) -> None:
-        loaded.telemetry.push(KEPT, self.WARM)
+        loaded.link.push(KEPT, self.WARM)
         await hass.async_block_till_done()
 
         assert self.coolant(hass).state == "89.0"
@@ -673,7 +673,7 @@ class TestCoolantAfterADrive:
         loaded: Doubles,
         freezer: Any,
     ) -> None:
-        loaded.telemetry.push(KEPT, self.WARM)
+        loaded.link.push(KEPT, self.WARM)
         await hass.async_block_till_done()
 
         await age(hass, entry, freezer, minutes=45)
@@ -690,12 +690,12 @@ class TestCoolantAfterADrive:
         # The trap the other clock fell into. A parked car's voltage moves on
         # its own, and if that counted as the car reporting, a coolant figure
         # from before dark would look current all night.
-        loaded.telemetry.push(KEPT, self.WARM)
+        loaded.link.push(KEPT, self.WARM)
         await hass.async_block_till_done()
 
         for volts in ("12.5", "12.4", "12.3", "12.2"):
             freezer.tick(timedelta(minutes=12))
-            loaded.telemetry.push(KEPT, {**self.WARM, "BATTERY_VOLTAGE": volts})
+            loaded.link.push(KEPT, {**self.WARM, "BATTERY_VOLTAGE": volts})
             await hass.async_block_till_done()
 
         assert self.coolant(hass).state == STATE_UNKNOWN
@@ -707,12 +707,12 @@ class TestCoolantAfterADrive:
         loaded: Doubles,
         freezer: Any,
     ) -> None:
-        loaded.telemetry.push(KEPT, self.WARM)
+        loaded.link.push(KEPT, self.WARM)
         await hass.async_block_till_done()
         await age(hass, entry, freezer, minutes=45)
         assert self.coolant(hass).state == STATE_UNKNOWN
 
-        loaded.telemetry.push(KEPT, {**self.WARM, "ENGINE_COOLANT_TEMP": "91"})
+        loaded.link.push(KEPT, {**self.WARM, "ENGINE_COOLANT_TEMP": "91"})
         await hass.async_block_till_done()
 
         assert self.coolant(hass).state == "91.0"

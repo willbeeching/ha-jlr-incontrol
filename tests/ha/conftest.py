@@ -2,8 +2,8 @@
 
 What is real here is Home Assistant: the config entry, the platforms, both
 registries and the issue registry. That is the half where the bugs have been.
-The three collaborators that talk to JLR over the network are replaced with
-the stand-ins in doubles.py.
+The Data Hub link, which talks to JLR, is replaced with the stand-in in
+doubles.py; the link itself is tested against a fake JLR client elsewhere.
 """
 
 from __future__ import annotations
@@ -14,12 +14,7 @@ import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import (  # noqa: E402
-    Doubles,
-    FakeClient,
-    FakePortal,
-    FakeTelemetry,
-)
+from doubles import KEPT, Doubles, FakeLink  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
@@ -35,22 +30,27 @@ def custom_integrations(enable_custom_integrations: Any) -> None:
     """Let Home Assistant find this repo's custom_components directory."""
 
 
+# A link as setup leaves it in the entry. Made-up values of the same shape.
+DATAHUB = {
+    "client_id": "dsas-0123456789ab",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nnot used by the fake\n",
+    "certificate": "",
+    "refresh_token": "offline-1",
+    "vehicles": [KEPT],
+    "account_id": "acct-1",
+}
+
+
 @pytest.fixture
 def entry(hass: HomeAssistant) -> MockConfigEntry:
+    """An entry on the Data Hub, as setup has made since 2.0.0."""
     created = MockConfigEntry(
         domain=DOMAIN,
-        title="Jaguar Land Rover InControl",
-        data={
-            "username": "someone@example.com",
-            "password": "hunter2-and-then-some",
-            "device_id": "3f2c9a71-5d84-4c1e-9a30-6b7d8e5f4a21",
-            "user_id": "user-01H8XK4Q2N",
-            "refresh_token": "a-refresh-token",
-            "sso_cookies": {"iPlanetDirectoryPro": "a-cookie"},
-            "portal_cookies": {"JSESSIONID": "a-session"},
-            "portal_base": "https://incontrol.jaguar.com/jaguar-portal-owner-web",
-        },
-        unique_id="someone@example.com",
+        title="JLR Data Hub",
+        data={"datahub": dict(DATAHUB)},
+        unique_id="acct-1",
+        version=1,
+        minor_version=2,
     )
     created.add_to_hass(hass)
     return created
@@ -58,14 +58,9 @@ def entry(hass: HomeAssistant) -> MockConfigEntry:
 
 @pytest.fixture
 def doubles(monkeypatch: pytest.MonkeyPatch) -> Doubles:
-    """Swap the three network collaborators for fakes, and hand them back."""
+    """Swap the Data Hub link for a fake, and hand it back."""
     handles = Doubles()
-    for attribute, name, cls in (
-        ("client", "JlrClient", FakeClient),
-        ("telemetry", "JlrTelemetry", FakeTelemetry),
-        ("portal", "JlrPortal", FakePortal),
-    ):
-        monkeypatch.setattr(f"{COORDINATOR}.{name}", handles.builder(attribute, cls))
+    monkeypatch.setattr(f"{COORDINATOR}.DataHubLink", handles.builder("link", FakeLink))
     return handles
 
 

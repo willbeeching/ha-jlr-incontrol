@@ -61,6 +61,11 @@ SENSORS = (
 
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch, doubles: Doubles) -> Doubles:
+    # The real link, reading the fake JLR client below.
+    monkeypatch.setattr(
+        "custom_components.jlr_incontrol.coordinator.DataHubLink",
+        datahub_link.DataHubLink,
+    )
     monkeypatch.setattr(
         datahub_link, "DataHubClient", doubles.builder("datahub", FakeDataHub)
     )

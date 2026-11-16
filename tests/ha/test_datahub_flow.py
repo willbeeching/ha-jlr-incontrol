@@ -55,6 +55,11 @@ def device_login(expires_in: float = 600) -> DeviceLogin:
 
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch, doubles: Doubles) -> Doubles:
+    # The real link, reading the fake JLR client below.
+    monkeypatch.setattr(
+        "custom_components.jlr_incontrol.coordinator.DataHubLink",
+        datahub_link.DataHubLink,
+    )
     build = doubles.builder("datahub", FakeDataHub)
     made: list[FakeDataHub] = []
 

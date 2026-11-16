@@ -1,14 +1,9 @@
 """Constants for the Jaguar Land Rover InControl integration.
 
-The bearer token comes from the app's **ForgeRock OIDC** client (see auth.py);
-JLR edge-blocked the legacy IFAS password grant in August 2026.
-
-That token still opens the identity and vehicle-list endpoints of the
-``/if9/webview/*`` API, but **not** the per-vehicle data ones: JLR extended the
-Approov attestation wall (HTTP 498) over those a week later, and the
-browser-style ``Origin`` / ``Referer`` headers below no longer talk past it.
-Vehicle data now comes over the telemetry websocket (see telemetry.py), which is
-not attested. The command endpoints are still on the walled REST path.
+Since 3.0.0 everything comes from the JLR Data Hub, JLR's documented API for
+owners. The reverse-engineered InControl connection, its sign-in and the owner
+portal were removed; the status keys below keep the names that connection
+used, which is why the entities did not change.
 """
 
 from __future__ import annotations
@@ -17,108 +12,34 @@ from datetime import timedelta
 
 DOMAIN = "jlr_incontrol"
 
-# ---- Base hosts (all validated live) ----
-IFOP_BASE = "https://ifop.prod-row.jlrmotor.com/ifop/jlr"
-IF9_BASE = "https://if9.prod-row.jlrmotor.com/if9/webview"
 
-# ---- Real-time telemetry websocket ----
-# In August 2026 JLR put Approov attestation on the REST vehicle-data endpoints
-# (if9/webview/vehicles/{vin}/status | attributes | position). They answer 498 to
-# anything that cannot produce a device-bound attestation token, and the webview
-# Origin bypass no longer helps. This socket is NOT attested: it takes the plain
-# ForgeRock bearer and pushes the same VHS payload on subscribe, so it replaces
-# polling rather than working around it.
-WS_URL = "wss://if9-ws.prod-row.jlrmotor.com/if9_ws/websocketGateway/v2"
-WS_HOST = "if9-ws.prod-row.jlrmotor.com"
-# The device topic confirms each vehicle subscription; the VIN topics carry the
-# data. Subscribe to the device topic first or the confirmations are missed.
-WS_DEVICE_TOPIC = "/user/topic/DEVICE.{device_id}"
-WS_VIN_TOPIC = "/user/topic/VIN.{vin}"
-WS_ACK_DESTINATION = "/app/messageReceived"
-# Heart-beat we advertise, in milliseconds (the broker asks for 10s each way).
-WS_HEARTBEAT_MS = 20000
-# How often we actually send one. This has to be driven by a clock, not by an
-# idle read: the broker chats every 10s, so a heart-beat sent only when the read
-# times out is a heart-beat never sent — and the broker closes the session for
-# inactivity after a couple of minutes. Comfortably inside both its 10s ask and
-# our own 20s advertisement.
-WS_HEARTBEAT_SEND = timedelta(seconds=8)
-# Give up on a session that has gone completely silent. Three missed beats, not
-# one: a single late frame is not a fault worth tearing the socket down for.
-WS_READ_TIMEOUT = timedelta(seconds=70)
-WS_BACKOFF_START = timedelta(seconds=5)
-WS_BACKOFF_MAX = timedelta(minutes=5)
-# Message type carrying the vehicle health status (the telemetry we want).
-WS_TYPE_STATUS = "VHS"
-
-# ---- Owner web portal ----
-# Where location and the real vehicle names come from. The portal's own backend
-# calls if9 with whitelisted credentials, so anything it renders has already
-# been through Approov on JLR's side — which is why a plain ForgeRock session
-# can read it while every direct position/attributes endpoint answers 498.
-PORTAL_BASES = (
-    "https://incontrol.landrover.com/jlr-portal-owner-web",
-    "https://incontrol.jaguar.com/jaguar-portal-owner-web",
-)
-PORTAL_LOCALE = "en_GB"
-# The AM session cookie domain: the portal's login hand-off rides the same
-# ForgeRock session the interactive sign-in established.
-IDENTITY_HOST = "https://identity.jaguarlandrover.com"
-# The AM session cookie. A custom name, not ForgeRock's default
-# iPlanetDirectoryPro, and its value is the journey's tokenId. It is necessary
-# but not sufficient: the sibling routing cookies from the same response have
-# to travel with it (see JlrLogin.session_cookies).
-SESSION_COOKIE = "SSOSession"
-# Cookies that describe one pending request rather than the session. Replaying
-# a stale one into a fresh authorize is asking the server to resume something
-# that finished long ago, so they are captured but never persisted.
-ONE_SHOT_COOKIES = frozenset({"OAUTH_REQUEST_ATTRIBUTES"})
-# Location only moves when a journey completes and syncs, so there is nothing
-# to gain from asking often — and a legacy servlet app is not somewhere to be
-# impolite.
-PORTAL_INTERVAL = timedelta(minutes=30)
-# The shortest gap between two portal reads that a person pressing Refresh can
-# force. The scheduled interval above is a background cadence and has no
-# business gating a deliberate act, but somebody leaning on the button should
-# not turn into a request per press either — this is somebody else's server.
-PORTAL_FORCE_FLOOR = timedelta(minutes=1)
-# The same floor over the telemetry resubscription a Refresh press forces.
-# Reconnecting is cheap for us and a handshake for the broker, and pressing
-# twice inside a minute cannot produce anything the first press did not: the
-# socket redelivers whatever JLR hold, and JLR do not change it that fast.
+# The floor between Refresh presses. Pressing twice inside a minute cannot
+# produce anything the first press did not: JLR answer with what the car last
+# reported, and it does not change that fast.
 RESUBSCRIBE_FLOOR = timedelta(minutes=1)
-# How often to touch the portal so its session does not idle out. Its own
-# clock, not the housekeeping one: the session has been watched die inside
-# fifteen minutes of a fresh sign-in, and once it has, the identity session
-# behind it will not mint another — so a touch on the fifteen-minute cycle was
-# arriving to find the very thing it was meant to preserve already gone.
-#
-# Four, having been walked up to eight and walked straight back down. Four held
-# a session for eleven hours; eight was given the same session and lost it
-# three hours later, while a second account on four passed twenty-one hours on
-# one sign-in. Two runs is not a proof, but the cost of being wrong is a user
-# fetching an emailed code, and the saving was seven requests an hour.
-PORTAL_KEEPALIVE_INTERVAL = timedelta(minutes=4)
-# The portal's own session is a Java servlet session and thirty minutes is the
-# classic default for those — the same as the interval above, so every location
-# read was arriving exactly as the session lapsed. Being bounced to the login
-# page then forces a fresh sign-in, and the identity session it needs has aged
-# out by then too, which is what made location die half an hour after every
-# sign-in. Touching the portal on each housekeeping run keeps its session
-# comfortably inside the timeout so the re-login never has to happen.
-PORTAL_KEEPALIVE_PATH = "/ajax/pollvehiclestatus"
-# Vehicle names and plates change essentially never.
-PORTAL_VEHICLES_TTL = timedelta(hours=24)
-# How long to leave the portal alone after it refuses the stored session. Long
-# enough not to knock repeatedly at a door only the user can open, short enough
-# that a transient failure heals itself instead of needing a restart.
-PORTAL_RETRY_AFTER = timedelta(hours=6)
-# Repair issue raised when only an interactive sign-in can restore location.
+# The owner portal's sign-in repair, from before 3.0.0. Nothing raises it any
+# more; kept so setup and removal can delete one left behind.
 ISSUE_PORTAL_SIGNED_OUT = "portal_signed_out"
+# An entry set up on the InControl sign-in, which 3.0.0 removed: it loads with
+# nothing to read until the owner links the Data Hub.
+ISSUE_INCONTROL_RETIRED = "incontrol_retired"
+# Everything an InControl sign-in left in an entry. Removed from every entry by
+# the 1.2 migration: none of it can be used any more, and the password was
+# kept in the clear.
+INCONTROL_KEYS = (
+    "password",
+    "device_id",
+    "user_id",
+    "refresh_token",
+    "sso_cookies",
+    "portal_cookies",
+    "portal_base",
+    "portal_minted",
+)
 
-# ---- JLR Data Hub (optional) ----
-# JLR's documented API (developer.jlr.com). Set up from the options, and held
-# in the entry under one key so that removing it is removing one key. The
+# ---- JLR Data Hub ----
+# JLR's documented API (developer.jlr.com). Held in the entry under one key,
+# so an entry from the InControl sign-in is told apart by not having it. The
 # private key and the refresh token are secrets: redact.py treats both, and the
 # client id, as such.
 CONF_DATAHUB = "datahub"
@@ -153,113 +74,10 @@ DATAHUB_ISSUES = (
 # the options offer linking again. It is made valid for a year.
 DATAHUB_RENEW_WITHIN = timedelta(days=30)
 
-# ---- Identity: ForgeRock OIDC ----
-# JLR edge-blocked the whole legacy IFAS host in August 2026 (openresty 403 on
-# every path, with or without credentials), killing the password grant this
-# integration used to mint its bearer token. The app's own ForgeRock client is
-# the replacement; the token it returns is still accepted by if9/webview below,
-# so only the token *source* changed — reads and commands are untouched.
-IDENTITY_BASE = "https://identity.jaguarlandrover.com/gateway"
-IDENTITY_REALM = "realms/root/realms/customer"
-AUTHENTICATE_URL = (
-    f"{IDENTITY_BASE}/json/{IDENTITY_REALM}/authenticate"
-    "?authIndexType=service&authIndexValue=b2c-acr-2"
-)
-AUTHORIZE_URL = f"{IDENTITY_BASE}/oauth2/{IDENTITY_REALM}/authorize"
-ACCESS_TOKEN_URL = f"{IDENTITY_BASE}/oauth2/{IDENTITY_REALM}/access_token"
-# ForgeRock AM refuses the authenticate endpoint without this.
-AUTH_API_VERSION = "resource=2.0, protocol=1.0"
 
-# The app's PUBLIC OAuth client (PKCE, no secret). An OAuth client identifies
-# the *app*, not the car, and the vehicles you get back come from the account —
-# so the Land Rover client is used for Jaguar accounts too. (The same already
-# holds for TELEMATICS_PROGRAM below, which has been "landroverprogram" for
-# every user including Jaguar owners since day one.)
-IAM_CLIENT_ID = "icr-landrover"
-IAM_REDIRECT_URI = "icr-landrover://oauth2redirect"
-IAM_SCOPES = (
-    "openid profile email "
-    "urn:iam2-mgd-v1:scopes:customer:person "
-    "urn:iam2-mgd-v1:scopes:customer:auto-id "
-    "urn:iam2-mgd-v1:scopes:customer:TSDP_attributes "
-    "urn:iam2-mgd-v1:scopes:vehicle:vehicle-data "
-    "urn:iam2-mgd-v1:scopes:vehicle:vehicle-identity"
-)
-
-# The ForgeRock access token lives ~5 minutes, so the renewal margin has to be
-# proportional: a fixed margin larger than the lifetime would mark every token
-# expired the instant it arrived and refresh on every single request.
-TOKEN_RENEW_RATIO = 0.2
-TOKEN_RENEW_MARGIN_MIN = 15
-TOKEN_RENEW_MARGIN_MAX = 300
-# Guard against an unrecognised journey looping the callback chain forever.
-AUTH_MAX_STEPS = 12
-
-# ---- Browser / webview fingerprint ----
-# Still required by the endpoints that do answer (identity, vehicle list): every
-# /if9/webview/* request without them returns 401. They are no longer sufficient
-# for the per-vehicle endpoints, which now want Approov attestation as well.
-USER_AGENT = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"
-WEBVIEW_ORIGIN = "https://webview.prod-row.jlrmotor.com"
-WEBVIEW_REFERER = "https://webview.prod-row.jlrmotor.com/"
-
-# Headers attached to every webview request (host-level fingerprint).
-BROWSER_HEADERS = {
-    "User-Agent": USER_AGENT,
-    "Origin": WEBVIEW_ORIGIN,
-    "Referer": WEBVIEW_REFERER,
-}
-
-# Response headers worth capturing when a request fails: they identify whether
-# JLR's API answered or an edge/WAF appliance in front of it refused us, and
-# carry the reference id their support would need.
-DIAGNOSTIC_HEADERS = (
-    "Server",
-    "Content-Type",
-    "WWW-Authenticate",
-    "Retry-After",
-    "X-Reference-Error",
-    "CF-Ray",
-    "X-Akamai-Request-ID",
-    "Akamai-GRN",
-)
-
-# 498 is Approov's. It means the edge wanted a device-bound attestation token
-# that only the signed app can mint — there is no header that talks past it.
-APPROOV_HINT = (
-    "{what} returned 498 — Jaguar Land Rover require app attestation (Approov) "
-    "on this endpoint, which Home Assistant cannot produce. Vehicle data now "
-    "arrives over the telemetry websocket instead; remote commands still use "
-    "this path and are blocked while the wall is up."
-)
-
-# A 403 means JLR understood the request and refused it — which is not the same
-# as bad credentials, and is usually either a throttle or an edge rule.
-FORBIDDEN_HINT = (
-    "{what} returned 403 (refused by JLR — the request was understood but "
-    "rejected). This is not necessarily a credentials problem: it is commonly "
-    "a temporary account/IP throttle, or an edge rule change. Enable debug "
-    "logging for this integration to capture the response body and headers."
-)
-
-# ---- Telematics program ----
-TELEMATICS_PROGRAM = "landroverprogram"
-
-# ---- Per-resource media types (Accept / Content-Type) ----
-MEDIA_JSON = "application/json"
-MEDIA_USER = "application/vnd.wirelesscar.ngtp.if9.User-v4+json"
-MEDIA_HEALTHSTATUS = "application/vnd.ngtp.org.if9.healthstatus-v3+json"
-# ---- Config entry keys ----
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"
-CONF_DEVICE_ID = "device_id"
-CONF_USER_ID = "user_id"
-# Persisted so a restart resumes with a cheap refresh grant instead of spending
-# a full password login every time (which is what abuse detection notices).
-CONF_REFRESH_TOKEN = "refresh_token"
-# Last known vehicle attributes, per VIN. Cached in the entry because the
-# endpoint that serves them is behind the Approov wall: without this a restart
-# would lose every vehicle's name, model and fuel type for good.
+# Last known vehicle details, per VIN. Cached in the entry so a restart keeps
+# each car's name, model and fuel type when the first details read fails, and
+# the nickname an earlier version read from the owner portal.
 CONF_ATTRIBUTES = "attributes"
 # When each vehicle's reported status last actually differed. Persisted
 # because it is the only honest answer to "when did this car last tell us
@@ -279,23 +97,6 @@ CONF_VOLATILE_SEEN = "volatile_seen"
 # anything about the car having to be in a particular state.
 CONF_DECAYED_SINCE = "decayed_since"
 CONF_DECAYED_SEEN = "decayed_seen"
-# The ForgeRock session cookies captured at sign-in. The owner web portal has
-# no token-based entry point — it authenticates by handing its own OAuth dance
-# to the AM session in the browser — so reading location means keeping that
-# session. Treated as a credential: redacted from diagnostics, never logged.
-CONF_SSO_COOKIES = "sso_cookies"
-# The portal's own session, and which brand's portal minted it. This is the one
-# worth keeping: the identity session behind it is capped at two hours and
-# cannot be renewed without the user, whereas a portal session in active use
-# has been observed alive for well over a day. Persisting it means a restart
-# resumes rather than needing a fresh code.
-CONF_PORTAL_COOKIES = "portal_cookies"
-CONF_PORTAL_BASE = "portal_base"
-# When the portal session was minted. Persisted so its age survives a restart:
-# telling an idle timeout from a session that simply died of old age needs the
-# age, and reconstructing it from log timestamps after the fact is how two
-# separate failures this weekend went undiagnosed.
-CONF_PORTAL_MINTED = "portal_minted"
 # The units the distance and pressure options last wrote into the entity
 # registry, by kind. Without it a unit the integration forced and a unit the
 # user picked by hand look identical, and clearing "ours" cleared theirs (#40).
@@ -327,10 +128,6 @@ UNSETTLED_MINUTES_CHOICES = (0, 15, 30, 60, 120)
 # behaves exactly as it does today rather than having its readings hidden on
 # the strength of a guess.
 UNSETTLED_VEHICLE_STATES = ("KEY_ON_ENGINE_OFF",)
-# The one value seen on a car that has genuinely been left. Kept separate and
-# unused by the predicate below on purpose: this is documentation of what the
-# settled end looks like, not a second list to fall through to.
-SETTLED_VEHICLE_STATES = ("KEY_REMOVED",)
 
 # The keys behind the readings that stop being assertable, and the state key
 # that decides whether they are. The clock for withholding them runs on these
@@ -398,48 +195,28 @@ VOLATILE_STATUS_KEYS_1_7 = (
 )
 
 # ---- Refresh cadence ----
-# Vehicle data arrives over the telemetry socket as it happens, so there is no
-# status polling any more and nothing to make adaptive. What remains on a timer
-# is housekeeping: renew the token, keep the device registration alive, notice a
-# vehicle being added or removed, and retry the attributes that are currently
-# walled. All of it is one or two cheap requests.
+# Status, location and journeys are read by the Data Hub link on its own
+# clocks (datahub_link.py). What remains here is housekeeping: notice a car
+# being added or removed, and refresh vehicle details when they are due.
 SCAN_INTERVAL_HOUSEKEEPING = timedelta(minutes=15)
-# Identity fields worth having, and the spellings they have been seen under.
-# The canonical names on the left are what the entity layer reads.
-IDENTITY_ALIASES: dict[str, tuple[str, ...]] = {
-    "nickname": ("nickname", "vehicleNickname"),
-    "vehicleBrand": ("vehicleBrand", "brand", "make"),
-    "vehicleType": ("vehicleType", "vehicleModel", "modelName", "model"),
-    "model": ("model", "vehicleType"),
-    "fuelType": ("fuelType", "FuelType", "fuel"),
-    "numberOfDoors": ("numberOfDoors",),
-    "registrationNumber": ("registrationNumber", "registration"),
-    "modelYear": ("modelYear", "vehicleModelYear"),
-}
 
 # World Manufacturer Identifier -> brand. Only the two that are unambiguous:
 # guessing a model from the rest of the VIN would put the wrong car on
 # someone's dashboard, which is worse than a generic name.
 VIN_BRANDS = {"SAL": "Land Rover", "SAJ": "Jaguar"}
 
-# Vehicle attributes (make/model/capabilities) effectively never change.
+# Vehicle details (model, year, fuel type) effectively never change.
 ATTRIBUTES_TTL = timedelta(hours=24)
-# How long to leave the walled attributes endpoint alone after it refuses us.
-# Retrying it every housekeeping cycle would be hundreds of requests a day at a
-# door that is not going to open until JLR decide otherwise.
+# How long to leave the details alone after a read fails, for a car that has
+# none yet: retrying every housekeeping cycle would be dozens of requests a day.
 ATTRIBUTES_RETRY = timedelta(hours=6)
-# How long the entities keep their last values after the socket drops before
-# going unavailable. Reconnects are routine — the STOMP session is bound to a
-# ~5 minute access token — so a brief gap must not flap every entity, while a
-# long one is a real outage and should look like one.
-TELEMETRY_GRACE = timedelta(minutes=30)
 # A GPS fix older than this is flagged stale. Informational: a car parked for
 # two days has a two-day-old fix and nothing is wrong.
 STALE_AFTER = timedelta(hours=24)
-# How long a position stays trustworthy once portal reads start failing. This is
-# a different thing from the fix being old: here we cannot tell whether the car
-# has moved since, so continuing to assert a location — and with it a zone —
-# would be a confident guess. Six poll cycles, so a blip does not blank it.
+# How long a position stays trustworthy once location reads stop answering.
+# A different thing from the fix being old: here we cannot tell whether the
+# car has moved since, so asserting a location — and with it a zone — would be
+# a confident guess. Three hourly reads, so one failure does not blank it.
 POSITION_TRUST_WINDOW = timedelta(hours=3)
 
 # Climate operating states that count as "running" (shared by the climate

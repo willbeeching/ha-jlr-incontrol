@@ -22,10 +22,6 @@ from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
 
-from custom_components.jlr_incontrol.config_flow import (  # noqa: E402
-    _login_error_code,
-)
-
 
 async def open_options(hass: HomeAssistant, entry: MockConfigEntry) -> dict[str, Any]:
     """Open the dialog and go to the settings, past the menu it starts on."""
@@ -46,8 +42,9 @@ class TestTheDialog:
         result = await hass.config_entries.options.async_init(entry.entry_id)
         assert result["type"] is FlowResultType.MENU
         assert result["step_id"] == "init"
-        # Unlinking is only offered when there is a link to undo.
-        assert result["menu_options"] == ["settings", "datahub"]
+        # Linking again is offered only when the link has stopped or its
+        # certificate is running out; this one is working.
+        assert result["menu_options"] == ["settings"]
 
     async def test_the_settings_are_one_step_in(
         self, hass: HomeAssistant, entry: MockConfigEntry, loaded: Doubles
@@ -113,39 +110,3 @@ class TestTheDialog:
         )
         await hass.async_block_till_done()
         assert entry.runtime_data.data["vehicles"]
-
-
-class TestWordingASignInFailure:
-    """Which of three explanations the user gets, from JLR's error text."""
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "the password was rejected",
-            "Authentication Failed: bad credential",
-            "REJECTED by the identity provider",
-        ],
-    )
-    def test_a_credentials_problem_says_so(self, text: str) -> None:
-        from custom_components.jlr_incontrol.auth import JlrLoginError
-
-        assert _login_error_code(JlrLoginError(text)) == "invalid_auth"
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "this account does not support the journey",
-            "the journey has changed shape",
-        ],
-    )
-    def test_a_changed_journey_says_so(self, text: str) -> None:
-        # Distinct on purpose: nothing the user types will fix it, and it is
-        # the signal that this integration needs updating.
-        from custom_components.jlr_incontrol.auth import JlrLoginError
-
-        assert _login_error_code(JlrLoginError(text)) == "unsupported_journey"
-
-    def test_anything_else_is_treated_as_reachability(self) -> None:
-        from custom_components.jlr_incontrol.auth import JlrLoginError
-
-        assert _login_error_code(JlrLoginError("connection reset")) == "cannot_connect"

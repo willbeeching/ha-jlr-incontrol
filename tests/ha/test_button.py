@@ -90,7 +90,7 @@ class TestPressingRefresh:
     ) -> None:
         # Greying it out because telemetry is down disables it exactly when
         # someone would reach for it, and it does not read from that socket.
-        loaded.telemetry.drop()
+        loaded.link.drop()
         await hass.async_block_till_done()
         await press(hass, refresh_button(hass))
 

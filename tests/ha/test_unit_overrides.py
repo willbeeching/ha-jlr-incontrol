@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 import doubles  # noqa: E402
-from doubles import KEPT, Doubles, FakeClient  # noqa: E402
+from doubles import KEPT, Doubles, FakeLink  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -29,19 +29,20 @@ from custom_components.jlr_incontrol.const import (  # noqa: E402
 )
 
 DATA = {
-    "username": "someone@example.com",
-    "device_id": "a-device",
-    "user_id": "a-user",
-    "refresh_token": "a-refresh-token",
-    "sso_cookies": {"iPlanetDirectoryPro": "a-cookie"},
-    "portal_cookies": {"JSESSIONID": "a-session"},
-    "portal_base": "https://incontrol.jaguar.com/jaguar-portal-owner-web",
+    "datahub": {
+        "client_id": "dsas-0123456789ab",
+        "private_key": "not used by the fake",
+        "certificate": "",
+        "refresh_token": "offline-1",
+        "vehicles": [KEPT],
+        "account_id": "acct-1",
+    }
 }
 
 
 async def set_up(hass: HomeAssistant, options: dict[str, str]) -> MockConfigEntry:
     entry = MockConfigEntry(
-        domain=DOMAIN, data=DATA, options=options, unique_id="a-user"
+        domain=DOMAIN, data=DATA, options=options, unique_id="acct-1", minor_version=2
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -88,10 +89,10 @@ class TestForcingAUnit:
 def charging_car(monkeypatch: pytest.MonkeyPatch) -> None:
     """An I-Pace with a charging rate, in place before setup."""
 
-    async def attributes(self: FakeClient, vin: str) -> dict[str, Any]:
+    async def attributes(self: FakeLink, vin: str) -> dict[str, Any]:
         return {"vehicleBrand": "Jaguar", "fuelType": "Electric"}
 
-    monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+    monkeypatch.setattr(FakeLink, "async_vehicle_details", attributes)
     monkeypatch.setattr(
         doubles,
         "STATUS",
@@ -123,7 +124,8 @@ class TestChargingRateFollowsDistance:
             domain=DOMAIN,
             data={**DATA, CONF_APPLIED_UNITS: {"distance": "mi"}},
             options={"distance_unit": "miles"},
-            unique_id="a-user",
+            unique_id="acct-1",
+            minor_version=2,
         )
         entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
@@ -297,7 +299,9 @@ class TestTheDefaultMeansHomeAssistants:
         from homeassistant.util.unit_system import METRIC_SYSTEM
 
         hass.config.units = METRIC_SYSTEM
-        entry = MockConfigEntry(domain=DOMAIN, data=DATA, unique_id="a-user")
+        entry = MockConfigEntry(
+            domain=DOMAIN, data=DATA, unique_id="acct-1", minor_version=2
+        )
         entry.add_to_hass(hass)
         registry = er.async_get(hass)
         created = registry.async_get_or_create(

@@ -1,37 +1,32 @@
 """Data coordinator for Jaguar Land Rover InControl.
 
-Vehicle data is pushed, not polled: telemetry.py holds a STOMP subscription open
-and hands snapshots here as they arrive. What is left on a timer is housekeeping
-— renew the token, keep the device registration alive, notice a vehicle being
-added or removed, and retry the attributes endpoint that Approov currently
-blocks. None of that produces the numbers on the dashboard.
+Everything comes from the JLR Data Hub (datahub_link.py): the cars on the
+account, their details, status, location and journeys. Status and location
+arrive when the link reads or the stream delivers them; what is left on a
+timer here is housekeeping — notice a car being added or removed, and refresh
+the vehicle details once a day.
+
+An entry without a link is one set up on the InControl sign-in, which 3.0.0
+removed. It loads with nothing to read, keeps its devices and entity
+registrations, and asks through a repair for the Data Hub to be linked.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from enum import StrEnum
 from typing import Any
 
-from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.core import Event, HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
-from .api import (
-    JlrApiError,
-    JlrAuthError,
-    JlrClient,
-    brand_from_vin,
-    identity_fields,
-)
 from .const import (
     ATTRIBUTES_RETRY,
     ATTRIBUTES_TTL,
@@ -39,64 +34,43 @@ from .const import (
     CONF_DATAHUB,
     CONF_DECAYED_SEEN,
     CONF_DECAYED_SINCE,
-    CONF_DEVICE_ID,
     CONF_LAST_CHANGED,
-    CONF_PASSWORD,
-    CONF_PORTAL_BASE,
-    CONF_PORTAL_COOKIES,
-    CONF_PORTAL_MINTED,
-    CONF_REFRESH_TOKEN,
-    CONF_SSO_COOKIES,
     CONF_UNSETTLED_SINCE,
-    CONF_USER_ID,
-    CONF_USERNAME,
     CONF_VOLATILE_SEEN,
     DECAYING_STATUS_KEYS,
     DOMAIN,
-    ISSUE_PORTAL_SIGNED_OUT,
+    ISSUE_INCONTROL_RETIRED,
     OPT_UNSETTLED_MINUTES,
-    PORTAL_FORCE_FLOOR,
-    PORTAL_INTERVAL,
-    PORTAL_KEEPALIVE_INTERVAL,
-    PORTAL_RETRY_AFTER,
-    PORTAL_VEHICLES_TTL,
     POSITION_TRUST_WINDOW,
     RESUBSCRIBE_FLOOR,
     SCAN_INTERVAL_HOUSEKEEPING,
     STALE_AFTER,
-    TELEMETRY_GRACE,
     UNSETTLED_MINUTES_DEFAULT,
     UNSETTLED_VEHICLE_STATES,
+    VIN_BRANDS,
     VOLATILE_STATUS_KEYS,
     VOLATILE_STATUS_KEYS_1_7,
 )
 from .datahub import DataHubError
 from .datahub_link import DataHubLink
-from .portal import JlrPortal, JlrPortalAuthError, JlrPortalError
-from .redact import scrub, vehicle_label
-from .telemetry import JlrTelemetry
+from .redact import vehicle_label
 
 _LOGGER = logging.getLogger(__name__)
 
-# How long to wait at setup for the first snapshot to arrive over the socket.
-# Generous: it covers the token refresh, the device registration, the websocket
-# handshake and the broker's first push.
+# How long to wait at setup for every car's first status read. Generous: it
+# covers the token renewal, the status and battery reads, and JLR being slow.
 FIRST_SNAPSHOT_TIMEOUT = 60
 
-# How long a Refresh press waits for the socket to come back before it
-# reports failure. Shorter than setup's wait on purpose: somebody is
-# standing in front of the button.
-RESUBSCRIBE_TIMEOUT = 15
 
+def brand_from_vin(vin: str) -> dict[str, str]:
+    """The one thing a VIN tells us for certain: which marque built it.
 
-def _to_miles(value: Any) -> float | None:
-    """The odometer as a number, or None if it is not one."""
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    A floor under the Data Hub's details, which can fail on the first read.
+    The model is deliberately not guessed from the remaining characters: a
+    confidently wrong model is worse than none.
+    """
+    brand = VIN_BRANDS.get(vin[:3].upper())
+    return {"vehicleBrand": brand} if brand else {}
 
 
 def _restore_seen(stored: Any, *orders: tuple[str, ...]) -> dict[str, dict[str, Any]]:
@@ -122,8 +96,8 @@ def _restore_seen(stored: Any, *orders: tuple[str, ...]) -> dict[str, dict[str, 
     return restored
 
 
-class Resubscription(StrEnum):
-    """What a forced resubscription did, for a caller that has to say so."""
+class Refresh(StrEnum):
+    """What a Refresh press did, for a button that has to say so."""
 
     DONE = "done"
     TOO_SOON = "too_soon"
@@ -131,7 +105,7 @@ class Resubscription(StrEnum):
 
 
 class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Owns the JLR client, the telemetry socket, and the merged vehicle state."""
+    """Owns the Data Hub link and the merged vehicle state."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
@@ -141,46 +115,34 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=SCAN_INTERVAL_HOUSEKEEPING,
         )
         self.entry = entry
-        # JLR's documented Data Hub, when the owner has linked it. Optional and
-        # alongside everything else: nothing here depends on it.
+        # None for an entry left over from the InControl sign-in, which waits
+        # for the owner to link the Data Hub.
         self.datahub: DataHubLink | None = (
             DataHubLink(
                 hass,
                 entry,
-                on_status=self._handle_datahub_status,
-                on_position=self._handle_datahub_position,
-                on_signed_out=self._datahub_signed_out,
+                on_status=self._handle_status,
+                on_position=self._handle_position,
             )
             if entry.data.get(CONF_DATAHUB)
             else None
         )
-        # Where vehicle status comes from: "socket", or "datahub" once setup
-        # has found a link that covers every car on the account.
-        self.status_source = "socket"
-        # What the options looked like at setup, so the update listener can tell
-        # an options change (reload) from a token rotation (do not reload).
-        # Change detection for the last-updated signal: some cars (I-Pace)
-        # report no LAST_UPDATED_TIME at all and the position timestamp goes
-        # static while parked, so observing when the data actually changes is
-        # the only freshness signal that always works.
+        # Change detection for the last-updated signal, kept alongside the
+        # Data Hub's own report time: observing when the readings actually
+        # change is the freshness signal that survives a report time that
+        # moves while nothing else does.
         self._last_status_seen: dict[str, dict[str, Any]] = {}
-        # Attributes come from a walled endpoint, so the last known set is
-        # persisted in the config entry: losing them would cost every vehicle
-        # its name, model and fuel type until JLR lift the wall.
+        # Vehicle details persisted in the config entry: model, year, fuel
+        # type, and the nickname and registration an earlier version read from
+        # the owner portal, which the Data Hub does not carry.
         stored = entry.data.get(CONF_ATTRIBUTES) or {}
         self._attributes: dict[str, dict[str, Any]] = {
             vin: dict(attrs) for vin, attrs in stored.items()
         }
         self._attributes_attempted: dict[str, Any] = {}
-        # Pushed state, keyed by VIN.
         self._status: dict[str, dict[str, Any]] = {}
-        # When the broker last pushed for this VIN. Message time, not car time —
-        # surfaced in diagnostics only, never used as a freshness signal.
-        self._pushed_at: dict[str, str] = {}
-        # Restored, not started empty: this is the only statement the
-        # integration can make about when a car last reported anything, and
-        # rebuilding it from nothing on every reload is what made the
-        # "last updated" sensor fall back to a position fix and jump backwards.
+        # Restored, not started empty: rebuilding it from nothing on every
+        # reload made the "last updated" sensor jump backwards.
         self._last_changed: dict[str, str] = dict(
             entry.data.get(CONF_LAST_CHANGED) or {}
         )
@@ -209,138 +171,42 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             entry.data.get(CONF_DECAYED_SEEN), DECAYING_STATUS_KEYS
         )
         self._position: dict[str, dict[str, Any]] = {}
+        # When each car was last actually located, for position_trusted.
+        self._position_read_at: dict[str, Any] = {}
         self._vehicles: dict[str, dict[str, Any]] = {}
-        self._disconnected_since: datetime | None = dt_util.utcnow()
-        # Vehicles subscribed but not yet heard from. Platform setup reads the
-        # status to decide which entities a car gets, so it must not run while
-        # one of them is still silent.
+        # Cars not heard from yet. Platform setup reads the status to decide
+        # which entities a car gets, so it must not run while one is silent.
         self._awaiting: set[str] = set()
         self._snapshots_ready = asyncio.Event()
-        # None for "never", and the wall clock rather than a monotonic one,
-        # so this floor reads exactly like the portal's a few lines down.
-        self._resubscribed_at: datetime | None = None
-        # Mirrors the socket's state as an awaitable, for the one caller that
-        # needs to know the moment it comes back rather than on the next poll.
-        self._connected = asyncio.Event()
-        # The socket's lifecycle is held by one owner at a time. Without it a
-        # press that is part-way through stopping the old socket can be
-        # overtaken by an unload, finish, and start a fresh supervisor on an
-        # entry that has gone — leaving a connection nobody owns, and a second
-        # one as soon as the reload builds its replacement.
-        self._socket_lock = asyncio.Lock()
-        # One way. Once the entry is going down nothing may start it again,
-        # including a press already waiting on the lock.
-        self._stopping = False
-        # Set when a vehicle's snapshot arrives, so a caller can wait for the
-        # data rather than for the handshake that precedes it.
-        self._snapshot_seen: dict[str, asyncio.Event] = {}
-        self.client = JlrClient(
-            async_get_clientsession(hass),
-            entry.data.get(CONF_USERNAME, ""),
-            entry.data.get(CONF_PASSWORD),
-            device_id=entry.data.get(CONF_DEVICE_ID),
-            user_id=entry.data.get(CONF_USER_ID),
-            refresh_token=entry.data.get(CONF_REFRESH_TOKEN),
-            on_tokens=self._persist,
-        )
-        # The owner portal: the only surviving source of location and of the
-        # real vehicle names. Optional — an entry created before this existed
-        # has no session stored, and everything else still works without it.
-        self.portal = JlrPortal(
-            hass,
-            entry.data.get(CONF_SSO_COOKIES) or {},
-            portal_cookies=entry.data.get(CONF_PORTAL_COOKIES) or {},
-            portal_base=entry.data.get(CONF_PORTAL_BASE),
-            portal_minted=entry.data.get(CONF_PORTAL_MINTED),
-            on_portal_session=self._store_portal_session,
-        )
-        self._portal_ids: dict[str, str] = {}
-        self._portal_due: Any = None
-        self._portal_vehicles_due: Any = None
-        # When to try the portal again after it refused us; None means now.
-        self._portal_signed_out: Any = None
-        self._portal_unconfigured_logged = False
-        self._signed_out_issue_raised = False
-        # When a portal read last succeeded. Position is only as trustworthy as
-        # this is recent — see position_trusted.
-        self._portal_read_at: datetime | None = None
-        # And when each vehicle was last actually located. Separate from the
-        # above on purpose: the portal answering is not the same as this car
-        # having a position in the answer.
-        self._position_read_at: dict[str, datetime] = {}
-        # The shape of each car's portal trail as last read, for diagnostics.
-        # Kept apart from the position, which a pushed fix replaces whole.
-        self._trail: dict[str, dict[str, Any]] = {}
-        self.telemetry = JlrTelemetry(
-            async_get_clientsession(hass),
-            self.client,
-            on_status=self._handle_status,
-            on_position=self._handle_position,
-            on_connected=self._handle_connected,
-        )
+        # None for "never". The floor between Refresh presses.
+        self._refreshed_at: Any = None
 
     # ------------------------------------------------------------- lifecycle
-    async def async_start_telemetry(self) -> None:
-        """Open the socket and wait for a snapshot from *every* vehicle.
+    @property
+    def dormant(self) -> bool:
+        """An entry from the InControl sign-in, waiting for the Data Hub."""
+        return self.datahub is None
 
-        Every vehicle, not just the first: the sensor platform only creates an
+    async def async_start(self) -> None:
+        """Start the link and wait for every car's first status.
+
+        Every car, not just the first: the sensor platform only creates an
         entity when the status key backing it is present, so a car whose
-        snapshot lands after setup gets no fuel, odometer or tyre entities at
-        all — permanently unavailable while its stablemate works perfectly.
+        status lands after setup would get no fuel, odometer or tyre entities
+        until the platforms noticed it.
 
         Setup fails outright if nothing arrives, rather than succeeding into a
-        house of unavailable entities: that is precisely how the REST block
-        presented itself, and it cost a day to notice because nothing looked
-        wrong at the config-entry level.
+        house of unavailable entities.
         """
+        if self.datahub is None:
+            self._raise_retired_issue()
+            return
+        ir.async_delete_issue(self.hass, DOMAIN, self.retired_issue_id)
         self._awaiting = set(self._vehicles)
         self._snapshots_ready.clear()
-        if self._datahub_covers_account():
-            await self._async_start_datahub_status()
+        if not self._vehicles or self.datahub.signed_out:
+            # A link JLR have stopped accepting: its repair has said why.
             return
-        if not self.has_incontrol:
-            # A Data Hub entry with nothing to show yet and no socket to fall
-            # back on: the repair has said why.
-            return
-        self.telemetry.async_set_vehicles(self._vehicles)
-        await self.telemetry.async_start()
-        try:
-            async with asyncio.timeout(FIRST_SNAPSHOT_TIMEOUT):
-                await self._snapshots_ready.wait()
-        except TimeoutError as err:
-            if not self._status:
-                await self.telemetry.async_stop()
-                raise ConfigEntryNotReady(
-                    translation_domain=DOMAIN,
-                    translation_key="no_telemetry",
-                    translation_placeholders={"seconds": str(FIRST_SNAPSHOT_TIMEOUT)},
-                ) from err
-            # Some vehicles answered. Carry on with those rather than leaving
-            # the whole account down, and reload when the stragglers appear.
-            _LOGGER.warning(
-                "no telemetry snapshot from %s within %ss; reloading once their "
-                "data arrives so their entities can be created",
-                ", ".join(sorted(vehicle_label(v) for v in self._awaiting)),
-                FIRST_SNAPSHOT_TIMEOUT,
-            )
-
-    def _datahub_covers_account(self) -> bool:
-        """Whether the Data Hub is the status source.
-
-        It covers the account by construction: when it is linked, the cars are
-        the ones it lists. Only a link JLR have stopped accepting falls back.
-        """
-        return self.uses_datahub and bool(self._vehicles)
-
-    async def _async_start_datahub_status(self) -> None:
-        """Take status from the Data Hub, waiting for every car's first read.
-
-        The same wait, and for the same reason, as the socket's: entities are
-        created from the status keys a car reports, so a car whose first
-        snapshot lands after setup would get none.
-        """
-        assert self.datahub is not None
-        self.status_source = "datahub"
         self.datahub.async_start()
         try:
             async with asyncio.timeout(FIRST_SNAPSHOT_TIMEOUT):
@@ -365,7 +231,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     ) from err
                 raise ConfigEntryNotReady(
                     translation_domain=DOMAIN,
-                    translation_key="no_telemetry",
+                    translation_key="no_status",
                     translation_placeholders={"seconds": str(FIRST_SNAPSHOT_TIMEOUT)},
                 ) from err
             _LOGGER.warning(
@@ -375,173 +241,39 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 FIRST_SNAPSHOT_TIMEOUT,
             )
 
-    def _handle_datahub_status(self, vin: str, status: dict[str, Any]) -> None:
-        """Adopt status from the Data Hub, newest by the car's own clock.
+    @property
+    def retired_issue_id(self) -> str:
+        return f"{ISSUE_INCONTROL_RETIRED}_{self.entry.entry_id}"
 
-        The socket has to order snapshots by odometer because it carries no
-        time. The Data Hub stamps every one, so an older snapshot arriving
-        late is recognised directly.
+    def _raise_retired_issue(self) -> None:
+        """Ask for the Data Hub to be linked, which only the owner can do.
+
+        Not a reauth: there is nothing left to sign in to. Linking needs a
+        client the owner creates at data.jlr.com and an approval on their
+        phone, and Configure is where it is done.
         """
-        if self.status_source != "datahub":
-            return
-        held = dt_util.parse_datetime(
-            self._status.get(vin, {}).get("LAST_UPDATED_TIME") or ""
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self.retired_issue_id,
+            is_fixable=False,
+            severity=ir.IssueSeverity.ERROR,
+            translation_key=ISSUE_INCONTROL_RETIRED,
+            translation_placeholders={"title": self.entry.title},
         )
-        arriving = dt_util.parse_datetime(status.get("LAST_UPDATED_TIME") or "")
-        if held and arriving and arriving < held:
-            return
-        self._handle_status(vin, status, None)
-
-    def _handle_datahub_position(self, vin: str, position: dict[str, Any]) -> None:
-        """Adopt a location from the Data Hub when it is newer than the held one."""
-        held = dt_util.parse_datetime(
-            str(self._position.get(vin, {}).get("timestamp") or "")
-        )
-        arriving = dt_util.parse_datetime(str(position.get("timestamp") or ""))
-        if held and (arriving is None or arriving < held):
-            return
-        self._position[vin] = position
-        self._position_read_at[vin] = dt_util.utcnow()
-        self._push()
-
-    def _datahub_signed_out(self) -> None:
-        """Fall back to the socket when JLR stop accepting the link.
-
-        So a revoked link costs the owner a repair to read, not a house of
-        unavailable sensors while they get round to it.
-        """
-        if self.status_source != "datahub":
-            return
-        if not self.has_incontrol:
-            # Nothing to fall back on: the entry was set up on the Data Hub
-            # alone. The repair asks for it to be linked again.
-            return
-        self.status_source = "socket"
         _LOGGER.warning(
-            "falling back to the telemetry socket for vehicle status until the "
-            "Data Hub is linked again"
-        )
-        self.entry.async_create_background_task(
-            self.hass, self._async_start_socket(), f"{DOMAIN} socket fallback"
-        )
-
-    async def _async_start_socket(self) -> None:
-        async with self._socket_lock:
-            if self._stop_requested():
-                return
-            self.telemetry.async_set_vehicles(self._vehicles)
-            await self.telemetry.async_start()
-
-    def _stop_requested(self) -> bool:
-        """Whether the entry has started going down.
-
-        A method rather than the attribute, so it is genuinely re-read either
-        side of the await below. Read straight, a type checker narrows it to
-        False after the first test and calls the second unreachable — which is
-        precisely the check that matters, because the await in between is
-        where the unload happens.
-        """
-        return self._stopping
-
-    def _snapshot_event(self, vin: str) -> asyncio.Event:
-        """The signal for "this vehicle has pushed something"."""
-        return self._snapshot_seen.setdefault(vin, asyncio.Event())
-
-    async def async_stop_telemetry(self) -> None:
-        """Stop the socket for good, and make sure nothing restarts it.
-
-        The one way the socket is taken down on the way out. Setting the flag
-        before taking the lock matters: a press already inside it will find the
-        flag set the moment it gets there and decline to start anything.
-        """
-        self._stopping = True
-        async with self._socket_lock:
-            await self.telemetry.async_stop()
-
-    async def async_resubscribe_telemetry(self, vin: str) -> Resubscription:
-        """Cycle the telemetry socket so the broker re-delivers a snapshot.
-
-        The broker sends one on every subscription, and that is the only thing
-        that produces vehicle status on demand: the REST status endpoint is
-        walled, and the car pushes when it wakes rather than when asked.
-
-        Three outcomes rather than two, because a press that quietly did
-        nothing is the failure this button is still living down. DONE means a
-        snapshot for this vehicle actually arrived — not that the handshake
-        finished, which happens a fraction of a second earlier and says
-        nothing about whether any data followed.
-        """
-        now = dt_util.utcnow()
-        if (
-            self._resubscribed_at is not None
-            and now - self._resubscribed_at < RESUBSCRIBE_FLOOR
-        ):
-            _LOGGER.debug(
-                "telemetry resubscribed %s ago; too soon to ask again",
-                now - self._resubscribed_at,
-            )
-            return Resubscription.TOO_SOON
-        self._resubscribed_at = now
-        if self.status_source == "datahub":
-            assert self.datahub is not None
-            # The Data Hub answers a status request directly; there is no
-            # subscription to cycle.
-            ok = await self.datahub.async_read_now(vin)
-            return Resubscription.DONE if ok else Resubscription.FAILED
-        arrived = self._snapshot_event(vin)
-        # Under the lock, and only the lifecycle: the wait below does not
-        # touch the socket, and holding it across fifteen seconds would make
-        # an unload queue behind a press that is only listening.
-        async with self._socket_lock:
-            if self._stop_requested():
-                return Resubscription.FAILED
-            self._connected.clear()
-            arrived.clear()
-            await self.telemetry.async_stop()
-            # Checked again on the far side: stopping the old socket yields
-            # while the supervisor unwinds, which is exactly where an unload
-            # fits, and starting one afterwards is how a connection outlives
-            # the entry that owned it.
-            if self._stop_requested():
-                return Resubscription.FAILED
-            await self.telemetry.async_start()
-        # The handshake, and then the thing the press was for. Waiting only on
-        # the first reports success while every reading is still the old one:
-        # the snapshot follows the subscription rather than arriving with it,
-        # and a broker that accepts the subscription and then sends nothing
-        # would look identical to one that answered.
-        try:
-            async with asyncio.timeout(RESUBSCRIBE_TIMEOUT):
-                await self._connected.wait()
-                await arrived.wait()
-        except TimeoutError:
-            return Resubscription.FAILED
-        return Resubscription.DONE
-
-    def async_start_keepalive(self) -> None:
-        """Put the portal keep-alive on its own short clock."""
-        self.entry.async_on_unload(
-            async_track_time_interval(
-                self.hass, self._async_keepalive, PORTAL_KEEPALIVE_INTERVAL
-            )
+            "%s was set up on the InControl sign-in, which this version no "
+            "longer has. Link the JLR Data Hub from the integration's Configure "
+            "menu; every entity and its history are kept",
+            self.entry.title,
         )
 
     def async_stop_on_hass_shutdown(self) -> None:
-        """Close the socket when Home Assistant stops, not only on unload.
+        """Save and close the stream when Home Assistant stops.
 
-        Home Assistant does not unload config entries when it restarts, so
-        async_unload_entry — the only thing that was stopping the socket — never
-        ran. What happened instead was that core tore down the aiohttp session
-        underneath the read loop, which saw the websocket already gone and
-        logged a dropped connection and a retry, on the way out of a process
-        that was exiting. One spurious warning on every restart, and four in
-        this log to prove it.
-
-        Worse than the noise: the socket was never closed. Vanishing leaves the
-        broker holding a session until it times the connection out on its own,
-        which is not how to treat somebody else's server. Cancelling the
-        supervisor unwinds through the websocket's context manager, which sends
-        a close frame and says goodbye properly.
+        Home Assistant does not unload config entries when it stops, so
+        unload alone never ran: anything held only in memory was lost, and the
+        broker was left holding a session until it timed out on its own.
         """
         self.entry.async_on_unload(
             self.hass.bus.async_listen_once(
@@ -552,153 +284,59 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_hass_stopping(self, _event: Event) -> None:
         await self.async_shutdown()
 
-    async def _async_keepalive(self, _now: Any = None) -> None:
-        """Touch the owner portal so its session does not idle out.
-
-        Deliberately not part of housekeeping. Measured on a live account: a
-        portal session was already gone fifteen minutes and four seconds after
-        an interactive sign-in, and the identity session behind it refused to
-        mint a replacement — so the touch was doing nothing but discovering the
-        loss. Only the user can recover from that, at the cost of an emailed
-        code, which makes never reaching it worth a small request every few
-        minutes. See PORTAL_KEEPALIVE_PATH for what that request is.
-        """
-        if not self.portal.configured or self._portal_signed_out is not None:
-            return
-        if self._portal_due is None:
-            # No portal read yet, so there is no session to keep warm and a
-            # touch here would only spend the identity session minting one.
-            return
-        try:
-            await self.portal.async_touch()
-            # Say so. A touch that succeeds silently is indistinguishable in
-            # the log from a timer that never fired at all, and not being able
-            # to tell those apart is what left both of this weekend's failures
-            # undiagnosed.
-            _LOGGER.debug("portal keep-alive ok, session %s", self.portal.session_age)
-        except JlrPortalAuthError as err:
-            # Gone, and unrecoverable without the user. Say so now rather than
-            # waiting for the next half-hourly read to notice, and stop
-            # touching — repeating a login chain that cannot succeed would be
-            # both useless and rude.
-            self._async_portal_signed_out(dt_util.utcnow(), err)
-        except JlrPortalError as err:
-            _LOGGER.debug("portal keep-alive failed: %s", err)
-        except Exception:  # noqa: BLE001 - a timer callback must never raise
-            _LOGGER.exception("unexpected failure keeping the portal awake")
-
     async def async_shutdown(self) -> None:
-        """Stop the telemetry socket and portal session, then the coordinator.
-
-        Saving first. A rotated token or a freshly seeded attribute can be
-        held in memory with the next housekeeping poll fifteen minutes away,
-        and Home Assistant stopping is exactly when that poll never comes.
-        """
+        """Save, stop the link, then the coordinator."""
         self._persist()
-        await self.async_stop_telemetry()
-        await self.portal.async_close()
+        if self.datahub is not None:
+            await self.datahub.async_stop()
         await super().async_shutdown()
+
+    async def async_refresh_vehicle(self, vin: str) -> Refresh:
+        """Read status and location now, for the Refresh button.
+
+        Three outcomes rather than two, because a press that quietly did
+        nothing is the failure this button lived down. DONE means this car's
+        status was actually read, not just that JLR answered.
+        """
+        now = dt_util.utcnow()
+        if self._refreshed_at is not None and now - self._refreshed_at < (
+            RESUBSCRIBE_FLOOR
+        ):
+            _LOGGER.debug("refreshed %s ago; too soon", now - self._refreshed_at)
+            return Refresh.TOO_SOON
+        self._refreshed_at = now
+        if self.datahub is None or self.datahub.signed_out:
+            return Refresh.FAILED
+        ok = await self.datahub.async_read_now(vin)
+        return Refresh.DONE if ok else Refresh.FAILED
 
     # ----------------------------------------------------------- housekeeping
     async def _async_update_data(self) -> dict[str, Any]:
-        try:
-            return await self._async_housekeeping()
-        except JlrAuthError as err:
-            raise ConfigEntryAuthFailed(
-                translation_domain=DOMAIN,
-                translation_key="auth_failed",
-                translation_placeholders={"error": str(err)},
-            ) from err
-        except JlrApiError as err:
-            raise UpdateFailed(f"could not reach the JLR backend: {err}") from err
-
-    @property
-    def uses_datahub(self) -> bool:
-        """Whether the Data Hub is this entry's source of cars and status."""
-        return self.datahub is not None and not self.datahub.signed_out
-
-    @property
-    def _wants_portal(self) -> bool:
-        """Whether this entry means to read the owner portal at all.
-
-        An InControl entry does, for location and names. An entry on the Data
-        Hub alone does only if the owner signed in for location.
-        """
-        return self.has_incontrol or bool(
-            self.entry.data.get(CONF_SSO_COOKIES)
-            or self.entry.data.get(CONF_PORTAL_COOKIES)
-        )
-
-    @property
-    def has_incontrol(self) -> bool:
-        """Whether this entry holds an InControl sign-in at all.
-
-        Entries set up on the Data Hub alone do not, and never touch the
-        reverse-engineered endpoints; the owner portal, if it is signed in,
-        uses its own session cookies.
-        """
-        return bool(
-            self.entry.data.get(CONF_REFRESH_TOKEN)
-            or self.entry.data.get(CONF_PASSWORD)
-        )
-
-    async def _async_housekeeping(self) -> dict[str, Any]:
-        if self.uses_datahub:
-            assert self.datahub is not None
-            # The cars the owner selected on the client at data.jlr.com. The
-            # old vehicle list is not consulted: moving off it is the point.
-            found: dict[str, dict[str, Any]] = {
-                vin: {"vin": vin} for vin in self.datahub.vehicles
-            }
-        elif self.has_incontrol:
-            await self.client.async_connect()
-            vehicles = await self.client.async_get_vehicles()
-            found = {}
-            for vehicle in vehicles:
-                vin = vehicle.get("vin") or vehicle.get("vehicleId")
-                if vin:
-                    found[vin] = vehicle
-        else:
-            # A Data Hub entry whose link JLR no longer accept, and nothing
-            # else to ask. The repair says so; keep what is held.
+        if self.datahub is None or self.datahub.signed_out:
+            # Nothing to ask: the repair says why. Keep what is held.
             return self._build()
-        # Authoritative, including when it is empty. Keeping the old list on
-        # an empty result meant selling your only car left it on the dashboard
-        # showing cached state, and undeletable — the removal hook still saw it
-        # as current. A reply we cannot parse raises in async_get_vehicles
-        # rather than arriving here as an empty list.
+        # The cars the owner selected on the client at data.jlr.com.
+        found: dict[str, dict[str, Any]] = {
+            vin: {"vin": vin} for vin in self.datahub.vehicles
+        }
         # Everything we hold something about, not just what the last listing
-        # said. _vehicles starts empty on every startup, so a car sold while
-        # Home Assistant was stopped was never compared against anything: its
-        # nickname, registration and freshness caches were restored from the
-        # entry and then sat there for good, because the first listing after a
-        # restart had nothing to find them missing from.
+        # said: the caches outlive a restart and the listing does not, so a
+        # car removed while Home Assistant was stopped is still found missing.
         removed = self._known_vins() - set(found)
         self._vehicles = found
         if removed:
             self._forget(removed)
-        self.telemetry.async_set_vehicles(found)
-
-        for vin, vehicle in self._vehicles.items():
-            # Free sources first: the vehicle-list entry is already in hand, and
-            # the VIN's manufacturer prefix costs nothing. Both are floors — a
-            # real attributes document overwrites them.
-            self._seed_identity(vin, vehicle)
-            if self.uses_datahub:
-                await self._async_refresh_datahub_details(vin)
-            else:
-                await self._async_refresh_attributes(vin)
-
-        await self._async_read_portal()
+        for vin in self._vehicles:
+            seed = brand_from_vin(vin)
+            current = self._attributes.get(vin, {})
+            if seed and not current.get("vehicleBrand"):
+                self._attributes[vin] = {**current, **seed}
+            await self._async_refresh_details(vin)
         self._persist()
         return self._build()
 
     def _known_vins(self) -> set[str]:
-        """Every VIN this integration is holding anything about.
-
-        The persisted caches included, which is the point: they outlive a
-        restart and the vehicle list does not.
-        """
+        """Every VIN this integration is holding anything about."""
         return (
             set(self._vehicles)
             | set(self._attributes)
@@ -710,79 +348,35 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     def _forget(self, removed: set[str]) -> None:
-        """Drop everything held about vehicles the account no longer has.
+        """Drop everything held about cars the account no longer has.
 
-        Dropping them from _vehicles alone only hid them. Their location was
-        still fetched from the owner portal on every cycle — a car sold months
-        ago, still being asked after by name — and their nickname and
-        registration stayed in the config entry indefinitely, where the
-        diagnostics dump would go on reporting them.
-
-        Every per-VIN cache is listed here rather than a subset, because the
-        ones that were missed are exactly the ones nobody thinks about: the
-        freshness snapshots and the attributes-retry clock hold no secrets but
-        do keep a sold car alive in the coordinator's idea of the account.
+        Every per-VIN cache, because the ones that were missed before are
+        exactly the ones nobody thinks about: they kept a sold car alive in
+        the entry and in diagnostics.
         """
         for vin in removed:
             self._attributes.pop(vin, None)
             self._attributes_attempted.pop(vin, None)
             self._status.pop(vin, None)
-            self._pushed_at.pop(vin, None)
             self._position.pop(vin, None)
-            self._portal_ids.pop(vin, None)
             self._last_status_seen.pop(vin, None)
             self._unsettled_since.pop(vin, None)
             self._volatile_seen.pop(vin, None)
-            self._snapshot_seen.pop(vin, None)
             self._decayed_since.pop(vin, None)
             self._decayed_seen.pop(vin, None)
             self._position_read_at.pop(vin, None)
-            self._trail.pop(vin, None)
             self._last_changed.pop(vin, None)
             self._awaiting.discard(vin)
-        # A vehicle we were still waiting on has now gone; nothing will ever
-        # arrive for it, and setup would otherwise sit out the full timeout.
+        # A car we were still waiting on has gone; nothing will ever arrive
+        # for it, and setup would otherwise sit out the full timeout.
         if not self._awaiting:
             self._snapshots_ready.set()
 
-    def _seed_identity(self, vin: str, vehicle: dict[str, Any]) -> None:
-        """Name the vehicle from what we already have, without asking JLR."""
-        seed = {**brand_from_vin(vin), **identity_fields(vehicle)}
-        if not seed:
-            return
-        current = self._attributes.get(vin, {})
-        missing = {key: value for key, value in seed.items() if not current.get(key)}
-        if missing:
-            self._attributes[vin] = {**current, **missing}
-
-    async def _async_refresh_attributes(self, vin: str) -> None:
-        """Retry the attributes endpoint, keeping whatever we already had.
-
-        Approov walls this one, so a refusal is the expected case for now and
-        must not disturb the cached copy — hence no exception escaping here.
-        Back off hard between attempts: a vehicle we already have attributes for
-        does not need asking again for a day, and one we don't is behind a door
-        that will not open until JLR decide otherwise.
-        """
-        now = dt_util.utcnow()
-        attempted = self._attributes_attempted.get(vin)
-        wait = ATTRIBUTES_TTL if vin in self._attributes else ATTRIBUTES_RETRY
-        if attempted and now - attempted < wait:
-            return
-        self._attributes_attempted[vin] = now
-        try:
-            attributes = await self.client.async_get_attributes(vin)
-        except JlrApiError as err:
-            _LOGGER.debug("attributes for %s unavailable: %s", vehicle_label(vin), err)
-            return
-        if attributes:
-            self._attributes[vin] = {**self._attributes.get(vin, {}), **attributes}
-
-    async def _async_refresh_datahub_details(self, vin: str) -> None:
+    async def _async_refresh_details(self, vin: str) -> None:
         """Model, year and fuel type from the Data Hub, daily.
 
-        On the same clock as the old attributes endpoint, whose job this takes
-        over. Merged over what is held, so the portal's nickname survives.
+        Merged over what is held, so a nickname read by an earlier version
+        survives.
         """
         assert self.datahub is not None
         now = dt_util.utcnow()
@@ -799,276 +393,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if details:
             self._attributes[vin] = {**self._attributes.get(vin, {}), **details}
 
-    @callback
-    def async_force_portal_read(self) -> bool:
-        """Let the next housekeeping read the portal even if it is not due.
-
-        The scheduled read runs every half hour, and until this existed the
-        Refresh button was gated by that clock — so for twenty-nine minutes in
-        every thirty, pressing it re-authenticated, asked for the vehicle list
-        and returned without reading the one thing it polls. Silently: the
-        press looked identical either way, which is why nobody could tell
-        whether the button did anything.
-
-        Returns whether the gate was actually cleared, so the caller can say
-        so. Refused inside the floor, because a deliberate act deserves to be
-        honoured but not repeated as fast as somebody can press.
-        """
-        now = dt_util.utcnow()
-        if (
-            self._portal_read_at is not None
-            and now - self._portal_read_at < PORTAL_FORCE_FLOOR
-        ):
-            _LOGGER.debug(
-                "portal read requested %s ago; too soon to ask again",
-                now - self._portal_read_at,
-            )
-            return False
-        self._portal_due = None
-        return True
-
-    async def _async_read_portal(self) -> None:
-        """Top up names and location from the owner portal.
-
-        Never fatal. The portal is a legacy servlet app behind a session that
-        will eventually expire, and none of the live vehicle data depends on
-        it — so a failure here degrades those two things and leaves everything
-        else alone.
-        """
-        now = dt_util.utcnow()
-        if self._portal_signed_out is not None:
-            # Refused before. Try again eventually rather than never: the fix
-            # needs the user, but a one-off failure should not cost location
-            # until the next restart.
-            if now < self._portal_signed_out:
-                return
-            self._portal_signed_out = None
-        if not self.portal.configured:
-            if not self._wants_portal:
-                # On the Data Hub alone, by setup or by removing the InControl
-                # sign-in: location comes from the Data Hub, and no portal
-                # session is the intended state, not a lost one. Treating it
-                # as lost started a reauth asking for the InControl password
-                # the owner had just chosen to remove. Any such prompt goes.
-                if self.entry.async_get_active_flows(self.hass, {SOURCE_REAUTH}):
-                    self._async_clear_signed_out_issue()
-                return
-            # Entries created before the portal was used have no session
-            # stored, and one cannot be conjured from a refresh token. Nothing
-            # to retry here, so this is a repair and a single log line rather
-            # than a back-off.
-            if not self._portal_unconfigured_logged:
-                self._portal_unconfigured_logged = True
-                self._async_raise_signed_out_issue()
-                _LOGGER.warning(
-                    "no stored sign-in session for the owner portal, so vehicle "
-                    "location and names are unavailable. Settings > Devices & "
-                    "Services > Jaguar Land Rover InControl > the three dots on "
-                    "the entry > Reconfigure will sign in again and restore "
-                    "them, keeping your existing entities"
-                )
-            return
-        if self._portal_due is not None and now < self._portal_due:
-            # Not time for a location read. Keeping the session alive between
-            # them is _async_keepalive's job, on a clock short enough to
-            # actually manage it.
-            return
-        self._portal_due = now + PORTAL_INTERVAL
-        try:
-            if self._portal_vehicles_due is None or now >= self._portal_vehicles_due:
-                await self._async_read_portal_vehicles(now)
-            # Driven by the vehicle list, not by the id cache: the two can
-            # disagree for a cycle, and it is the account's list that says
-            # which cars we are entitled to be asking about.
-            for vin in self._vehicles:
-                portal_id = self._portal_ids.get(vin)
-                if not portal_id:
-                    continue
-                position, trail = await self.portal.async_read_dashboard(portal_id)
-                self._note_trail(vin, trail)
-                if position:
-                    self._position[vin] = position
-                    # Per vehicle, and only on one that was actually located.
-                    # Stamping this account-wide meant a car with no portal id,
-                    # or one the portal had nothing to say about, had its old
-                    # coordinates quietly re-trusted on the strength of another
-                    # car being found.
-                    self._position_read_at[vin] = dt_util.utcnow()
-            self._portal_read_at = dt_util.utcnow()
-            _LOGGER.debug("owner portal read ok, session %s", self.portal.session_age)
-            # Whatever was wrong is no longer wrong. Clearing this only when
-            # the session cookies happened to change left the repair standing
-            # over a portal that had been working for an hour.
-            self._async_clear_signed_out_issue()
-        except JlrPortalAuthError as err:
-            self._async_portal_signed_out(now, err)
-        except JlrPortalError as err:
-            _LOGGER.debug("owner portal unavailable: %s", err)
-        except Exception:  # noqa: BLE001 - the portal must never break setup
-            _LOGGER.exception("unexpected failure reading the owner portal")
-
-    def _note_trail(self, vin: str, trail: dict[str, Any]) -> None:
-        """Keep the trail's shape, and log it when it changes.
-
-        Only on a change: the trail is read every half hour and stays the same
-        until the car next drives, and what #36 needs from a log is how the
-        trail moves when a journey is added, not the same line forty times.
-        """
-        if self._trail.get(vin) != trail:
-            _LOGGER.debug("%s portal trail: %s", vehicle_label(vin), scrub(trail))
-        self._trail[vin] = trail
-
-    def _async_portal_signed_out(self, now: Any, err: Exception) -> None:
-        """Back off and tell the user: nothing headless can renew this."""
-        self._portal_signed_out = now + PORTAL_RETRY_AFTER
-        self._async_raise_signed_out_issue()
-        _LOGGER.warning(
-            "%s — live status is unaffected, but location and vehicle names "
-            "will not update until you sign in again",
-            err,
-        )
-
-    @property
-    def issue_id(self) -> str:
-        """The repair id for this entry's expired portal session.
-
-        Scoped to the entry, because the id is what makes a repair unique
-        within a domain. Two accounts shared one id, so whichever entry ran
-        last decided whether the repair existed at all — a healthy account
-        silently clearing the warning belonging to a broken one.
-        """
-        return f"{ISSUE_PORTAL_SIGNED_OUT}_{self.entry.entry_id}"
-
-    def _async_raise_signed_out_issue(self) -> None:
-        """Ask for the sign-in the only way that can actually collect one.
-
-        This used to raise a repair with is_fixable=False, which is a notice
-        rather than a prompt: it described the steps and left the user to go
-        and perform them, and the only button on it dismissed the message. A
-        reauth flow is what every other integration uses for exactly this, and
-        it is the thing Home Assistant will put in front of someone and then
-        walk them through.
-
-        Once per load, not once per retry. Home Assistant already refuses to
-        stack a second reauth flow on an entry that has one, so this flag is
-        about not re-prompting somebody who dismissed the last one over a
-        problem they may not be able to fix right now.
-        """
-        if self._signed_out_issue_raised:
-            return
-        self._signed_out_issue_raised = True
-        self.entry.async_start_reauth(self.hass)
-
-    def _async_clear_signed_out_issue(self) -> None:
-        """Withdraw the request once the portal answers again.
-
-        The repair is deleted for the sake of anyone upgrading with the old
-        is_fixable=False notice still sitting in their Repairs list; nothing
-        raises it any more.
-        """
-        self._signed_out_issue_raised = False
-        ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
-        for flow in self.entry.async_get_active_flows(self.hass, {SOURCE_REAUTH}):
-            # A session that came back on its own leaves a sign-in prompt that
-            # would now do nothing but cost somebody an emailed code.
-            self.hass.config_entries.flow.async_abort(flow["flow_id"])
-
-    def _store_portal_session(
-        self, base: str, cookies: dict[str, str], minted: str
-    ) -> None:
-        """Keep the portal session across restarts.
-
-        Worth persisting where the identity session is not: that one dies
-        within two hours of the user signing in and only the user can replace
-        it, while a portal session in active use outlives it by a long way.
-        """
-        if (
-            self.entry.data.get(CONF_PORTAL_BASE) == base
-            and self.entry.data.get(CONF_PORTAL_COOKIES) == cookies
-        ):
-            return
-        self.hass.config_entries.async_update_entry(
-            self.entry,
-            data={
-                **self.entry.data,
-                CONF_PORTAL_BASE: base,
-                CONF_PORTAL_COOKIES: cookies,
-                CONF_PORTAL_MINTED: minted,
-            },
-        )
-
-    async def _async_read_portal_vehicles(self, now: Any) -> None:
-        """Fetch names and the per-account ids the dashboard pages need.
-
-        The listing is authoritative, including when it is empty: a reply we
-        cannot read raises in async_get_vehicles rather than arriving here as
-        no vehicles. So the id cache is rebuilt from it wholesale — adding to
-        it instead meant a car removed from the account kept its id forever,
-        and with it a location request every cycle.
-
-        A vehicle still listed but whose record happens to carry no setup link
-        keeps the id we already had. That case is common enough to matter: the
-        link is absent while a car is mid-enrolment, and losing the id would
-        cost it its location for no reason.
-        """
-        vehicles = await self.portal.async_get_vehicles()
-        self._portal_vehicles_due = now + PORTAL_VEHICLES_TTL
-        ids: dict[str, str] = {}
-        for vin, record in vehicles.items():
-            portal_id = record.pop("portal_id", None) or self._portal_ids.get(vin)
-            if portal_id:
-                ids[vin] = portal_id
-            if record:
-                self._attributes[vin] = {**self._attributes.get(vin, {}), **record}
-        self._portal_ids = ids
-
-    @callback
     def async_save(self) -> None:
-        """Write anything held only in memory back to the config entry.
-
-        For callers outside the coordinator that know the process is about to
-        stop holding it: unload, and Home Assistant shutting down.
-        """
+        """Write anything held only in memory back to the config entry."""
         self._persist()
 
     def _persist(self) -> None:
         """Write anything worth surviving a restart back to the config entry.
 
-        Called on every token rotation, not just on the housekeeping poll. JLR
-        rotate the refresh token each time it is spent and retire the old one
-        at once, so a token held in memory but not yet written to the entry is
-        a restart away from a needless "sign in again" — with an emailed code.
-
-        Only writes when something actually changed: an entry update fires the
-        update listener, and a listener that reloads unconditionally turns the
-        rotating token into a reload every five minutes.
+        Only when something actually changed: an entry update fires the update
+        listeners. Copies, not the live dictionaries: an entry stores what it
+        is handed by reference, and sharing one object meant every change
+        after the first compared equal and was never written.
         """
         updates: dict[str, Any] = {}
-        # Only for an entry that signed in to InControl. One set up on the
-        # Data Hub alone has a client that was never used, and writing its
-        # empty-handed defaults here would make the entry look signed in.
-        sign_in = (
-            (
-                (CONF_USER_ID, self.client.user_id),
-                (CONF_REFRESH_TOKEN, self.client.refresh_token),
-            )
-            if self.has_incontrol
-            else ()
-        )
-        for key, value in sign_in:
-            if value and self.entry.data.get(key) != value:
-                updates[key] = value
-        # No truthiness guard on the left: clearing the last vehicle's details
-        # has to reach the entry too, or a sold car's nickname and registration
-        # outlive it there — and _attributes only empties when the account's
-        # own vehicle list says the car has gone.
-        # Copies, not the live dictionaries. An entry stores what it is handed
-        # by reference, so writing these through would leave the entry and the
-        # coordinator sharing one object: every later mutation would land in
-        # both at once, the comparison above would find them equal, and the
-        # second change onwards would never be written. Which is the shape of
-        # bug that only shows up as a restart having forgotten everything
-        # after the first save.
         if (self.entry.data.get(CONF_ATTRIBUTES) or {}) != self._attributes:
             updates[CONF_ATTRIBUTES] = {
                 vin: dict(attrs) for vin, attrs in self._attributes.items()
@@ -1077,8 +414,6 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updates[CONF_LAST_CHANGED] = dict(self._last_changed)
         if (self.entry.data.get(CONF_UNSETTLED_SINCE) or {}) != self._unsettled_since:
             updates[CONF_UNSETTLED_SINCE] = dict(self._unsettled_since)
-        # Copies, for the reason _attributes is copied above: the entry must
-        # not share a dict that the next snapshot will change in place.
         stored = {vin: dict(seen) for vin, seen in self._volatile_seen.items()}
         if (self.entry.data.get(CONF_VOLATILE_SEEN) or {}) != stored:
             updates[CONF_VOLATILE_SEEN] = stored
@@ -1092,92 +427,45 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.entry, data={**self.entry.data, **updates}
             )
 
-    # ------------------------------------------------------- telemetry inflow
-    def _handle_status(
-        self, vin: str, status: dict[str, Any], sent: str | None
-    ) -> None:
-        """Adopt a pushed VHS snapshot."""
-        if self._is_older_by_odometer(vin, status):
+    # ------------------------------------------------------- Data Hub inflow
+    def _handle_status(self, vin: str, status: dict[str, Any]) -> None:
+        """Adopt status from the Data Hub, newest by the car's own clock."""
+        held = dt_util.parse_datetime(
+            self._status.get(vin, {}).get("LAST_UPDATED_TIME") or ""
+        )
+        arriving = dt_util.parse_datetime(status.get("LAST_UPDATED_TIME") or "")
+        if held and arriving and arriving < held:
             return
         self._status[vin] = status
-        if sent:
-            self._pushed_at[vin] = sent
         self._note_status_change(vin)
         self._note_unsettled(vin, status)
         self._note_decay(vin, status)
-        self._snapshot_event(vin).set()
         if vin in self._awaiting:
-            # A car whose snapshot arrives after setup no longer needs the
-            # integration reloaded to get entities: the platforms watch for
-            # vehicles they have not built yet and pick it up on this update.
+            # A car whose status arrives after setup needs no reload to get
+            # entities: the platforms watch for cars they have not built yet.
             self._awaiting.discard(vin)
             if not self._awaiting:
                 self._snapshots_ready.set()
         self._push()
 
     def _handle_position(self, vin: str, position: dict[str, Any]) -> None:
-        """Adopt a pushed position.
-
-        Deliberately does not touch the status change tracking: a fix carries
-        its own timestamp, and letting it stand in for one the car never sent
-        is what made a day-old door reading claim to be current.
-        """
+        """Adopt a location from the Data Hub when it is newer than the held one."""
+        held = dt_util.parse_datetime(
+            str(self._position.get(vin, {}).get("timestamp") or "")
+        )
+        arriving = dt_util.parse_datetime(str(position.get("timestamp") or ""))
+        if held and (arriving is None or arriving < held):
+            return
         self._position[vin] = position
+        self._position_read_at[vin] = dt_util.utcnow()
         self._push()
-
-    def _handle_connected(self, connected: bool) -> None:
-        """Track socket state so entities can go unavailable on a real outage."""
-        self._disconnected_since = None if connected else dt_util.utcnow()
-        if connected:
-            self._connected.set()
-        else:
-            self._connected.clear()
-        _LOGGER.debug(
-            "telemetry socket %s", "connected" if connected else "disconnected"
-        )
-        if self.data is not None:
-            self._push()
-
-    def _is_older_by_odometer(self, vin: str, status: dict[str, Any]) -> bool:
-        """Whether this snapshot predates the one already held.
-
-        The only ordering key these cars give us. They send no timestamp, and
-        the envelope's ``t`` is when the broker sent the message rather than
-        when the car recorded it — measured to the millisecond against a
-        payload three hours old — so nothing in a message says how old it is.
-        An odometer does: it never goes backwards.
-
-        Worth having because JLR deliver late and out of order. A snapshot from
-        the previous week once overwrote a current one, and adopting it cost a
-        correct set of readings. Equal readings still pass, so this does
-        nothing for two snapshots taken in the same burst on a parked car,
-        which is the common case and needs the separate freshness test.
-        """
-        held = _to_miles(self._status.get(vin, {}).get("ODOMETER_MILES"))
-        arriving = _to_miles(status.get("ODOMETER_MILES"))
-        if held is None or arriving is None or arriving >= held:
-            return False
-        _LOGGER.debug(
-            "%s: ignoring a snapshot reading %s miles against the %s already "
-            "held; an odometer does not count down",
-            vehicle_label(vin),
-            arriving,
-            held,
-        )
-        return True
 
     def _note_unsettled(self, vin: str, status: dict[str, Any]) -> None:
         """Track how long this car has been sitting in the state it is in.
 
         Its own clock, started the first time a car is seen mid-use and
-        restarted whenever one of the readings it governs actually moves.
-
-        Not ``_last_changed``, which was the first thing this used and wrong
-        twice over. That is set only when a snapshot *differs* from the one
-        before it, so a car whose very first snapshot is mid-use has no time at
-        all and never expires; and it moves when anything in the document
-        moves, so a parked car's 12V voltage drifting down over an evening kept
-        a door reading from before dark looking current.
+        restarted whenever one of the readings it governs actually moves; not
+        _last_changed, which moves when anything in the document moves.
         """
         state = str(status.get("VEHICLE_STATE_TYPE", "")).upper()
         if state not in UNSETTLED_VEHICLE_STATES:
@@ -1196,8 +484,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Track how long the readings that go off on their own have stood.
 
         No condition about the car attached: coolant temperature is latched
-        when the engine stops, whatever the car then reports about itself, so
-        the only question is how long the figure has sat unchanged.
+        when the engine stops, so the only question is how long the figure has
+        sat unchanged.
         """
         self._note_subset(
             vin,
@@ -1217,18 +505,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     ) -> None:
         """Record when this group of readings last actually moved.
 
-        Both halves survive a restart, so the first snapshot back is judged on
-        what it says rather than on there being nothing to compare it with.
-        Identical means the broker handed back what it already held and the
-        clock keeps running; different means the car reported something new,
-        whether or not anybody was watching at the time.
-
-        Compared key by key, over the keys both sides know. Comparing whole
-        tuples by position meant that watching one more key made every stored
-        reading differ from every fresh one, so the first snapshot after an
-        upgrade restarted the clock on every car — and a lock reading already
-        hidden for being fifteen hours stale came back for another window. A
-        key newly watched has no earlier value, so it cannot have moved.
+        Compared key by key, over the keys both sides know: comparing whole
+        tuples by position made every stored reading differ from every fresh
+        one the moment one more key was watched. A key newly watched has no
+        earlier value, so it cannot have moved.
         """
         fingerprint = {key: status.get(key) for key in keys}
         previous = seen.get(vin)
@@ -1243,37 +523,22 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _note_status_change(self, vin: str) -> None:
         """Record when the car's reported state last actually changed.
 
-        The status only. This used to watch the position as well, which meant
-        a car that had not reported anything since yesterday was recorded as
-        having "changed" the moment a new GPS fix arrived — and since the fix
-        is what moves while the body controller is asleep, the freshness of a
-        stale door reading was being renewed by the one signal that says
-        nothing about it. Whether the fix is current is a separate question,
-        answered separately by ``position_ts``.
-
-        The first snapshot for a VIN is not a change: it is the first thing we
-        have seen, and when it changed is unknown.
+        The first status for a car is not a change: it is the first thing we
+        have seen, and when it changed is unknown. Written at once, not at the
+        next housekeeping, or a reload in between threw it away.
         """
         status = self._status.get(vin, {})
         if self._last_status_seen.get(vin) not in (None, status):
             self._last_changed[vin] = dt_util.utcnow().isoformat()
-            # Written now, not at the next housekeeping poll. This arrives on
-            # a socket push, which is nothing to do with the fifteen-minute
-            # cycle that was the only thing calling _persist — so a reload in
-            # between threw the change away and the sensor went backwards to
-            # whatever was last saved. Home Assistant coalesces entry writes
-            # behind a delayed save, so a car reporting during a drive costs
-            # one write, not one per push.
             self._persist()
         self._last_status_seen[vin] = status
 
     def _push(self) -> None:
         """Publish new state to the entities.
 
-        Deliberately not async_set_updated_data: that also reschedules the next
-        refresh, and with the socket pushing more often than the housekeeping
-        interval the timer would be reset forever and the housekeeping would
-        never run again.
+        Not async_set_updated_data: that also reschedules the next refresh,
+        and readings arriving more often than housekeeping would reset its
+        timer forever.
         """
         self.data = self._build()
         self.last_update_success = True
@@ -1281,36 +546,19 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------------ state
     def _build(self) -> dict[str, Any]:
-        """Merge the vehicle list, cached attributes and pushed telemetry."""
+        """Merge the vehicle list, cached details, status and location."""
         data: dict[str, Any] = {
             "vehicles": {},
-            "connected": self.telemetry.connected,
+            "connected": bool(self.datahub and self.datahub.connected),
         }
         for vin, vehicle in self._vehicles.items():
             status = self._status.get(vin, {})
             position = self._position.get(vin, {})
-            # Deliberately not the STOMP envelope's time. That is when the
-            # broker pushed the message and it advances on every reconnect even
-            # when the payload is byte-identical, so using it — even as a
-            # fallback — reports a permanently fresh vehicle. These cars send no
-            # per-item timestamp at all, which leaves change detection as the
-            # only honest signal, and unknown until something moves.
-            #
-            # And deliberately not the position's timestamp either, which used
-            # to be first in this list. A GPS fix is not a report from the car's
-            # body controller, and borrowing it meant this sensor answered a
-            # different question than its name — then jumped backwards whenever
-            # a reload emptied the change tracking and left the fix as the only
-            # input. Seen live: a door reported open since Thursday under a
-            # timestamp that was really the last time the car was located.
             status_ts = self._newest(
                 status.get("LAST_UPDATED_TIME"),
                 self._last_changed.get(vin),
             )
-            # Whether the GPS fix is old is a question about the fix, and only
-            # about the fix. Deriving it from the status freshness above let a
-            # car that phones in hourly report a days-old position as current —
-            # and two cars with equally old fixes disagree about it.
+            # Whether the fix is old is a question about the fix alone.
             position_ts = position.get("timestamp")
             data["vehicles"][vin] = {
                 "role": vehicle.get("role"),
@@ -1319,18 +567,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "position": position,
                 "status_ts": status_ts,
                 "position_ts": position_ts,
-                # Two different questions. The status is stale when the
-                # vehicle stopped reporting; the position is stale when the fix
-                # is old. A car that phones in hourly from a spot it parked in
-                # on Friday is fresh by one measure and not the other.
                 "status_stale": self._is_stale(status_ts),
-                # Whether the volatile readings in this snapshot can still be
-                # asserted. Separate from status_stale, which is about age
-                # alone: a car parked for a week has an old snapshot and a
-                # perfectly good set of door positions in it.
                 "readings_provisional": self._readings_provisional(vin),
-                # Separately: a reading that goes off on its own clock, with
-                # no condition about the car attached.
                 "readings_decayed": self._readings_decayed(vin),
                 "position_stale": self._is_stale(position_ts),
                 "position_trusted": self._position_trusted(vin),
@@ -1339,40 +577,24 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     @property
     def position_trusted(self) -> bool:
-        """Whether the last known position can still be asserted as current.
-
-        A stale fix and an untrustworthy one are different problems. A car
-        parked for three days has an old fix and that is fine. But when portal
-        reads have been failing, the car may have moved and we would not know —
-        and a location we cannot vouch for still resolves to a zone, which is
-        how a tracker ends up confidently reporting "home" for a car that is
-        seven kilometres away. Better to admit we do not know.
-        """
+        """Whether any car's last known position can still be asserted."""
         return any(self._position_trusted(vin) for vin in self._vehicles)
 
     def _position_trusted(self, vin: str) -> bool:
-        """The same question, asked about one car."""
+        """Whether this car was located recently enough to vouch for.
+
+        A location we cannot vouch for still resolves to a zone, which is how
+        a tracker ends up reporting "home" for a car seven kilometres away.
+        """
         last = self._position_read_at.get(vin)
         if last is None:
             return False
-        return dt_util.utcnow() - last < POSITION_TRUST_WINDOW
+        return bool(dt_util.utcnow() - last < POSITION_TRUST_WINDOW)
 
     @property
     def telemetry_ok(self) -> bool:
-        """Whether pushed data can still be trusted.
-
-        A reconnect every few minutes is normal (the STOMP session is bound to a
-        short-lived token), so a momentary drop must not flap every entity in
-        the house. A drop that outlasts the grace period is a real outage.
-        """
-        if self.status_source == "datahub":
-            assert self.datahub is not None
-            return self.datahub.healthy
-        if self.telemetry.connected:
-            return True
-        if self._disconnected_since is None:
-            return False
-        return dt_util.utcnow() - self._disconnected_since < TELEMETRY_GRACE
+        """Whether the readings can still be vouched for."""
+        return self.datahub is not None and self.datahub.healthy
 
     def charge_now_setting(self, vin: str) -> str | None:
         """Return the reported EV charge override, upper-cased."""
@@ -1404,28 +626,15 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return best
 
     def _readings_decayed(self, vin: str) -> bool:
-        """Whether the self-staling readings have stood still too long.
-
-        No condition about what the car is doing, unlike the withholding
-        below. A coolant figure is true when it is taken and less true every
-        minute after, so its age is the whole question.
-        """
+        """Whether the self-staling readings have stood still too long."""
         return self._stood_too_long(self._decayed_since.get(vin))
 
     def _readings_provisional(self, vin: str) -> bool:
         """Whether doors, windows and locks for this car are still claims.
 
-        Two conditions, and both have to hold. The snapshot has to have been
-        taken while somebody still had the key in the car — a photo of
-        something in progress, not of how the car was left — and the readings
-        it governs have to have stopped moving for long enough that the car is
-        plainly not still reporting. Either alone is ordinary: a car
-        mid-shutdown thirty seconds ago is simply current, and a settled car
-        untouched for a week is simply parked.
-
-        Conservative by construction. An unrecognised state never starts the
-        clock, so a car nobody has observed keeps behaving exactly as it does
-        now rather than having its readings withheld on a guess.
+        The snapshot was taken while somebody still had the key in the car,
+        and the readings it governs have stopped moving for long enough that
+        the car is plainly not still reporting. Either alone is ordinary.
         """
         return self._stood_too_long(self._unsettled_since.get(vin))
 
@@ -1444,7 +653,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed = dt_util.parse_datetime(since) if since else None
         if parsed is None:
             return False
-        return dt_util.utcnow() - parsed > timedelta(minutes=minutes)
+        return bool(dt_util.utcnow() - parsed > timedelta(minutes=minutes))
 
     @staticmethod
     def _is_stale(timestamp: str | None) -> bool:
@@ -1456,4 +665,4 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return False
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=dt_util.UTC)
-        return dt_util.utcnow() - parsed > STALE_AFTER
+        return bool(dt_util.utcnow() - parsed > STALE_AFTER)

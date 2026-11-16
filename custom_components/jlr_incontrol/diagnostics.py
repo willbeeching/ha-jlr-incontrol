@@ -23,28 +23,20 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = entry.runtime_data
     data = coordinator.data
-    pushed_at = getattr(coordinator, "_pushed_at", {})
-    trails = getattr(coordinator, "_trail", {})
     diagnostics: dict[str, Any] = {
-        # Where the data is actually coming from. Without this a dump of empty
-        # vehicles looks the same whether the socket is down or the car is.
-        "telemetry": {
-            # Where status is coming from: the socket, or the Data Hub.
-            "source": getattr(coordinator, "status_source", "socket"),
-            "connected": coordinator.telemetry.connected,
+        "source": {
+            # An entry from the InControl sign-in that has not linked the Data
+            # Hub yet: it reads nothing, and an empty dump means that, not a
+            # fault.
+            "waiting_for_datahub": coordinator.dormant,
             "trusted": coordinator.telemetry_ok,
-            "vehicles_subscribed": len(data.get("vehicles", {})),
-            # Message time, not vehicle time. Here to show the socket is alive;
-            # it is deliberately kept out of the freshness signal. Keyed by
-            # label — these keys were VINs, and being keys they went round the
-            # redaction applied to the vehicles below.
-            "last_push": {vehicle_label(vin): sent for vin, sent in pushed_at.items()},
+            "vehicles": len(data.get("vehicles", {})),
         },
         "vehicles": {},
     }
-    # The optional Data Hub link: whether it is up, and which signals it has
-    # seen with the times the car sent them. Never the values.
-    datahub = getattr(coordinator, "datahub", None)
+    # The link: whether it is up, and which signals it has seen with the
+    # times the car sent them. Never the values.
+    datahub = coordinator.datahub
     diagnostics["datahub"] = datahub.diagnostics() if datahub else None
     for vin, vehicle in data.get("vehicles", {}).items():
         diagnostics["vehicles"][vehicle_label(vin)] = {
@@ -53,10 +45,6 @@ async def async_get_config_entry_diagnostics(
             "status": vehicle.get("status", {}),
             "status_ts": vehicle.get("status_ts"),
             "position_stale": vehicle.get("position_stale"),
-            # Counts, times and key names from the portal's journey trail, never
-            # its coordinates: what #36 needs to know whether the trail is one
-            # journey before anything is built that assumes so.
-            "trail": trails.get(vin),
         }
     # scrub() takes and returns Any by design — it walks whatever JLR sent,
     # whose shape is not ours to predict. The annotation is where that Any

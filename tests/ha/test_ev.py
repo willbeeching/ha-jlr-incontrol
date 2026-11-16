@@ -16,7 +16,7 @@ import pytest
 pytest.importorskip("pytest_homeassistant_custom_component")
 
 import doubles  # noqa: E402
-from doubles import KEPT, Doubles, FakeClient  # noqa: E402
+from doubles import KEPT, Doubles, FakeLink  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
@@ -52,14 +52,14 @@ def electric(monkeypatch: pytest.MonkeyPatch) -> None:
     no entity until the integration is reloaded.
     """
 
-    async def attributes(self: FakeClient, vin: str) -> dict[str, Any]:
+    async def attributes(self: FakeLink, vin: str) -> dict[str, Any]:
         return {
             "vehicleBrand": "Jaguar",
             "fuelType": "Electric",
             "nickname": "Test Car",
         }
 
-    monkeypatch.setattr(FakeClient, "async_get_attributes", attributes)
+    monkeypatch.setattr(FakeLink, "async_vehicle_details", attributes)
     monkeypatch.setattr(doubles, "STATUS", EV_STATUS)
 
 

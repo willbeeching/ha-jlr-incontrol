@@ -1,8 +1,7 @@
 """Stand-ins for everything below the integration that talks to JLR.
 
-The IF9 client, the telemetry socket and the owner portal. None of what
-these tests are about — setup and unload, repairs, entity creation,
-availability, diagnostics — depends on any of the three being real.
+The Data Hub link (FakeLink), for tests about what the integration does with
+readings, and the Data Hub client (FakeDataHub), for tests of the link itself.
 """
 
 from __future__ import annotations
@@ -65,138 +64,94 @@ STATUS = {
 REGISTRATION = "AB12 CDE"
 
 
-class FakeClient:
-    """Stands in for the IF9 API client."""
+class FakeLink:
+    """Stands in for the Data Hub link, and reports status on demand.
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        self.user_id = kwargs.get("user_id") or "a-user"
-        self.refresh_token = kwargs.get("refresh_token") or "a-refresh-token"
-        self.vehicles: list[dict[str, Any]] = [{"vin": KEPT, "role": "Owner"}]
-        self.connect_error: Exception | None = None
-        # Every call made, so a test can show the old API was left alone.
-        self.calls: list[str] = []
+    For the tests about entities, availability, diagnostics and the entry's
+    life cycle, none of which depend on how the link reads JLR. The link
+    itself is tested against FakeDataHub, in test_datahub_link and
+    test_datahub_source. It hands over STATUS when it starts, as the real one
+    hands over each car's first full read.
+    """
 
-    async def async_connect(self) -> None:
-        self.calls.append("connect")
-        if self.connect_error is not None:
-            raise self.connect_error
+    # Class-level so a test can set them before setup constructs one: details
+    # that fail from the first read, and a first status other than STATUS.
+    details_error: Exception | None = None
+    first_status: dict[str, Any] | None = None
 
-    async def async_get_vehicles(self) -> list[dict[str, Any]]:
-        self.calls.append("vehicles")
-        if self.connect_error is not None:
-            raise self.connect_error
-        return list(self.vehicles)
-
-    async def async_get_attributes(self, vin: str) -> dict[str, Any]:
-        self.calls.append("attributes")
-        return {
-            "vehicleBrand": "Jaguar",
-            "fuelType": "Diesel",
-            "nickname": "Test Car",
-            "registrationNumber": REGISTRATION,
-        }
-
-
-class FakeTelemetry:
-    """Stands in for the STOMP socket, and can push on demand."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, hass: Any, entry: Any, **kwargs: Any) -> None:
         self.on_status = kwargs["on_status"]
         self.on_position = kwargs["on_position"]
-        self.on_connected = kwargs["on_connected"]
+        settings = entry.data.get("datahub") or {}
+        self.vehicles: list[str] = list(settings.get("vehicles") or [KEPT])
+        self.signed_out = False
+        self.healthy = True
         self.connected = False
-        self.vins: list[str] = []
+        self.started = False
         self.stopped = False
+        self.ev_waiting: dict[str, str] = {}
+        self.journeys: dict[str, dict[str, Any]] = {}
+        self.reports: dict[str, Any] = {}
+        self.read_now_result = True
+        self.reads: list[str | None] = []
+        self.details_asked = 0
+        # What the Data Hub's vehicle details become, as vss.to_attributes
+        # makes them. The model doubles as the device name, which is where the
+        # entity ids in these tests ("test_car") come from.
+        self.details: dict[str, Any] = {
+            "vehicleBrand": "Jaguar",
+            "vehicleType": "Test Car",
+            "model": "Test Car",
+            "fuelType": "Diesel",
+            "registrationNumber": REGISTRATION,
+        }
+        self._listeners: list[Any] = []
 
-    def async_set_vehicles(self, vins: Any) -> None:
-        self.vins = sorted(vins)
-
-    async def async_start(self) -> None:
+    def async_start(self) -> None:
+        if self.started:
+            return
+        self.started = True
         self.connected = True
-        self.on_connected(True)
-        for vin in self.vins:
-            self.push(vin)
-
-    def push(self, vin: str, status: dict[str, Any] | None = None) -> None:
-        self.on_status(vin, dict(status or STATUS), "2026-08-26T08:12:41.589Z")
-
-    def drop(self) -> None:
-        """Lose the socket without anyone unloading anything."""
-        self.connected = False
-        self.on_connected(False)
+        for vin in self.vehicles:
+            self.push(vin, type(self).first_status)
 
     async def async_stop(self) -> None:
         self.connected = False
         self.stopped = True
 
+    def push(self, vin: str, status: dict[str, Any] | None = None) -> None:
+        self.on_status(vin, dict(status or STATUS))
 
-class FakePortal:
-    """Stands in for the owner-portal client."""
+    def fix(self, vin: str, position: dict[str, Any]) -> None:
+        self.on_position(vin, dict(position))
 
-    configured = True
-    session_age = "0:01:00"
-    # Class-level so a test can make the portal fail from the first read,
-    # before setup has constructed one to poke.
-    error: Exception | None = None
+    def drop(self) -> None:
+        """Stop vouching for the readings, as a link whose reads keep failing."""
+        self.healthy = False
+        self.connected = False
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        # As the real one: a session only if the entry held cookies for it.
-        # Always True here hid an entry on the Data Hub alone starting a
-        # reauth for the portal it had no sign-in for.
-        sso = args[1] if len(args) > 1 else kwargs.get("sso_cookies")
-        self.configured = type(self).configured and bool(sso)
-        self.listing: dict[str, dict[str, Any]] = {
-            KEPT: {"nickname": "Test Car", "portal_id": "id-kept"}
-        }
-        self.closed = False
-        self.asked: list[str] = []
-        self.touches = 0
-        # The dashboard's trail, as JLR embed it: coordinates on every point,
-        # and a timestamp on most.
-        self.waypoints: list[dict[str, Any]] = [
-            {
-                "position": {"latitude": 51.5, "longitude": -0.1},
-                "timestamp": 1756900000000,
-            },
-            {
-                "position": {"latitude": 51.5074, "longitude": -0.1278},
-                "timestamp": 1756901800000,
-            },
-            {"position": {"latitude": 51.5074, "longitude": -0.1278}},
-        ]
+    async def async_read_now(self, vin: str | None = None) -> bool:
+        self.reads.append(vin)
+        return self.read_now_result
 
-    async def async_get_vehicles(self) -> dict[str, dict[str, Any]]:
-        if self.error is not None:
-            raise self.error
-        return {vin: dict(record) for vin, record in self.listing.items()}
+    async def async_vehicle_details(self, vin: str) -> dict[str, Any]:
+        self.details_asked += 1
+        if type(self).details_error is not None:
+            raise type(self).details_error
+        return dict(self.details)
 
-    async def async_read_dashboard(self, portal_id: str) -> Any:
-        from custom_components.jlr_incontrol.portal import (
-            Dashboard,
-            _parked,
-            _trail_shape,
-        )
+    def async_add_listener(self, update: Any) -> Any:
+        self._listeners.append(update)
+        return lambda: self._listeners.remove(update)
 
-        if self.error is not None:
-            raise self.error
-        self.asked.append(portal_id)
-        return Dashboard(_parked(self.waypoints), _trail_shape(self.waypoints, ""))
-
-    async def async_touch(self) -> None:
-        if self.error is not None:
-            raise self.error
-        self.touches += 1
-
-    async def async_close(self) -> None:
-        self.closed = True
+    def diagnostics(self) -> dict[str, Any]:
+        return {"connected": self.connected, "healthy": self.healthy}
 
 
 class Doubles:
     """Handles on the fakes a test wants to poke mid-run."""
 
-    client: FakeClient
-    telemetry: FakeTelemetry
-    portal: FakePortal
+    link: FakeLink
     datahub: FakeDataHub
 
     def builder(self, attribute: str, cls: type) -> Any:
@@ -351,33 +306,3 @@ class FakeDataHub:
     async def async_poll_device_login(self, login: Any) -> Any:
         self.calls.append("poll")
         return self._answer(self.poll_results)
-
-
-class FakeSignIn:
-    """Stands in for the interactive InControl sign-in (password, then code).
-
-    Set ``begin_error`` or ``complete_error`` on an instance's class to make
-    that step fail; the session cookies are what a real journey hands back.
-    """
-
-    begin_error: Exception | None = None
-    complete_error: Exception | None = None
-
-    def __init__(self, hass: Any, username: str) -> None:
-        self.username = username
-        self.closed = False
-
-    async def async_begin(self, password: str) -> None:
-        if self.begin_error is not None:
-            raise self.begin_error
-
-    async def async_complete(self, code: str) -> dict[str, Any]:
-        if self.complete_error is not None:
-            raise self.complete_error
-        return {"refresh_token": "never-kept"}
-
-    def session_cookies(self) -> dict[str, str]:
-        return {"iPlanetDirectoryPro": "a-forgerock-session"}
-
-    async def async_close(self) -> None:
-        self.closed = True

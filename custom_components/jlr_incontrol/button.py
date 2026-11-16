@@ -2,9 +2,8 @@
 
 Only one survives. Every other button here sent a remote command, and remote
 commands need the JLR app's device attestation — checked across the REST
-endpoints (498), the telemetry socket (the broker accepts nothing but
-acknowledgements) and the owner web portal (which offers no remote control at
-all). A button that can only ever raise an error is worse than no button, so
+endpoints of the old InControl connection, and the Data Hub is read-only by
+design. A button that can only ever raise an error is worse than no button, so
 they are removed rather than left to fail.
 """
 
@@ -19,7 +18,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import JlrConfigEntry
 from .const import DOMAIN
-from .coordinator import JlrCoordinator, Resubscription
+from .coordinator import JlrCoordinator, Refresh
 from .entity import JlrVehicleEntity, async_add_vehicle_entities
 
 # Coordinator-backed and read-only: there is nothing to serialise, and
@@ -52,15 +51,13 @@ async def async_setup_entry(
 
 
 class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
-    """Re-read the housekeeping data, including location, straight away.
+    """Read this car's status and location from the Data Hub straight away.
 
-    Not a request to the car: vehicle status arrives on its own over the
-    telemetry connection. This refreshes what is polled — the vehicle list and
-    the parked location from the owner portal.
+    Not a request to the car: JLR answer with what the car last reported.
     """
 
-    # An action, not a reading. Greying this out because the socket is
-    # down disables it exactly when someone would reach for it.
+    # An action, not a reading. Greying this out while the link is unhealthy
+    # disables it exactly when someone would reach for it.
     _requires_telemetry = False
 
     _attr_translation_key = "refresh"
@@ -72,42 +69,17 @@ class JlrRefreshButton(JlrVehicleEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Refresh now, and say so if it did not work.
 
-        async_request_refresh swallows the failure — it is built for a
-        background poll, where logging and retrying is right. Pressing a button
-        and getting silence is not: the person is standing there waiting, and
-        the difference between "nothing to update" and "Jaguar Land Rover are
-        not answering" is the whole reason they pressed it.
-
-        The portal gate is cleared first. Without that this button inherited
-        the half-hourly background cadence and did nothing at all most of the
-        time — it re-authenticated, listed the vehicles and returned, never
-        reaching the location read that is the only thing here worth pressing
-        a button for.
+        Both failures are raised rather than logged. Being told the press was
+        too soon is information, and a press that silently did nothing is the
+        complaint this button spent several releases living down.
         """
-        self.coordinator.async_force_portal_read()
-        await self.coordinator.async_request_refresh()
-        if not self.coordinator.last_update_success:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="refresh_failed",
-            )
-        # And the vehicle status, which is the half of it people actually mean.
-        # Housekeeping above re-reads the vehicle list and the parked location;
-        # doors, windows and fuel come over the socket, and the broker only
-        # sends those when a subscription is made. Without this the button
-        # moved the map pin and nothing else, which is precisely what "refresh
-        # does not work" meant.
-        #
-        # Both failures are raised rather than logged. Being told the press was
-        # too soon is information; a press that silently skipped the half
-        # somebody pressed it for is the original complaint wearing a new coat.
-        outcome = await self.coordinator.async_resubscribe_telemetry(self._vin)
-        if outcome is Resubscription.TOO_SOON:
+        outcome = await self.coordinator.async_refresh_vehicle(self._vin)
+        if outcome is Refresh.TOO_SOON:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="refresh_too_soon",
             )
-        if outcome is Resubscription.FAILED:
+        if outcome is Refresh.FAILED:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="refresh_failed",

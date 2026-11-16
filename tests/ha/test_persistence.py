@@ -140,9 +140,9 @@ class TestAChangeIsSavedWhenItHappens:
         # Above the fixture's own reading: a snapshot whose odometer counts
         # down is rejected as having arrived out of order, which is a
         # different behaviour and has its own tests.
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76712"})
+        loaded.link.push(KEPT, {"ODOMETER_MILES": "76712"})
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76713"})
+        loaded.link.push(KEPT, {"ODOMETER_MILES": "76713"})
         await hass.async_block_till_done()
         changed = entry.runtime_data._last_changed[KEPT]
         assert changed, "a changed status did not register as a change"
@@ -163,9 +163,9 @@ class TestAChangeIsSavedWhenItHappens:
         # Above the fixture's own reading: a snapshot whose odometer counts
         # down is rejected as having arrived out of order, which is a
         # different behaviour and has its own tests.
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76712"})
+        loaded.link.push(KEPT, {"ODOMETER_MILES": "76712"})
         await hass.async_block_till_done()
-        loaded.telemetry.push(KEPT, {"ODOMETER_MILES": "76713"})
+        loaded.link.push(KEPT, {"ODOMETER_MILES": "76713"})
         await hass.async_block_till_done()
 
         assert (
