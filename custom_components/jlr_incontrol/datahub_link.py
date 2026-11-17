@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import random
 import ssl
 import time
@@ -347,6 +348,7 @@ _UNIT_METRES = {
     **dict.fromkeys(("km", "kilometer", "kilometers", "kilometre", "kilometres"), 1e3),
     **dict.fromkeys(("mi", "mile", "miles"), _KM_PER_MILE * 1000),
 }
+_MILE_METRES = _KM_PER_MILE * 1000
 _UNCONVERTIBLE = object()
 
 
@@ -368,7 +370,15 @@ def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
     if sent == rest:
         return value
     converted = value * sent / rest
-    return int(round(converted)) if rest == 1.0 else round(converted, 1)
+    if rest != 1.0:
+        return round(converted, 1)
+    if sent == _MILE_METRES:
+        # A metre past the exact figure. Rounded to the nearest metre, half
+        # of all whole mileages came back a mile short once the odometer was
+        # truncated to whole miles again: 36,540 miles read 36,539, and the
+        # sensor dipped each time REST and the stream took turns.
+        return math.floor(converted) + 1
+    return int(round(converted))
 
 
 def _signal_value(value: Any, data_type: Any) -> Any:

@@ -885,6 +885,19 @@ class TestStreamedDistances:
         )
         assert seen[-1]["ODOMETER_METER"] == "12345278"
         assert seen[-1]["ODOMETER_MILES"] == "7671"
+
+    @pytest.mark.parametrize("miles", [7672, 7750, 36540, 36625])
+    async def test_a_whole_mileage_reads_back_as_itself(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles, miles: int
+    ) -> None:
+        # Rounded to the nearest metre, half of these came back a mile short:
+        # 36,540 miles, and every multiple of 125 miles, read one less.
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "1794830000000", miles, "mi"),
+        )
+        assert seen[-1]["ODOMETER_MILES"] == str(miles)
         assert link.diagnostics()["stats"]["units"] == {
             "Vehicle.TraveledDistance": "mi"
         }
