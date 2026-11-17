@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import random
 import ssl
 import time
@@ -333,6 +334,59 @@ def _as_signal(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Distances, in the unit REST sends each one in, which is the unit the status
+# keys were built on. The stream says its own unit, and it is not REST's: a
+# Defender's TraveledDistance arrived as 19156 when REST had it as some 30.8
+# million metres, so the odometer read 11 miles until the next REST read
+# (3.0.0-beta.2). Converted on the way in, so everything after sees one unit.
+_METRES = "Vehicle.TraveledDistance"
+_REST_DISTANCE_METRES = {
+    _METRES: 1.0,
+    "Vehicle.Powertrain.FuelSystem.Range": 1000.0,
+    "Vehicle.Powertrain.Range": 1000.0,
+    "Vehicle.Powertrain.TractionBattery.Range": 1000.0,
+    "Vehicle.Service.DistanceToService": 1000.0,
+    "Vehicle.Powertrain.CombustionEngine.Diesel.ExhaustFluid.Service."
+    "DistanceToService": 1000.0,
+}
+_UNIT_METRES = {
+    **dict.fromkeys(("m", "meter", "meters", "metre", "metres"), 1.0),
+    **dict.fromkeys(("km", "kilometer", "kilometers", "kilometre", "kilometres"), 1e3),
+    **dict.fromkeys(("mi", "mile", "miles"), _KM_PER_MILE * 1000),
+}
+_MILE_METRES = _KM_PER_MILE * 1000
+_UNCONVERTIBLE = object()
+
+
+def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
+    """A streamed distance in the unit REST uses for it.
+
+    No unit, or REST's own, passes unchanged. A unit not known here is
+    _UNCONVERTIBLE: a number in an unknown unit is a wrong reading, and the
+    next REST read brings the right one.
+    """
+    rest = _REST_DISTANCE_METRES.get(name)
+    if rest is None or not unit or isinstance(value, bool):
+        return value
+    if not isinstance(value, int | float):
+        return value
+    sent = _UNIT_METRES.get(str(unit).strip().lower())
+    if sent is None:
+        return _UNCONVERTIBLE
+    if sent == rest:
+        return value
+    converted = value * sent / rest
+    if rest != 1.0:
+        return round(converted, 1)
+    if sent == _MILE_METRES:
+        # A metre past the exact figure. Rounded to the nearest metre, half
+        # of all whole mileages came back a mile short once the odometer was
+        # truncated to whole miles again: 36,540 miles read 36,539, and the
+        # sensor dipped each time REST and the stream took turns.
+        return math.floor(converted) + 1
+    return int(round(converted))
+
+
 def _signal_value(value: Any, data_type: Any) -> Any:
     """A number sent as text, as the number REST would have sent."""
     kind = str(data_type or "").lower()
@@ -477,6 +531,12 @@ class DataHubLink:
             # such time. A signal without one never counts as news.
             "untimed": 0,
             "untimed_format": None,
+            # The unit the stream named for each signal, names only, so the
+            # next unit nobody has seen yet is in diagnostics, not a guess.
+            "units": {},
+            # Distances dropped for a unit not known here, or an odometer
+            # lower than the one held.
+            "unconverted": 0,
             "last_message": None,
             "last_session_seconds": None,
             "last_session_end": None,
@@ -1415,10 +1475,20 @@ class DataHubLink:
                 # stayed on the car, which is a wrong reading made to look
                 # current. A value the same age is taken; it is a redelivery.
                 continue
+            unit = item.get("unit")
+            if unit:
+                self.stats["units"][name] = str(unit)
+            value = _in_rest_units(name, item.get("value"), unit)
+            if value is _UNCONVERTIBLE or self._odometer_back(vin, name, value):
+                self.stats["unconverted"] += 1
+                _LOGGER.debug(
+                    "Data Hub %s %s not taken, in %s", vehicle_label(vin), name, unit
+                )
+                continue
             self.signals.setdefault(vin, {})[name] = {
-                "value": item.get("value"),
+                "value": value,
                 "time": when,
-                "unit": item.get("unit"),
+                "unit": unit,
             }
             if when and self._note_report(vin, when):
                 changed = True
@@ -1437,6 +1507,19 @@ class DataHubLink:
             self._emit(vin)
             if moved:
                 self._emit_position(vin)
+
+    def _odometer_back(self, vin: str, name: str, value: Any) -> bool:
+        """Whether a streamed odometer would wind the car's mileage back.
+
+        A car's odometer only goes up, and the sensor is total_increasing, so
+        a lower one is a unit read wrong rather than a reading: taken, Home
+        Assistant counts it as the meter being reset and adds the whole
+        mileage again to the statistics when the right figure returns.
+        """
+        if name != _METRES or not isinstance(value, int | float):
+            return False
+        held = self.signals.get(vin, {}).get(name, {}).get("value")
+        return isinstance(held, int | float) and value < held
 
     def _unread(self, category: str, shape: str) -> None:
         self.stats["unread"] += 1
