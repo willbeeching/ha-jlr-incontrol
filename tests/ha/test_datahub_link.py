@@ -584,10 +584,16 @@ class TestWhatItReads:
     ) -> None:
         link = DataHubLink(hass, linked)
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-08T00:00:00Z", 9)
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-08T00:00:00Z", 9
+            ),
         )
         await link._async_read_status()
-        assert link.signals[KEPT]["Vehicle.TraveledDistance"]["value"] == 9
+        assert (
+            link.signals[KEPT]["Vehicle.Powertrain.FuelSystem.RelativeLevel"]["value"]
+            == 9
+        )
         assert link.signals[KEPT]["Vehicle.Body.Trunk.Rear.IsOpen"]["value"] == "CLOSED"
         assert "Vehicle.VehicleIdentification.VIN" not in link.signals[KEPT]
 
@@ -792,12 +798,12 @@ class TestStreamedDistances:
         assert seen[-1]["ODOMETER_METER"] == "12345278"
         assert seen[-1]["ODOMETER_MILES"] == "7671"
 
-    @pytest.mark.parametrize("miles", [7672, 7750, 36540, 36625])
+    @pytest.mark.parametrize("miles", [7672, 7750, 7875, 7999])
     async def test_a_whole_mileage_reads_back_as_itself(
         self, hass: HomeAssistant, link: DataHubLink, hub: Doubles, miles: int
     ) -> None:
-        # Rounded to the nearest metre, half of these came back a mile short:
-        # 36,540 miles, and every multiple of 125 miles, read one less.
+        # Rounded to the nearest metre, half of these came back a mile short,
+        # and every multiple of 125 miles read one less.
         seen = await self.statuses(hass, link)
         link._on_message(
             TOPIC,
@@ -830,6 +836,83 @@ class TestStreamedDistances:
             TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", value, unit)
         )
         assert seen[-1]["ODOMETER_METER"] == expected
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            # Metres, labelled km: a Defender in #62, which 2.1.4 showed a
+            # thousand times too high.
+            (12350000, "12350000"),
+            # Miles, labelled km: a Defender here, which 3.0.0-beta.2 read as
+            # metres and showed as 11 miles.
+            (7672, "12346888"),
+        ],
+    )
+    async def test_an_odometer_labelled_km_is_read_by_where_it_fits(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        value: int,
+        expected: str,
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", value, "km")
+        )
+        assert seen[-1]["ODOMETER_METER"] == expected
+
+    async def test_an_odometer_that_fits_no_scale_is_left_for_rest(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # 2,000 km ahead as metres, miles or kilometres: nobody drives that
+        # between two REST reads.
+        seen = await self.statuses(hass, link)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "1794830000000", 14345000, "km"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "12345000"
+        assert link.stats["unconverted"] == 1
+
+    async def test_an_odometer_before_any_rest_read_waits_for_it(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # Nothing to place it against, so nothing to say which scale it is in.
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "1794830000000", 12345000, "km"),
+        )
+        assert "Vehicle.TraveledDistance" not in link.signals.get(KEPT, {})
+        assert link.stats["unconverted"] == 1
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(622, 1001012), (1001, 1001000)],
+    )
+    async def test_a_new_cars_odometer_takes_the_nearest_fit(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        value: int,
+        expected: int,
+    ) -> None:
+        # Under about 1,640 km, miles and kilometres can both land ahead of the
+        # held figure; the one nearer it is the reading.
+        hub.datahub.status_result = {
+            **hub.datahub.status_result,
+            "Vehicle": {
+                **hub.datahub.status_result["Vehicle"],
+                "TraveledDistance": 1000000,
+            },
+        }
+        await self.statuses(hass, link)
+        link._on_message(
+            TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", value, "km")
+        )
+        held = link.signals[KEPT]["Vehicle.TraveledDistance"]["value"]
+        assert held == expected
 
     async def test_a_lower_odometer_is_not_taken(
         self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
@@ -931,10 +1014,16 @@ class TestWhatTheStreamProves:
         link = DataHubLink(hass, linked)
         await link._async_read_status()
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T09:00:00Z", 5)
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-07T09:00:00Z", 5
+            ),
         )
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T08:00:00Z", 4)
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-07T08:00:00Z", 4
+            ),
         )
         assert link.stats["messages"] == 2
         assert link.stats["fresh"] == 0
@@ -948,12 +1037,18 @@ class TestWhatTheStreamProves:
         # has not said how old yet.
         link = DataHubLink(hass, linked)
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T10:00:00Z")
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-07T10:00:00Z"
+            ),
         )
         assert link.stats["fresh"] == 0
         await link._async_read_status()
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T11:00:00Z")
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-07T11:00:00Z"
+            ),
         )
         assert link.stats["fresh"] == 1
 
@@ -1272,17 +1367,25 @@ class TestStreamOrdering:
         seen: list[dict[str, str]] = []
         link = DataHubLink(hass, linked, on_status=lambda _, s: seen.append(s))
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T15:00:00Z", 9)
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel", "2026-11-07T15:00:00Z", 9
+            ),
         )
         assert seen == []
         await link._async_read_status()
-        assert seen and "FUEL_LEVEL_PERC" in seen[-1]
+        assert seen and "ODOMETER" in seen[-1]
         # The streamed value, newer than the snapshot, is in what was handed on.
-        assert seen[-1]["ODOMETER"] == "9"
+        assert seen[-1]["FUEL_LEVEL_PERC"] == "9"
         link._on_message(
-            TOPIC, message("Vehicle.TraveledDistance", "2026-11-07T16:00:00Z", 10)
+            TOPIC,
+            message(
+                "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+                "2026-11-07T16:00:00Z",
+                10,
+            ),
         )
-        assert seen[-1]["ODOMETER"] == "10"
+        assert seen[-1]["FUEL_LEVEL_PERC"] == "10"
 
 
 def journey(

@@ -176,12 +176,16 @@ the user-facing detail; what matters when changing the code:
   signalTimestamp, signalValue, unit, vssIdentifier}`, numbers as text, and
   `signalTimestamp` as epoch milliseconds in text (`"1794167909000"`). Each of
   those went unread or untimed for a release; `_as_signal` and `_signal_time`
-  are where they are read. Its `unit` is not REST's either: a Defender's
-  `TraveledDistance` came down the stream as 19156 (its mileage) against
-  REST's metres, and the odometer read 11 miles. `_in_rest_units` converts
-  streamed distances to REST's unit, and a streamed odometer lower than the
-  one held is never taken; diagnostics list each signal's unit under
-  `stats.units`.
+  are where they are read. Its `unit` is not REST's either, and for the
+  odometer it is not even true: `TraveledDistance` is always labelled `km`,
+  but has arrived in miles (a Defender's 19156, read as 11 miles in
+  3.0.0-beta.2) and in metres (shown a thousand times too high by 2.1.4,
+  #62), on one car both, a day apart. `_place_odometer` ignores the label
+  and takes the scale (m, km, mi) that puts it at or least ahead of the
+  odometer held, within 1,000 km; nothing held or nothing fitting waits for
+  REST. Other distances (ranges, service) are labelled `km` truthfully and
+  `_in_rest_units` converts them by the label. Diagnostics list each
+  signal's unit under `stats.units`.
 - Every key, token, client id and account id stays in the config entry;
   `redact.py` covers them. Never put a real owner's readings in tests or
   comments — use made-up values of the same shape.
