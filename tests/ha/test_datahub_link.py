@@ -1079,12 +1079,12 @@ class TestStreamedDistances:
             {"name": "Vehicle.TraveledDistance", "timestamp": when, "value": metres}
         ).encode()
 
-    async def test_a_reading_that_only_confirms_does_not_restart_the_clock(
+    async def test_a_whole_mile_confirmation_allows_a_mile_on(
         self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
     ) -> None:
         # REST at 09:00; a whole mile at 09:05 confirming it; then a precise
-        # 1 km on, two seconds later. That kilometre took five minutes, not
-        # two seconds, and was dropped as if it had.
+        # 1 km on, two seconds later. The whole mile only said the car was
+        # within a mile, and the kilometre was dropped as 1 km in two seconds.
         seen = await self.held_at(hass, link, hub, 12345000)
         link._on_message(
             TOPIC,
@@ -1106,6 +1106,40 @@ class TestStreamedDistances:
         assert seen[-1]["ODOMETER_METER"] == "12345278"
         link._on_message(TOPIC, self.precise("2026-11-07T09:01:02Z", 12346500))
         assert seen[-1]["ODOMETER_METER"] == "12346500"
+
+    async def test_a_confirmation_to_the_metre_restarts_the_clock(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # REST at 09:00, the stream to the metre at 12:00 saying the same: the
+        # car was there at 12:00. Timed from 09:00 instead, 1000 two seconds
+        # later passed as 1000 miles, 608 km on.
+        seen = await self.held_at(hass, link, hub, 1001000)
+        link._on_message(TOPIC, self.precise("2026-11-07T12:00:00Z", 1001000))
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T12:00:02Z", 1000, "km"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "1001000"
+
+    async def test_whole_km_confirmations_keep_the_clock_current(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # A new car parked all day, confirmed in whole kilometres: timed from
+        # REST's 09:00, the day allowed the full 1,000 km and 1000 two
+        # seconds after the last confirmation passed as 1000 miles.
+        seen = await self.held_at(hass, link, hub, 1001000)
+        for hour in ("12", "15", "18", "21"):
+            link._on_message(
+                TOPIC,
+                in_unit(
+                    "Vehicle.TraveledDistance", f"2026-11-07T{hour}:00:00Z", 1001, "km"
+                ),
+            )
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T21:00:02Z", 1000, "km"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "1001000"
 
     async def test_neither_lets_the_wrong_scale_back_in(
         self, hass: HomeAssistant, link: DataHubLink, hub: Doubles

@@ -385,7 +385,7 @@ def _finite(value: Any) -> float | None:
 
 def _place_odometer(
     value: Any, held: Any, elapsed: float | None, slack: float
-) -> tuple[int, float] | None:
+) -> tuple[int, float, bool] | None:
     """A streamed odometer in metres, by the scale that fits the held one.
 
     Each scale it has been seen in is tried. A reading at or within one of
@@ -394,21 +394,23 @@ def _place_odometer(
     REST at 1,000.8 km, a streamed 1000 km is the car standing still, and
     taking it as 1000 miles instead put the odometer 608 km ahead. Otherwise
     the scale that puts it least ahead is taken, if the car could have
-    driven that far in the ``elapsed`` seconds since the held figure was set
-    (none known counts as none passed), and never more than _ODOMETER_AHEAD.
-    ``slack`` is how precise the held figure is, a unit of the reading that
-    set it: a whole mile that ticked the odometer over is up to a mile behind
+    driven that far in the ``elapsed`` seconds since the held figure was last
+    placed (none known counts as none passed), and never more than
+    _ODOMETER_AHEAD. ``slack`` is how far the car may be past the held
+    figure, a unit of the coarsest reading since it was precise: a whole mile
+    that ticked the odometer over, or confirmed it, is up to a mile behind
     the car, and a precise reading a moment later may be that far ahead.
 
-    Returns the metres and the scale of the reading, 0 when it kept the held
-    figure; None when no scale fits, or there is nothing held to place it
-    against: the held odometer stands, and REST brings the next one.
+    Returns the metres, the scale the reading was taken in, and whether it
+    moved the odometer on rather than confirming the held figure; None when
+    no scale fits, or there is nothing held to place it against: the held
+    odometer stands, and REST brings the next one.
     """
     number, odometer = _finite(value), _finite(held)
     if number is None or odometer is None:
         return None
     driven = max(elapsed or 0.0, 0.0) * _ODOMETER_SPEED
-    fits: list[tuple[float, int, float]] = []
+    fits: list[tuple[float, float, int]] = []
     for scale in _ODOMETER_SCALES:
         metres = number * scale
         if not math.isfinite(metres):
@@ -421,14 +423,16 @@ def _place_odometer(
         # figure's: a whole kilometre or mile ticks over as soon as the car
         # moves at all.
         ahead = min(driven + scale + slack, _ODOMETER_AHEAD)
+        # Ordered by how far it moves the odometer, then by scale, so a
+        # confirmation to the metre wins over one to the kilometre or mile.
         if odometer - scale < placed <= odometer:
-            fits.append((0.0, round(odometer), 0.0))
+            fits.append((0.0, scale, round(odometer)))
         elif odometer < placed <= odometer + ahead:
-            fits.append((placed - odometer, placed, scale))
+            fits.append((placed - odometer, scale, placed))
     if not fits:
         return None
-    _, metres, scale = min(fits)
-    return metres, scale
+    gap, scale, metres = min(fits)
+    return metres, scale, gap > 0
 
 
 def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
@@ -1572,10 +1576,6 @@ class DataHubLink:
                 # Not a reading of anything; the held value stands.
                 value = _UNCONVERTIBLE
             elif name == _ODOMETER:
-                # Timed from when the held figure was set, not last confirmed:
-                # a whole mile that only confirmed it once moved the time on
-                # without the distance, and a precise reading two seconds
-                # later was then judged as 1 km in two seconds and dropped.
                 last = self.signals.get(vin, {}).get(name, {})
                 since = last.get("since", last.get("time"))
                 elapsed = (when - since).total_seconds() if when and since else None
@@ -1585,12 +1585,21 @@ class DataHubLink:
                 if placement is None:
                     value = _UNCONVERTIBLE
                 else:
-                    value, scale = placement
-                    odometer_set = (
-                        {"since": since, "slack": last.get("slack", 1.0)}
-                        if not scale
-                        else {"since": when, "slack": scale}
-                    )
+                    value, scale, moved_on = placement
+                    # Every reading that fits says where the car was at its
+                    # time, so the speed check counts from here. One that
+                    # confirms the held figure in whole kilometres or miles
+                    # says only that the car is within one of them past it,
+                    # and widens the allowance by that much instead: a
+                    # precise kilometre on, two seconds after a whole-mile
+                    # confirmation, was dropped as 1 km in two seconds.
+                    # Left at REST's 09:00 instead, after a reading confirmed
+                    # 1,001 km to the metre at 12:00, 1000 two seconds later
+                    # passed as 1000 miles, 608 km on.
+                    slack = scale
+                    if not moved_on and scale != 1.0:
+                        slack = max(scale, last.get("slack", 1.0))
+                    odometer_set = {"since": when, "slack": slack}
             else:
                 value = _in_rest_units(name, value, unit)
             if value is _UNCONVERTIBLE:

@@ -189,11 +189,12 @@ the user-facing detail; what matters when changing the code:
   odometer rounded, and keeps it (with REST at 1,000.8 km, 1000 km is not
   1000 miles, 608 km ahead); otherwise it takes the scale (m, km, mi) that
   puts it least ahead, no further than the car could drive at 250 km/h
-  since the held figure was set (not last confirmed: a whole mile that only
-  confirms it keeps the earlier time), plus one unit each of the new reading
-  and of the one that set the held figure, never over 1,000 km; no time
-  known counts as none passed. Nothing held or nothing fitting waits for
-  REST. Non-finite numbers ("NaN", "1e400") are dropped before any
+  since the last reading that fitted, plus one unit of the new reading and a
+  slack for the held figure, never over 1,000 km; no time known counts as
+  none passed. A whole km or mile that confirms the held figure restarts the
+  clock and widens the slack to its unit, since the car may be up to that
+  much past it; one to the metre, or one that moves the odometer, resets the
+  slack to its own unit. Nothing held or nothing fitting waits for REST. Non-finite numbers ("NaN", "1e400") are dropped before any
   arithmetic: they raised in rounding and closed the stream session. Other distances (ranges, service) are labelled `km` truthfully and
   `_in_rest_units` converts them by the label. Diagnostics list each
   signal's unit under `stats.units`.
