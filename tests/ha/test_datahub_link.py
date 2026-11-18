@@ -1046,6 +1046,84 @@ class TestStreamedDistances:
         assert link.stats["unconverted"] == 0
 
     @pytest.mark.parametrize(
+        ("held", "value", "when", "expected"),
+        [
+            # REST at 1,001 km, the stream's 1000 eighty seconds later: just
+            # outside the rounding tolerance, and as miles 608 km on.
+            (1001000, 1000, "2026-11-07T09:01:20Z", 1001000),
+            (1001100, 1000, "2026-11-07T09:01:20Z", 1001100),
+            # A kilometre in ten minutes is a drive.
+            (12345000, 12346, "2026-11-07T09:10:00Z", 12346000),
+            # Fifty-five in ten minutes is not.
+            (12345000, 12400, "2026-11-07T09:10:00Z", 12345000),
+        ],
+    )
+    async def test_an_odometer_moves_no_further_than_the_car_could_drive(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        held: int,
+        value: int,
+        when: str,
+        expected: int,
+    ) -> None:
+        # REST's snapshot is stamped 09:00 by the car.
+        seen = await self.held_at(hass, link, hub, held)
+        link._on_message(TOPIC, in_unit("Vehicle.TraveledDistance", when, value, "km"))
+        assert seen[-1]["ODOMETER_METER"] == str(expected)
+
+    @pytest.mark.parametrize(
+        ("value", "expected"), [(12346, 12346000), (12348, 12345000)]
+    )
+    async def test_with_no_time_held_only_one_unit_ahead_is_believed(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        value: int,
+        expected: int,
+    ) -> None:
+        # No time to say how far the car could have gone: a kilometre ticking
+        # over is believed, anything more waits for REST.
+        snapshot = dict(hub.datahub.status_result)
+        snapshot.pop("timestamp")
+        hub.datahub.status_result = snapshot
+        await self.statuses(hass, link)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T10:00:00Z", value, "km"),
+        )
+        assert link.signals[KEPT]["Vehicle.TraveledDistance"]["value"] == expected
+
+    async def test_a_range_infinite_once_converted_is_dropped_alone(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # 1e308 miles is finite; as kilometres it is not, and writing the
+        # status out raised, losing the rest of the message.
+        seen = await self.statuses(hass, link)
+        before = seen[-1].get("EV_RANGE_ON_BATTERY_KM")
+        signal = {"dataType": "double", "signalTimestamp": "1794830000000"}
+        message_ = [
+            {
+                **signal,
+                "vssIdentifier": "Vehicle.Powertrain.TractionBattery.Range",
+                "signalValue": "1e308",
+                "unit": "mi",
+            },
+            {
+                **signal,
+                "vssIdentifier": "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+                "signalValue": "55",
+                "unit": "percent",
+            },
+        ]
+        link._on_message(TOPIC, json.dumps(message_).encode())
+        assert seen[-1].get("EV_RANGE_ON_BATTERY_KM") == before
+        assert seen[-1]["FUEL_LEVEL_PERC"] == "55"
+        assert link.stats["unconverted"] == 1
+
+    @pytest.mark.parametrize(
         "name",
         ["Vehicle.TraveledDistance", "Vehicle.Powertrain.FuelSystem.Range"],
     )

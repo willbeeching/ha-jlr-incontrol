@@ -360,6 +360,11 @@ _ODOMETER_SCALES = (1.0, 1000.0, _MILE_METRES)
 # believed. REST reads at least hourly; nobody drives 1,000 km in that time,
 # and the wrong scales put the reading thousands of km away or behind.
 _ODOMETER_AHEAD = 1_000_000
+# And no further ahead than the car could have driven since the held reading,
+# by the car's own times. A tolerance on rounding alone always has an edge:
+# REST at 1,001 km and a streamed 1000 eighty seconds later fell just outside
+# it, and 1000 miles, 608 km on, was taken instead.
+_ODOMETER_SPEED = 250 / 3.6
 
 
 def _finite(value: Any) -> float | None:
@@ -378,7 +383,7 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _place_odometer(value: Any, held: Any) -> int | None:
+def _place_odometer(value: Any, held: Any, elapsed: float | None) -> int | None:
     """A streamed odometer in metres, by the scale that fits the held one.
 
     Each scale it has been seen in is tried. A reading at or within one of
@@ -386,13 +391,16 @@ def _place_odometer(value: Any, held: Any) -> int | None:
     truncated to whole kilometres or miles, and keeps the held figure: with
     REST at 1,000.8 km, a streamed 1000 km is the car standing still, and
     taking it as 1000 miles instead put the odometer 608 km ahead. Otherwise
-    the scale that puts it least ahead, within _ODOMETER_AHEAD, is taken.
+    the scale that puts it least ahead is taken, if the car could have
+    driven that far in the ``elapsed`` seconds since the held reading (none
+    known counts as none passed), and never more than _ODOMETER_AHEAD.
     None when no scale fits, or there is nothing held to place it against:
-    REST brings the odometer at the next read.
+    the held odometer stands, and REST brings the next one.
     """
     number, odometer = _finite(value), _finite(held)
     if number is None or odometer is None:
         return None
+    driven = max(elapsed or 0.0, 0.0) * _ODOMETER_SPEED
     fits: list[tuple[float, int]] = []
     for scale in _ODOMETER_SCALES:
         metres = number * scale
@@ -404,7 +412,9 @@ def _place_odometer(value: Any, held: Any) -> int | None:
         placed = math.floor(metres) + 1 if scale == _MILE_METRES else round(metres)
         if odometer - scale < placed <= odometer:
             fits.append((0.0, round(odometer)))
-        elif odometer < placed <= odometer + _ODOMETER_AHEAD:
+        elif odometer < placed <= odometer + min(driven + scale, _ODOMETER_AHEAD):
+            # One unit of its own scale beyond the drive: a whole kilometre
+            # or mile ticks over as soon as the car moves at all.
             fits.append((placed - odometer, placed))
     return min(fits)[1] if fits else None
 
@@ -427,7 +437,10 @@ def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
         return _UNCONVERTIBLE
     if sent == rest:
         return value
-    return round(number * sent / rest, 1)
+    # Checked again once scaled: 1e308 miles is finite, and infinite as km,
+    # which then raised when the status was written out.
+    converted = number * sent / rest
+    return round(converted, 1) if math.isfinite(converted) else _UNCONVERTIBLE
 
 
 def _signal_value(value: Any, data_type: Any) -> Any:
@@ -1546,8 +1559,13 @@ class DataHubLink:
                 # Not a reading of anything; the held value stands.
                 value = _UNCONVERTIBLE
             elif name == _ODOMETER:
-                odometer = self.signals.get(vin, {}).get(name, {}).get("value")
-                metres = _place_odometer(item.get("value"), odometer)
+                last = self.signals.get(vin, {}).get(name, {})
+                elapsed = (
+                    (when - last["time"]).total_seconds()
+                    if when and last.get("time")
+                    else None
+                )
+                metres = _place_odometer(value, last.get("value"), elapsed)
                 value = _UNCONVERTIBLE if metres is None else metres
             else:
                 value = _in_rest_units(name, value, unit)
