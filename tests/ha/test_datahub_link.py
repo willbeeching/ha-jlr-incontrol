@@ -914,6 +914,96 @@ class TestStreamedDistances:
         held = link.signals[KEPT]["Vehicle.TraveledDistance"]["value"]
         assert held == expected
 
+    async def held_at(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles, metres: int
+    ) -> Any:
+        hub.datahub.status_result = {
+            **hub.datahub.status_result,
+            "Vehicle": {
+                **hub.datahub.status_result["Vehicle"],
+                "TraveledDistance": metres,
+            },
+        }
+        return await self.statuses(hass, link)
+
+    @pytest.mark.parametrize(
+        ("held", "value"),
+        [
+            # REST at 1,000.8 km and the stream's whole kilometres: the car
+            # standing still. Taken as miles, it was 608 km ahead.
+            (1000800, 1000),
+            # REST at 7,670.86 miles and the stream's whole miles.
+            (12345000, 7670),
+        ],
+    )
+    async def test_a_rounded_reading_keeps_the_held_odometer(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        held: int,
+        value: int,
+    ) -> None:
+        seen = await self.held_at(hass, link, hub, held)
+        link._on_message(
+            TOPIC, in_unit("Vehicle.TraveledDistance", "1794830000000", value, "km")
+        )
+        assert seen[-1]["ODOMETER_METER"] == str(held)
+        assert link.stats["unconverted"] == 0
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Vehicle.TraveledDistance", "Vehicle.Powertrain.FuelSystem.Range"],
+    )
+    @pytest.mark.parametrize("text", ["NaN", "Infinity", "-Infinity", "1e400"])
+    async def test_a_number_that_is_not_finite_is_dropped_alone(
+        self,
+        hass: HomeAssistant,
+        link: DataHubLink,
+        hub: Doubles,
+        name: str,
+        text: str,
+    ) -> None:
+        # It raised on rounding, which lost the rest of the message and closed
+        # the stream session.
+        seen = await self.statuses(hass, link)
+        before = dict(seen[-1])
+        signal = {"dataType": "double", "signalTimestamp": "1794830000000"}
+        message_ = [
+            {**signal, "vssIdentifier": name, "signalValue": text, "unit": "km"},
+            {
+                **signal,
+                "vssIdentifier": "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+                "signalValue": "55",
+                "unit": "percent",
+            },
+        ]
+        link._on_message(TOPIC, json.dumps(message_).encode())
+        assert seen[-1]["ODOMETER_METER"] == before["ODOMETER_METER"]
+        assert seen[-1].get("DISTANCE_TO_EMPTY_FUEL") == before.get(
+            "DISTANCE_TO_EMPTY_FUEL"
+        )
+        assert seen[-1]["FUEL_LEVEL_PERC"] == "55"
+        assert link.stats["unconverted"] == 1
+
+    @pytest.mark.parametrize(
+        "name",
+        ["Vehicle.TraveledDistance", "Vehicle.Powertrain.FuelSystem.Range"],
+    )
+    async def test_a_number_too_big_for_a_float_is_dropped(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles, name: str
+    ) -> None:
+        seen = await self.statuses(hass, link)
+        before = dict(seen[-1])
+        # JSON allows an integer of any length; a float does not.
+        huge = (
+            f'{{"name": "{name}", "timestamp": "2026-11-07T10:00:00Z",'
+            f' "unit": "km", "value": 1{"0" * 400}}}'
+        )
+        link._on_message(TOPIC, huge.encode())
+        assert seen[-1]["ODOMETER_METER"] == before["ODOMETER_METER"]
+        assert link.stats["unconverted"] == 1
+
     async def test_a_lower_odometer_is_not_taken(
         self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
     ) -> None:
