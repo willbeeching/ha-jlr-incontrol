@@ -362,27 +362,51 @@ _ODOMETER_SCALES = (1.0, 1000.0, _MILE_METRES)
 _ODOMETER_AHEAD = 1_000_000
 
 
+def _finite(value: Any) -> float | None:
+    """A number as a finite float, or None.
+
+    NaN, an infinity, and an integer too big for a float are not readings,
+    and each raised once it reached rounding: the rest of the message was
+    lost and the stream session closed with it.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _place_odometer(value: Any, held: Any) -> int | None:
     """A streamed odometer in metres, by the scale that fits the held one.
 
-    Each scale it has been seen in is tried, and the one that puts it at or
-    least ahead of the held odometer, within _ODOMETER_AHEAD, is taken.
+    Each scale it has been seen in is tried. A reading at or within one of
+    its own units below the held odometer is that same odometer, rounded or
+    truncated to whole kilometres or miles, and keeps the held figure: with
+    REST at 1,000.8 km, a streamed 1000 km is the car standing still, and
+    taking it as 1000 miles instead put the odometer 608 km ahead. Otherwise
+    the scale that puts it least ahead, within _ODOMETER_AHEAD, is taken.
     None when no scale fits, or there is nothing held to place it against:
     REST brings the odometer at the next read.
     """
-    numbers = (value, held)
-    if any(isinstance(n, bool) or not isinstance(n, int | float) for n in numbers):
+    number, odometer = _finite(value), _finite(held)
+    if number is None or odometer is None:
         return None
-    fits = []
+    fits: list[tuple[float, int]] = []
     for scale in _ODOMETER_SCALES:
-        metres = value * scale
+        metres = number * scale
+        if not math.isfinite(metres):
+            continue
         # A metre past a whole mileage: rounded to the nearest metre, half of
         # them came back a mile short once truncated to whole miles again,
         # and the sensor dipped each time REST and the stream took turns.
         placed = math.floor(metres) + 1 if scale == _MILE_METRES else round(metres)
-        if held <= placed <= held + _ODOMETER_AHEAD:
-            fits.append(placed)
-    return min(fits) if fits else None
+        if odometer - scale < placed <= odometer:
+            fits.append((0.0, round(odometer)))
+        elif odometer < placed <= odometer + _ODOMETER_AHEAD:
+            fits.append((placed - odometer, placed))
+    return min(fits)[1] if fits else None
 
 
 def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
@@ -398,11 +422,12 @@ def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
     if not isinstance(value, int | float):
         return value
     sent = _UNIT_METRES.get(str(unit).strip().lower())
-    if sent is None:
+    number = _finite(value)
+    if sent is None or number is None:
         return _UNCONVERTIBLE
     if sent == rest:
         return value
-    return round(value * sent / rest, 1)
+    return round(number * sent / rest, 1)
 
 
 def _signal_value(value: Any, data_type: Any) -> Any:
@@ -557,8 +582,8 @@ class DataHubLink:
             # The unit the stream named for each signal, names only, so the
             # next unit nobody has seen yet is in diagnostics, not a guess.
             "units": {},
-            # Distances dropped for a unit not known here, and odometers no
-            # scale placed at or just ahead of the one held.
+            # Values dropped: distances in a unit not known here, odometers no
+            # scale placed near the one held, and numbers that are not finite.
             "unconverted": 0,
             "last_message": None,
             "last_session_seconds": None,
@@ -1515,13 +1540,17 @@ class DataHubLink:
             unit = item.get("unit")
             if unit:
                 self.stats["units"][name] = str(unit)
-            value: Any
-            if name == _ODOMETER:
+            value: Any = item.get("value")
+            if isinstance(value, float) and not math.isfinite(value):
+                # NaN or an infinity, from text such as "NaN" or "1e400".
+                # Not a reading of anything; the held value stands.
+                value = _UNCONVERTIBLE
+            elif name == _ODOMETER:
                 odometer = self.signals.get(vin, {}).get(name, {}).get("value")
                 metres = _place_odometer(item.get("value"), odometer)
                 value = _UNCONVERTIBLE if metres is None else metres
             else:
-                value = _in_rest_units(name, item.get("value"), unit)
+                value = _in_rest_units(name, value, unit)
             if value is _UNCONVERTIBLE:
                 self.stats["unconverted"] += 1
                 _LOGGER.debug(

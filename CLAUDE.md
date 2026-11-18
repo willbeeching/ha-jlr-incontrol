@@ -184,10 +184,13 @@ the user-facing detail; what matters when changing the code:
   odometer it is not even true: `TraveledDistance` is always labelled `km`,
   but has arrived in miles (a Defender's 19156, read as 11 miles in
   3.0.0-beta.2) and in metres (shown a thousand times too high by 2.1.4,
-  #62), on one car both, a day apart. `_place_odometer` ignores the label
-  and takes the scale (m, km, mi) that puts it at or least ahead of the
-  odometer held, within 1,000 km; nothing held or nothing fitting waits for
-  REST. Other distances (ranges, service) are labelled `km` truthfully and
+  #62), on one car both, a day apart. `_place_odometer` ignores the label.
+  A reading within one of its units at or below the held odometer is that
+  odometer rounded, and keeps it (with REST at 1,000.8 km, 1000 km is not
+  1000 miles, 608 km ahead); otherwise it takes the scale (m, km, mi) that
+  puts it least ahead, within 1,000 km, and nothing held or nothing fitting
+  waits for REST. Non-finite numbers ("NaN", "1e400") are dropped before any
+  arithmetic: they raised in rounding and closed the stream session. Other distances (ranges, service) are labelled `km` truthfully and
   `_in_rest_units` converts them by the label. Diagnostics list each
   signal's unit under `stats.units`.
 - Every key, token, client id and account id stays in the config entry;
