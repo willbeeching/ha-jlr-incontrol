@@ -329,13 +329,10 @@ def _as_signal(item: dict[str, Any]) -> dict[str, Any]:
 
 
 # Distances, in the unit REST sends each one in, which is the unit the status
-# keys were built on. The stream says its own unit, and it is not REST's: a
-# Defender's TraveledDistance arrived as 19156 when REST had it as some 30.8
-# million metres, so the odometer read 11 miles until the next REST read
-# (3.0.0-beta.2). Converted on the way in, so everything after sees one unit.
-_METRES = "Vehicle.TraveledDistance"
+# keys were built on. The stream names its own unit; for these it is "km",
+# and the numbers agree with REST's. Converted on the way in, so everything
+# after sees one unit.
 _REST_DISTANCE_METRES = {
-    _METRES: 1.0,
     "Vehicle.Powertrain.FuelSystem.Range": 1000.0,
     "Vehicle.Powertrain.Range": 1000.0,
     "Vehicle.Powertrain.TractionBattery.Range": 1000.0,
@@ -350,6 +347,42 @@ _UNIT_METRES = {
 }
 _MILE_METRES = _KM_PER_MILE * 1000
 _UNCONVERTIBLE = object()
+
+# The odometer is the exception: its unit on the stream cannot be read from
+# the stream. Always labelled "km", it has arrived in miles (a Defender's
+# 19156 against REST's 30.8 million metres, which read 11 miles in
+# 3.0.0-beta.2) and in metres (a Defender's 22,144,000, which 2.1.4 took as
+# kilometres and showed a thousand times too high), and on one car in both,
+# a day apart. So it is placed against the odometer already held instead.
+_ODOMETER = "Vehicle.TraveledDistance"
+_ODOMETER_SCALES = (1.0, 1000.0, _MILE_METRES)
+# How far ahead of the held odometer a streamed one may be and still be
+# believed. REST reads at least hourly; nobody drives 1,000 km in that time,
+# and the wrong scales put the reading thousands of km away or behind.
+_ODOMETER_AHEAD = 1_000_000
+
+
+def _place_odometer(value: Any, held: Any) -> int | None:
+    """A streamed odometer in metres, by the scale that fits the held one.
+
+    Each scale it has been seen in is tried, and the one that puts it at or
+    least ahead of the held odometer, within _ODOMETER_AHEAD, is taken.
+    None when no scale fits, or there is nothing held to place it against:
+    REST brings the odometer at the next read.
+    """
+    numbers = (value, held)
+    if any(isinstance(n, bool) or not isinstance(n, int | float) for n in numbers):
+        return None
+    fits = []
+    for scale in _ODOMETER_SCALES:
+        metres = value * scale
+        # A metre past a whole mileage: rounded to the nearest metre, half of
+        # them came back a mile short once truncated to whole miles again,
+        # and the sensor dipped each time REST and the stream took turns.
+        placed = math.floor(metres) + 1 if scale == _MILE_METRES else round(metres)
+        if held <= placed <= held + _ODOMETER_AHEAD:
+            fits.append(placed)
+    return min(fits) if fits else None
 
 
 def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
@@ -369,16 +402,7 @@ def _in_rest_units(name: str, value: Any, unit: Any) -> Any:
         return _UNCONVERTIBLE
     if sent == rest:
         return value
-    converted = value * sent / rest
-    if rest != 1.0:
-        return round(converted, 1)
-    if sent == _MILE_METRES:
-        # A metre past the exact figure. Rounded to the nearest metre, half
-        # of all whole mileages came back a mile short once the odometer was
-        # truncated to whole miles again: 36,540 miles read 36,539, and the
-        # sensor dipped each time REST and the stream took turns.
-        return math.floor(converted) + 1
-    return int(round(converted))
+    return round(value * sent / rest, 1)
 
 
 def _signal_value(value: Any, data_type: Any) -> Any:
@@ -533,8 +557,8 @@ class DataHubLink:
             # The unit the stream named for each signal, names only, so the
             # next unit nobody has seen yet is in diagnostics, not a guess.
             "units": {},
-            # Distances dropped for a unit not known here, or an odometer
-            # lower than the one held.
+            # Distances dropped for a unit not known here, and odometers no
+            # scale placed at or just ahead of the one held.
             "unconverted": 0,
             "last_message": None,
             "last_session_seconds": None,
@@ -1491,8 +1515,14 @@ class DataHubLink:
             unit = item.get("unit")
             if unit:
                 self.stats["units"][name] = str(unit)
-            value = _in_rest_units(name, item.get("value"), unit)
-            if value is _UNCONVERTIBLE or self._odometer_back(vin, name, value):
+            value: Any
+            if name == _ODOMETER:
+                odometer = self.signals.get(vin, {}).get(name, {}).get("value")
+                metres = _place_odometer(item.get("value"), odometer)
+                value = _UNCONVERTIBLE if metres is None else metres
+            else:
+                value = _in_rest_units(name, item.get("value"), unit)
+            if value is _UNCONVERTIBLE:
                 self.stats["unconverted"] += 1
                 _LOGGER.debug(
                     "Data Hub %s %s not taken, in %s", vehicle_label(vin), name, unit
@@ -1520,19 +1550,6 @@ class DataHubLink:
             self._emit(vin)
             if moved:
                 self._emit_position(vin)
-
-    def _odometer_back(self, vin: str, name: str, value: Any) -> bool:
-        """Whether a streamed odometer would wind the car's mileage back.
-
-        A car's odometer only goes up, and the sensor is total_increasing, so
-        a lower one is a unit read wrong rather than a reading: taken, Home
-        Assistant counts it as the meter being reset and adds the whole
-        mileage again to the statistics when the right figure returns.
-        """
-        if name != _METRES or not isinstance(value, int | float):
-            return False
-        held = self.signals.get(vin, {}).get(name, {}).get("value")
-        return isinstance(held, int | float) and value < held
 
     def _unread(self, category: str, shape: str) -> None:
         self.stats["unread"] += 1

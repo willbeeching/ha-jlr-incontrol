@@ -292,7 +292,10 @@ class TestTheStatusTimer:
         # working: the first drive on it went hourly on thirteen of those.
         topic = f"account/acct-1/vehicles/{KEPT}/status"
         held = json.dumps(
-            {"name": "Vehicle.TraveledDistance", "timestamp": "2026-11-07T09:00:00Z"}
+            {
+                "name": "Vehicle.Powertrain.FuelSystem.RelativeLevel",
+                "timestamp": "2026-11-07T09:00:00Z",
+            }
         )
         link._on_message(topic, held.encode())
         pause.waits.clear()
