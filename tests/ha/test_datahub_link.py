@@ -1073,6 +1073,56 @@ class TestStreamedDistances:
         link._on_message(TOPIC, in_unit("Vehicle.TraveledDistance", when, value, "km"))
         assert seen[-1]["ODOMETER_METER"] == str(expected)
 
+    @staticmethod
+    def precise(when: str, metres: int) -> bytes:
+        return json.dumps(
+            {"name": "Vehicle.TraveledDistance", "timestamp": when, "value": metres}
+        ).encode()
+
+    async def test_a_reading_that_only_confirms_does_not_restart_the_clock(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # REST at 09:00; a whole mile at 09:05 confirming it; then a precise
+        # 1 km on, two seconds later. That kilometre took five minutes, not
+        # two seconds, and was dropped as if it had.
+        seen = await self.held_at(hass, link, hub, 12345000)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T09:05:00Z", 7670, "km"),
+        )
+        link._on_message(TOPIC, self.precise("2026-11-07T09:05:02Z", 12346000))
+        assert seen[-1]["ODOMETER_METER"] == "12346000"
+
+    async def test_a_precise_reading_may_be_a_mile_past_a_whole_mile(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # A whole mile that ticked the odometer over is up to a mile behind
+        # the car; the precise reading a moment later can be that far ahead.
+        seen = await self.held_at(hass, link, hub, 12345000)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T09:01:00Z", 7671, "km"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "12345278"
+        link._on_message(TOPIC, self.precise("2026-11-07T09:01:02Z", 12346500))
+        assert seen[-1]["ODOMETER_METER"] == "12346500"
+
+    async def test_neither_lets_the_wrong_scale_back_in(
+        self, hass: HomeAssistant, link: DataHubLink, hub: Doubles
+    ) -> None:
+        # A whole kilometre confirming REST, then 1000 two seconds on: as
+        # miles it is still 608 km away.
+        seen = await self.held_at(hass, link, hub, 1001000)
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T09:05:00Z", 1001, "km"),
+        )
+        link._on_message(
+            TOPIC,
+            in_unit("Vehicle.TraveledDistance", "2026-11-07T09:05:02Z", 1000, "km"),
+        )
+        assert seen[-1]["ODOMETER_METER"] == "1001000"
+
     @pytest.mark.parametrize(
         ("value", "expected"), [(12346, 12346000), (12348, 12345000)]
     )
