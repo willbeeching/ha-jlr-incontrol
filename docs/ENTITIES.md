@@ -137,7 +137,9 @@ journey without it reads unknown rather than zero. JLR's journeys carry no MPG, 
 regeneration or efficiency figures, so there are no sensors for those.
 
 **Recent journeys** is a trip history for dashboards: its state is how many journeys it holds, up
-to 20, and its `journeys` attribute lists them newest first. Each has `started` and `ended`,
+to 20, and its `journeys` attribute lists them newest first. Each has JLR's `journey_id`, which
+stays the same as the rest is filled in and is the thing to match on when saving them, `started`
+and `ended`,
 `duration_min`, `distance_km`, `average_speed_kmh`, `energy_used_kwh` or `fuel_used_l` when JLR
 send it, and `start` and `end` as `{latitude, longitude}`. The units are in the names because an
 attribute is not converted with the distance option the way a sensor's state is; JLR's list

@@ -311,8 +311,9 @@ def recent_journeys(items: Any, limit: int = RECENT_JOURNEYS) -> list[dict[str, 
             {"energy_used": "energy_used_kwh", "fuel_used": "fuel_used_l"}[key]: value
             for key, value in _energy_used(item.get("energyUsed")).items()
         }
-        # Pages can overlap if JLR add a journey between two reads of them.
-        found[f"{item.get('journeyId')}@{ended.isoformat()}"] = {
+        journey_id = item.get("journeyId")
+        entry = {
+            "journey_id": str(journey_id) if journey_id is not None else None,
             "started": started.isoformat() if started else None,
             "ended": ended.isoformat(),
             "duration_min": minutes,
@@ -322,7 +323,19 @@ def recent_journeys(items: Any, limit: int = RECENT_JOURNEYS) -> list[dict[str, 
             "start": _place(item.get("startLocation")),
             "end": _place(item.get("endLocation")),
         }
+        # Pages can overlap if JLR add a journey between two reads of them.
+        found[_journey_key(entry)] = entry
     return sorted(found.values(), key=_ended, reverse=True)[:limit]
+
+
+def _journey_key(journey: dict[str, Any]) -> str:
+    """What makes two copies of a journey the same journey.
+
+    JLR's own id, which stays put while the rest is filled in: keyed by its
+    times, a journey whose start time arrived on the next read was counted
+    twice. Its end time when there is no id.
+    """
+    return str(journey.get("journey_id") or journey["ended"])
 
 
 def _merge_recent(
@@ -335,8 +348,12 @@ def _merge_recent(
     add, so one that finishes late, or misses the older page, cannot take
     a newer journey back out.
     """
-    merged = {(j["started"], j["ended"]): j for j in held}
-    merged.update({(j["started"], j["ended"]): j for j in read})
+    merged = {_journey_key(j): j for j in held}
+    for journey in read:
+        # A copy held from before JLR gave it an id, under its end time.
+        if journey.get("journey_id"):
+            merged.pop(journey["ended"], None)
+        merged[_journey_key(journey)] = journey
     return sorted(merged.values(), key=_ended, reverse=True)[:RECENT_JOURNEYS]
 
 
@@ -1065,6 +1082,7 @@ class DataHubLink:
             return
         token = await self._async_access_token()
         changed = False
+        limited: DataHubRateLimited | None = None
         for vin in due:
             try:
                 first = await self.client.async_journeys(vin, token)
@@ -1074,7 +1092,10 @@ class DataHubLink:
                     last = await self.client.async_journeys(vin, token, pages - 1)
                     newest = list(last.get("items") or [])
                     if pages > 2 and len(newest) < RECENT_JOURNEYS:
-                        items += await self._async_older_journeys(vin, token, pages)
+                        older, limited = await self._async_older_journeys(
+                            vin, token, pages
+                        )
+                        items += older
                     items += newest
             except (DataHubAuthError, DataHubRateLimited):
                 raise
@@ -1109,29 +1130,40 @@ class DataHubLink:
                     "Data Hub journeys for %s: %s", vehicle_label(vin), answer
                 )
             self.journey_access[vin] = answer
+            if limited is not None:
+                # No more cars asked for once JLR have said to slow down.
+                break
         if changed:
             self._notify()
+        if limited is not None:
+            # Raised once what was read is kept, so the poller still waits as
+            # long as JLR asked: swallowed, a 60-minute Retry-After on the
+            # older page was followed by the next read 15 minutes later.
+            raise limited
 
     async def _async_older_journeys(
         self, vin: str, token: str, pages: int
-    ) -> list[Any]:
+    ) -> tuple[list[Any], DataHubRateLimited | None]:
         """The page before the last, to make the recent journeys up to twenty.
 
         Only history: the newest journey is on the last page, which is already
         read. A failure here lost it as well once, and the last-journey
         sensors stayed on the trip before; it now costs only the backfill.
-        A refused link still signs out; a rate limit is left to the next read.
+        A refused link still signs out, and a rate limit is handed back for
+        the caller to raise once the newest journey is kept.
         """
         try:
             older = await self.client.async_journeys(vin, token, pages - 2)
         except DataHubAuthError:
             raise
+        except DataHubRateLimited as err:
+            return [], err
         except DataHubError as err:
             _LOGGER.debug(
                 "Data Hub older journeys for %s failed: %s", vehicle_label(vin), err
             )
-            return []
-        return list(older.get("items") or [])
+            return [], None
+        return list(older.get("items") or []), None
 
     def _journey_ended(self, vin: str, fix_time: datetime | None) -> None:
         """A fix arrived on the stream: read the journey it ended, shortly.

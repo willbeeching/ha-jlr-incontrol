@@ -1743,9 +1743,13 @@ def journey(
     distance_unit: str = "km",
     speed_unit: str = "km/h",
 ) -> dict[str, Any]:
-    """One journey as JLR list it, with made-up values."""
+    """One journey as JLR list it, with made-up values.
+
+    Its id from its end time: JLR's are unique, and journeys are told apart
+    by them.
+    """
     return {
-        "journeyId": "10000001",
+        "journeyId": "".join(c for c in ended if c.isdigit())[:14],
         "startTime": started,
         "endTime": ended,
         "duration": seconds,
@@ -1944,6 +1948,54 @@ class TestJourneys:
         assert recent[0]["ended"] == link.journeys[KEPT]["ended"].isoformat()
         assert [j["distance_km"] for j in recent] == [42.0, 4.0, 172.0]
 
+    async def test_a_start_time_filled_in_later_is_still_one_journey(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Keyed by its times, the copy with the start time was a second trip.
+        link = DataHubLink(hass, linked)
+        bare = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        bare["startTime"] = None
+        hub.datahub.journeys_result = journeys(bare)
+        await link._async_read_journeys()
+        hub.datahub.journeys_result = journeys(
+            journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        )
+        await link._async_read_journeys({KEPT})
+        (held,) = link.recent_journeys[KEPT]
+        assert held["started"] == "2026-11-08T18:00:00+00:00"
+
+    async def test_a_journey_given_its_id_later_is_still_one_journey(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        unnamed = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        del unnamed["journeyId"]
+        hub.datahub.journeys_result = journeys(unnamed)
+        await link._async_read_journeys()
+        hub.datahub.journeys_result = journeys(
+            journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        )
+        await link._async_read_journeys({KEPT})
+        (held,) = link.recent_journeys[KEPT]
+        assert held["journey_id"] == "20261108183000"
+
+    async def test_a_rate_limit_on_the_older_page_keeps_the_trip_and_the_wait(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Swallowed, a 60-minute Retry-After on the older page was followed
+        # by the next read 15 minutes later.
+        link, pause = bare_link(hass, linked, 1)
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 42.0)
+        hub.datahub.journeys_result = [
+            journeys(OCTOBER, SHORT, pages=3),
+            journeys(latest, pages=3),
+            DataHubRateLimited(3600),
+        ]
+        await run_status(link)
+        assert link.journeys[KEPT]["distance"] == 42.0
+        assert link.recent_journeys[KEPT][0]["distance_km"] == 42.0
+        assert pause.waits[0] >= 3600
+
     async def test_journeys_are_ordered_by_time_not_by_text(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
@@ -1964,6 +2016,7 @@ class TestJourneys:
         await link._async_read_journeys()
         newest, oldest = link.recent_journeys[KEPT]
         assert newest == {
+            "journey_id": "20261031134126",
             "started": "2026-10-31T13:35:53+00:00",
             "ended": "2026-10-31T13:41:26+00:00",
             "duration_min": 5.5,

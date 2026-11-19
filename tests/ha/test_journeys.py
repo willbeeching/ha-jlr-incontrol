@@ -304,6 +304,7 @@ class TestRecentJourneys:
         await set_up(hass, entry)
         link = entry.runtime_data.datahub
         newer = {**ANSWER["items"][0], "endTime": "2026-11-09T08:00:00Z"}
+        newer["journeyId"] = "10000002"
         newer["distance"] = {"value": 42.0, "unit": "km"}
         page = {"totalElements": 41, "totalPages": 3, "currentPage": 0}
         link.client.journeys_result = [
