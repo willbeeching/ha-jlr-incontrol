@@ -314,6 +314,43 @@ class TestAskedToSlowDownWhileApproving:
         await hass.config_entries.async_unload(result["result"].entry_id)
 
 
+class TestACodeThatRunsOutDuringAWait:
+    async def test_the_flow_ends_rather_than_outwait_the_code(
+        self,
+        hass: HomeAssistant,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # 25 seconds left on the code and an hour's Retry-After: it waited
+        # the hour, then polled with a dead code.
+        from custom_components.jlr_incontrol.datahub import DataHubRateLimited
+
+        slept: list[float] = []
+
+        async def pause(seconds: float) -> None:
+            slept.append(seconds)
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(config_flow.DataHubLinker, "_pause", staticmethod(pause))
+        result = await open_setup(hass)
+        build = config_flow.DataHubClient
+
+        def limited(*args: Any) -> Any:
+            fake = build(*args)
+            fake.login_result = device_login(expires_in=25)
+            fake.poll_results = [DataHubRateLimited(3600), fake.tokens]
+            return fake
+
+        monkeypatch.setattr(config_flow, "DataHubClient", limited)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        result = await finish_setup(hass, result)
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "datahub_expired"
+        assert slept == [0]
+
+
 class TestSettingUpOnTheDataHub:
     async def test_no_incontrol_sign_in_is_asked_for(
         self, hass: HomeAssistant, hub: Doubles

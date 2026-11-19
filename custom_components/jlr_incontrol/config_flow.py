@@ -325,6 +325,12 @@ class DataHubLinker:
         assert self.client is not None and self.login is not None
         interval = self.login.interval
         while time.time() < self.login.expires_at:
+            if time.time() + interval >= self.login.expires_at:
+                # The code runs out before the next poll may be sent: with 25
+                # seconds left and an hour's Retry-After, the flow sat out the
+                # hour and then polled with a dead code. Ended now, the owner
+                # can start again straight away.
+                break
             await self._pause(interval)
             try:
                 tokens = await self.client.async_poll_device_login(self.login)

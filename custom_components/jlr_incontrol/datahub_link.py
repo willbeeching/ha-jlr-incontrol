@@ -980,14 +980,17 @@ class DataHubLink:
         where it was met, the timer read during a cooldown a trip's read had
         been given, and a trip's read slept through one the timer was given.
         """
-        if (left := self._rest_paused_until - time.monotonic()) > 0:
-            raise DataHubRateLimited(left)
+        self._hold_for_rate_limit()
         if (token := self._token_in_hand()) is not None:
             return token
         async with self._token_lock:
             # Renewed by whoever held the lock while this waited.
             if (token := self._token_in_hand()) is not None:
                 return token
+            # Or rate limited by them: checked before the wait for the lock
+            # only, a second read sent its own renewal straight after the
+            # first was told to wait an hour.
+            self._hold_for_rate_limit()
             settings: dict[str, Any] = self.entry.data[CONF_DATAHUB]
             tokens = await self.client.async_refresh(settings[DATAHUB_REFRESH_TOKEN])
             self._tokens = tokens
@@ -1176,6 +1179,11 @@ class DataHubLink:
             # older page was followed by the next read 15 minutes later.
             self._slow_down(limited)
             raise limited
+
+    def _hold_for_rate_limit(self) -> None:
+        """Raise the 429 a read would be sent, while JLR's wait lasts."""
+        if (left := self._rest_paused_until - time.monotonic()) > 0:
+            raise DataHubRateLimited(left)
 
     def _slow_down(self, err: DataHubRateLimited) -> None:
         """Hold every read until JLR's Retry-After has passed."""

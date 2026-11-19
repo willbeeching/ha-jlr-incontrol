@@ -2397,6 +2397,29 @@ class TestJourneys:
         assert await link.async_read_now(KEPT) is False
         assert len(hub.datahub.calls) == asked
 
+    async def test_a_read_waiting_for_the_token_lock_keeps_the_limit(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Past the check before the lock, the second read renewed the token
+        # itself once the first had been told to wait an hour.
+        link = DataHubLink(hass, linked)
+        renewals: list[str] = []
+        answers = [DataHubRateLimited(3600), hub.datahub.tokens]
+
+        async def slow_refresh(refresh_token: str) -> Any:
+            renewals.append(refresh_token)
+            await asyncio.sleep(0)
+            return hub.datahub._answer(answers)
+
+        hub.datahub.async_refresh = slow_refresh
+        results = await asyncio.gather(
+            link._async_access_token(),
+            link._async_access_token(),
+            return_exceptions=True,
+        )
+        assert len(renewals) == 1
+        assert all(isinstance(r, DataHubRateLimited) for r in results)
+
     async def test_a_limit_on_the_details_read_holds_the_rest(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
