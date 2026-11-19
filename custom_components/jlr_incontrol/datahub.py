@@ -21,7 +21,9 @@ Where they do, the code follows what was measured, and says so.
 from __future__ import annotations
 
 import base64
+import email.utils
 import hashlib
+import math
 import secrets
 import time
 import uuid
@@ -210,6 +212,35 @@ def _tokens(body: dict[str, Any]) -> Tokens:
             else []
         ),
     )
+
+
+# The most a Retry-After is taken at. JLR's are minutes to an hour; the
+# cooldown is held in memory and stops every read, so a garbled day-long one
+# should not leave the cars unread until a restart.
+RETRY_AFTER_CAP = 24 * 60 * 60.0
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds a 429 asked to wait: a number, or an HTTP date (RFC 9110).
+
+    Either form is valid. Only the number was read, so a date an hour ahead
+    fell back to a minute. A minute is still what anything unreadable means.
+    """
+    if not value:
+        return 60.0
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = email.utils.parsedate_to_datetime(value)
+        except (TypeError, ValueError, IndexError):
+            return 60.0
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        seconds = (when - datetime.now(UTC)).total_seconds()
+    if not math.isfinite(seconds):
+        return 60.0
+    return min(max(seconds, 0.0), RETRY_AFTER_CAP)
 
 
 class DataHubClient:
@@ -436,7 +467,13 @@ class DataHubClient:
                     status = resp.status
                     nonce = resp.headers.get("DPoP-Nonce")
                     retry_after = resp.headers.get("Retry-After")
-                    body = await resp.json(content_type=None)
+                    # A 429 is answered from its status and header alone. Its
+                    # body is whatever the gateway in front sends, HTML as
+                    # often as JSON, and reading it first turned the limit
+                    # into an unreadable answer, its wait lost.
+                    body: Any = None
+                    if status != 429:
+                        body = await resp.json(content_type=None)
             except (aiohttp.ClientError, TimeoutError, ValueError) as err:
                 raise DataHubError(f"could not reach JLR: {err!r}") from err
             if attempt == 0 and status == 401 and nonce and nonce != self._nonce:
@@ -451,11 +488,7 @@ class DataHubClient:
         if status == 404:
             raise DataHubNotFound(f"GET {path.split('/')[-1]} answered 404")
         if status == 429:
-            try:
-                wait = float(retry_after or 60)
-            except ValueError:
-                wait = 60.0
-            limited = DataHubRateLimited(wait)
+            limited = DataHubRateLimited(_retry_after(retry_after))
             if self.on_rate_limited is not None:
                 self.on_rate_limited(limited)
             raise limited

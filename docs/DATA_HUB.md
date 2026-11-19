@@ -105,7 +105,9 @@ data.jlr.com.
   taken, and the list is made up at the next read. If JLR ask the integration to slow down,
   wherever they do, the newest journey read is kept and every read waits as long as they asked:
   the regular reads, the read after a trip, which is made once the wait is over rather than
-  dropped, and **Refresh**, which says it could not refresh rather than ask. A car JLR refuse journeys for gains no journey
+  dropped, and **Refresh**, which says it could not refresh rather than ask. The wait is
+  JLR's `Retry-After`, in seconds or as a date, whatever the body of the answer; a minute when
+  they give none that can be read, and never more than a day. A car JLR refuse journeys for gains no journey
   sensors and is asked again once a day. The answer per car is in diagnostics under `journeys`.
 
   Each journey JLR send includes where it started and ended. Those coordinates are visible in

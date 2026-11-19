@@ -475,6 +475,57 @@ class TestTheApi:
             await client.async_get("/v1/x", "t")
         assert told == [3600]
 
+    async def test_a_rate_limit_with_an_html_body_keeps_its_wait(
+        self, credentials: datahub.Credentials
+    ) -> None:
+        # The gateway's own page, not JSON: read first, the limit was taken
+        # for an unreadable answer and its hour was lost.
+        client, _ = make(
+            credentials,
+            FakeResponse(429, ValueError("<html>"), {"Retry-After": "3600"}),
+        )
+        told: list[float] = []
+        client.on_rate_limited = lambda err: told.append(err.retry_after)
+        with pytest.raises(DataHubRateLimited) as raised:
+            await client.async_get("/v1/x", "t")
+        assert raised.value.retry_after == 3600
+        assert told == [3600]
+
+    async def test_a_retry_after_given_as_a_date_is_read(
+        self, credentials: datahub.Credentials
+    ) -> None:
+        # Valid HTTP, and read as unreadable: an hour ahead became a minute.
+        import email.utils
+        from datetime import UTC, datetime, timedelta
+
+        when = email.utils.format_datetime(
+            datetime.now(UTC) + timedelta(hours=1), usegmt=True
+        )
+        client, _ = make(credentials, FakeResponse(429, {}, {"Retry-After": when}))
+        with pytest.raises(DataHubRateLimited) as raised:
+            await client.async_get("/v1/x", "t")
+        assert 3590 <= raised.value.retry_after <= 3600
+
+    @pytest.mark.parametrize(
+        ("header", "seconds"),
+        [
+            ("Wed, 21 Oct 2015 07:28:00 GMT", 0.0),
+            ("inf", 60.0),
+            ("nan", 60.0),
+            ("-5", 0.0),
+            ("99999999", datahub.RETRY_AFTER_CAP),
+        ],
+    )
+    async def test_a_retry_after_past_or_absurd_is_bounded(
+        self, credentials: datahub.Credentials, header: str, seconds: float
+    ) -> None:
+        # Held in memory and stopping every read: an infinite one would leave
+        # the cars unread until a restart.
+        client, _ = make(credentials, FakeResponse(429, {}, {"Retry-After": header}))
+        with pytest.raises(DataHubRateLimited) as raised:
+            await client.async_get("/v1/x", "t")
+        assert raised.value.retry_after == seconds
+
     async def test_an_unreadable_retry_after_waits_a_minute(
         self, credentials: datahub.Credentials
     ) -> None:
