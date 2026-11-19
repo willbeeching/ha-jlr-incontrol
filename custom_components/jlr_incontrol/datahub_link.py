@@ -351,8 +351,16 @@ def _merge_recent(
     merged = {_journey_key(j): j for j in held}
     for journey in read:
         if journey.get("journey_id"):
-            # A copy held from before JLR gave it an id, under its end time.
-            merged.pop(journey["ended"], None)
+            # A copy held from before JLR gave it an id, found by when it
+            # ended, not by the text: 19:30+01:00 is 18:30Z, and was kept as
+            # a second trip.
+            ended = _ended(journey)
+            for key in [
+                key
+                for key, held_one in merged.items()
+                if not held_one.get("journey_id") and _ended(held_one) == ended
+            ]:
+                del merged[key]
             merged[_journey_key(journey)] = journey
             continue
         # And the other way: an answer that left the id out. The trip held
@@ -964,7 +972,15 @@ class DataHubLink:
         all find the token spent at once. Two renewals with the same refresh
         token and the second is refused as invalid_grant, which reads as the
         owner having revoked the link and signs it out.
+
+        Every REST read starts here, so a rate limit JLR set is held here for
+        all of them: the timer, a read after a trip and a Refresh press each
+        answer it as the 429 they would otherwise have been sent. Held only
+        where it was met, the timer read during a cooldown a trip's read had
+        been given, and a trip's read slept through one the timer was given.
         """
+        if (left := self._rest_paused_until - time.monotonic()) > 0:
+            raise DataHubRateLimited(left)
         if (token := self._token_in_hand()) is not None:
             return token
         async with self._token_lock:
@@ -1233,6 +1249,10 @@ class DataHubLink:
             )
             if not await self._wait_for_journeys(target):
                 # A fix came in during the wait: work the deadlines out again.
+                continue
+            if self._rest_paused_until > target:
+                # A limit set, or lengthened, while this slept: wait it out,
+                # which costs the car none of its own retry.
                 continue
             # Chosen by due time, not by the clock now: a fix that arrived
             # during the wait is due later and waits its own turn.

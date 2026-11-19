@@ -1997,6 +1997,23 @@ class TestJourneys:
         assert held["journey_id"] == "20261108183000"
         assert held["distance_km"] == 5.0
 
+    async def test_a_journey_given_its_id_in_another_offset_is_one_journey(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # 19:30+01:00 and 18:30Z are the same moment; compared as text, the
+        # copy without the id was kept as a second trip.
+        link = DataHubLink(hass, linked)
+        unnamed = journey("2026-11-08T19:00:00+01:00", "2026-11-08T19:30:00+01:00")
+        del unnamed["journeyId"]
+        hub.datahub.journeys_result = journeys(unnamed)
+        await link._async_read_journeys()
+        hub.datahub.journeys_result = journeys(
+            journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        )
+        await link._async_read_journeys({KEPT})
+        (held,) = link.recent_journeys[KEPT]
+        assert held["journey_id"] == "20261108183000"
+
     async def test_one_left_without_an_id_is_not_guessed_between_two(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
@@ -2290,10 +2307,10 @@ class TestJourneys:
         assert link.signed_out
 
     async def test_a_failure_after_a_fix_is_left_to_the_timer(
-        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
     ) -> None:
         link = DataHubLink(hass, linked, on_position=lambda *_: None)
-        link._pause = Pauses()
+        time_ = clock(link)
         hub.datahub.journeys_result = DataHubRateLimited(120)
         link._on_message(
             POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
@@ -2304,15 +2321,15 @@ class TestJourneys:
         assert not link.signed_out
         # Asked again once the limit had passed, and only once.
         assert hub.datahub.calls.count("journeys 0") == 2
-        assert max(link._pause.waits) >= 100
+        assert max(time_.waits) >= 100
 
     async def test_a_trip_during_a_rate_limit_waits_it_out(
-        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
     ) -> None:
         # The timer met a 60-minute limit; a trip five minutes later was read
         # straight away. It is now read once the hour is up.
         link = DataHubLink(hass, linked, on_position=lambda *_: None)
-        link._pause = Pauses()
+        time_ = clock(link)
         link._slow_down(DataHubRateLimited(3600))
         hub.datahub.journeys_result = journeys(
             journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
@@ -2321,8 +2338,46 @@ class TestJourneys:
             POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
         )
         await link._journey_task
-        assert link._pause.waits[0] >= 3500
+        assert time_.waits[0] >= 3500
         assert KEPT in link.journeys
+
+    async def test_the_timer_keeps_a_cooldown_a_trip_was_given(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Met by a trip's read, the limit used to bind that read alone: the
+        # timer went on reading through it.
+        link, pause = bare_link(hass, linked, 1)
+        link._slow_down(DataHubRateLimited(3600))
+        await run_status(link)
+        assert [c for c in hub.datahub.calls if not c.startswith("refresh")] == []
+        assert pause.waits[0] >= 3500
+
+    async def test_a_trip_read_asleep_when_a_limit_starts_waits_for_it(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, clock: Any
+    ) -> None:
+        # Asleep for its five minutes when the timer met a 60-minute limit,
+        # it woke on its own deadline and asked inside the hour.
+        link = DataHubLink(hass, linked, on_position=lambda *_: None)
+        time_ = clock(link)
+        time_.at(1060.0, lambda: link._slow_down(DataHubRateLimited(3600)))
+        hub.datahub.journeys_result = journeys(
+            journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        )
+        link._on_message(
+            POSITION_TOPIC, json.dumps(fix("2026-11-08T18:30:34Z")).encode()
+        )
+        await link._journey_task
+        assert time_.now >= 1060.0 + 3600
+        assert hub.datahub.calls.count("journeys 0") == 1
+        assert KEPT in link.journeys
+
+    async def test_a_refresh_during_a_limit_asks_nothing(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        link._slow_down(DataHubRateLimited(3600))
+        assert await link.async_read_now(KEPT) is False
+        assert hub.datahub.calls == []
 
     async def test_stopping_cancels_a_read_waiting_on_a_fix(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
