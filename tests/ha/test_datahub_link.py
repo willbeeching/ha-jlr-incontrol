@@ -1895,6 +1895,67 @@ class TestJourneys:
         assert recent[0]["ended"] == "2026-11-08T18:30:00+00:00"
         assert len(recent) == 10
 
+    async def test_a_failed_older_page_costs_only_the_history(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The older page is only there to make up twenty. When it failed, the
+        # newest journey went with it, and the last-journey sensors stayed on
+        # the trip before.
+        link = DataHubLink(hass, linked)
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 42.0)
+        hub.datahub.journeys_result = [
+            journeys(OCTOBER, SHORT, pages=3),
+            journeys(latest, pages=3),
+            DataHubError("500"),
+        ]
+        await link._async_read_journeys()
+        assert link.journeys[KEPT]["distance"] == 42.0
+        assert link.recent_journeys[KEPT][0]["distance_km"] == 42.0
+        assert link.journey_access[KEPT] == "permitted"
+
+    async def test_a_refused_link_on_the_older_page_still_signs_out(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        hub.datahub.journeys_result = [
+            journeys(OCTOBER, SHORT, pages=3),
+            journeys(latest, pages=3),
+            DataHubAuthError("invalid_grant"),
+        ]
+        with pytest.raises(DataHubAuthError):
+            await link._async_read_journeys()
+
+    async def test_a_read_that_ends_late_cannot_roll_the_list_back(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The timer's read and the read after a trip overlap; the older answer
+        # finishing last replaced the list, and it disagreed with the
+        # last-journey sensors, which had kept the newer trip.
+        link = DataHubLink(hass, linked)
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 42.0)
+        hub.datahub.journeys_result = journeys(OCTOBER, SHORT, latest)
+        await link._async_read_journeys()
+        # Named, as the read after a fix does: not due again on the timer.
+        hub.datahub.journeys_result = journeys(OCTOBER, SHORT)
+        await link._async_read_journeys({KEPT})
+        assert hub.datahub.calls.count("journeys 0") == 2
+        recent = link.recent_journeys[KEPT]
+        assert recent[0]["ended"] == link.journeys[KEPT]["ended"].isoformat()
+        assert [j["distance_km"] for j in recent] == [42.0, 4.0, 172.0]
+
+    async def test_journeys_are_ordered_by_time_not_by_text(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # 18:30+01:00 is 17:30 in UTC, before 18:00Z, whatever the text says.
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = journeys(
+            journey("2026-11-08T17:50:00Z", "2026-11-08T18:00:00Z", 1.0),
+            journey("2026-11-08T18:00:00+01:00", "2026-11-08T18:30:00+01:00", 2.0),
+        )
+        await link._async_read_journeys()
+        assert [j["distance_km"] for j in link.recent_journeys[KEPT]] == [1.0, 2.0]
+
     async def test_recent_journeys_are_newest_first_with_where_they_went(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:

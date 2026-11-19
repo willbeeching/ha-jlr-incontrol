@@ -322,8 +322,27 @@ def recent_journeys(items: Any, limit: int = RECENT_JOURNEYS) -> list[dict[str, 
             "start": _place(item.get("startLocation")),
             "end": _place(item.get("endLocation")),
         }
-    newest = sorted(found.values(), key=lambda j: j["ended"], reverse=True)
-    return newest[:limit]
+    return sorted(found.values(), key=_ended, reverse=True)[:limit]
+
+
+def _merge_recent(
+    held: list[dict[str, Any]], read: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The journeys held and the journeys just read, newest first, twenty.
+
+    A journey in both is the one just read, in case JLR filled in a field
+    since. Nothing held is dropped except to keep twenty: a read can only
+    add, so one that finishes late, or misses the older page, cannot take
+    a newer journey back out.
+    """
+    merged = {(j["started"], j["ended"]): j for j in held}
+    merged.update({(j["started"], j["ended"]): j for j in read})
+    return sorted(merged.values(), key=_ended, reverse=True)[:RECENT_JOURNEYS]
+
+
+def _ended(journey: dict[str, Any]) -> datetime:
+    """When a held journey ended, as a time: as text, +01:00 sorts wrong."""
+    return _parse_time(journey["ended"]) or datetime.min.replace(tzinfo=dt_util.UTC)
 
 
 def _flatten(tree: Any, prefix: str = "") -> dict[str, Any]:
@@ -1055,8 +1074,7 @@ class DataHubLink:
                     last = await self.client.async_journeys(vin, token, pages - 1)
                     newest = list(last.get("items") or [])
                     if pages > 2 and len(newest) < RECENT_JOURNEYS:
-                        before = await self.client.async_journeys(vin, token, pages - 2)
-                        items += list(before.get("items") or [])
+                        items += await self._async_older_journeys(vin, token, pages)
                     items += newest
             except (DataHubAuthError, DataHubRateLimited):
                 raise
@@ -1077,8 +1095,13 @@ class DataHubLink:
                 if latest and (held is None or latest["ended"] > held["ended"]):
                     self.journeys[vin] = latest
                     changed = True
-                recent = recent_journeys(items)
-                if recent and recent != self.recent_journeys.get(vin):
+                # Merged into what is held, never put in its place: a read
+                # that ends after a newer one, or that could not fetch the
+                # older page, would otherwise roll the list back behind the
+                # last-journey sensors.
+                held_recent = self.recent_journeys.get(vin, [])
+                recent = _merge_recent(held_recent, recent_journeys(items))
+                if recent and recent != held_recent:
                     self.recent_journeys[vin] = recent
                     changed = True
             if answer != self.journey_access.get(vin):
@@ -1088,6 +1111,27 @@ class DataHubLink:
             self.journey_access[vin] = answer
         if changed:
             self._notify()
+
+    async def _async_older_journeys(
+        self, vin: str, token: str, pages: int
+    ) -> list[Any]:
+        """The page before the last, to make the recent journeys up to twenty.
+
+        Only history: the newest journey is on the last page, which is already
+        read. A failure here lost it as well once, and the last-journey
+        sensors stayed on the trip before; it now costs only the backfill.
+        A refused link still signs out; a rate limit is left to the next read.
+        """
+        try:
+            older = await self.client.async_journeys(vin, token, pages - 2)
+        except DataHubAuthError:
+            raise
+        except DataHubError as err:
+            _LOGGER.debug(
+                "Data Hub older journeys for %s failed: %s", vehicle_label(vin), err
+            )
+            return []
+        return list(older.get("items") or [])
 
     def _journey_ended(self, vin: str, fix_time: datetime | None) -> None:
         """A fix arrived on the stream: read the journey it ended, shortly.

@@ -93,16 +93,24 @@ data.jlr.com.
   no battery readings until the stream delivered. A car without a charge port is refused there,
   and is asked again once a day rather than every read. The answer per car is in diagnostics under
   `ev`.
-- **Journeys**: for the **Last journey** sensors. Read when the link starts, five minutes after the
+- **Journeys**: for the **Last journey** and **Recent journeys** sensors. Read when the link starts, five minutes after the
   stream sends the position that ends a journey, and every six hours in case the stream missed
   one. The stream resends its last position each time it reconnects, with the same time on it, so
   that is recognised and not read again; the first one heard after a restart costs one read. If
   the read after a journey finds nothing newer, JLR have most likely not filed it yet, and it is
   asked for once more half an hour later rather than left to the six-hour read. JLR
   list journeys oldest first, twenty to a page, so this is one request, or two once a car
-  has more than twenty. A car JLR refuse journeys for gains no journey sensors and is asked again
-  once a day. Each journey JLR send includes where it started and ended; the integration does not
-  keep either. The answer per car is in diagnostics under `journeys`.
+  has more than twenty, and three when the newest page holds fewer than the twenty **Recent
+  journeys** keeps. That third page is only history: if it fails, the newest journey is still
+  taken, and the list is made up at the next read. A car JLR refuse journeys for gains no journey
+  sensors and is asked again once a day. The answer per car is in diagnostics under `journeys`.
+
+  Each journey JLR send includes where it started and ended. Those coordinates are visible in
+  one place: the `journeys` attribute of the **Recent journeys** sensor, for the last 20 journeys,
+  and so to anyone who can see that entity in Home Assistant. They are not written to Home
+  Assistant's database, since the list is excluded from the recorder, and not in diagnostics,
+  which name a journey's fields but never their values. The **Last journey** sensors carry no
+  places.
 - **Stream**: one MQTT connection for the account, held open, which brings status as the car
   reports it, typically within about 16 seconds, and the car's position when a journey ends.
   JLR send no position while the car is being driven, matching their own app, which hides it. JLR end each session at an hour;

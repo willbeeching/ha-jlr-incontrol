@@ -279,6 +279,44 @@ class TestRecentJourneys:
         assert journey["start"] == {"latitude": 51.5, "longitude": -0.12}
         assert journey["end"] == {"latitude": 51.6, "longitude": -0.13}
         assert journey["distance_km"] == pytest.approx(32.19)
+        # Shown on the entity, and nowhere a diagnostics download carries.
+        from custom_components.jlr_incontrol.diagnostics import (
+            async_get_config_entry_diagnostics,
+        )
+
+        report = await async_get_config_entry_diagnostics(hass, entry)
+        assert "51.6" not in repr(report)
+        assert "-0.13" not in repr(report)
+        await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_a_failed_older_page_still_moves_both_on(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The older page failing once held the last journey at the trip
+        # before; both sensors now take the newest, and agree.
+        from custom_components.jlr_incontrol.datahub import DataHubError
+
+        monkeypatch.setattr(FakeDataHub, "journeys", ANSWER)
+        await set_up(hass, entry)
+        link = entry.runtime_data.datahub
+        newer = {**ANSWER["items"][0], "endTime": "2026-11-09T08:00:00Z"}
+        newer["distance"] = {"value": 42.0, "unit": "km"}
+        page = {"totalElements": 41, "totalPages": 3, "currentPage": 0}
+        link.client.journeys_result = [
+            {**ANSWER, "page": page},
+            {"items": [newer], "page": page},
+            DataHubError("500"),
+        ]
+        await link._async_read_journeys({KEPT})
+        await hass.async_block_till_done()
+        assert float(hass.states.get(SENSORS[0]).state) == 42.0
+        journeys = hass.states.get(RECENT).attributes["journeys"]
+        assert journeys[0]["distance_km"] == 42.0
+        assert journeys[0]["ended"] == hass.states.get(SENSORS[3]).state
         await hass.config_entries.async_unload(entry.entry_id)
 
     async def test_a_car_refused_journeys_gains_none(
