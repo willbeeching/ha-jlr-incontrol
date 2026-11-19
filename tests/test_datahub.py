@@ -463,6 +463,18 @@ class TestTheApi:
             await client.async_get("/v1/x", "t")
         assert raised.value.retry_after == 120
 
+    async def test_a_rate_limit_is_told_before_anything_can_catch_it(
+        self, credentials: datahub.Credentials
+    ) -> None:
+        # Left to each caller, a Refresh press caught it as any failure and
+        # the link went on reading inside JLR's Retry-After.
+        client, _ = make(credentials, FakeResponse(429, {}, {"Retry-After": "3600"}))
+        told: list[float] = []
+        client.on_rate_limited = lambda err: told.append(err.retry_after)
+        with pytest.raises(DataHubRateLimited):
+            await client.async_get("/v1/x", "t")
+        assert told == [3600]
+
     async def test_an_unreadable_retry_after_waits_a_minute(
         self, credentials: datahub.Credentials
     ) -> None:

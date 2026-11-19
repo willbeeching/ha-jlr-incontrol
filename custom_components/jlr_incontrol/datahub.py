@@ -25,6 +25,7 @@ import hashlib
 import secrets
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -233,6 +234,11 @@ class DataHubClient:
         # yet, but the server is Keycloak, which can be switched to require it
         # without notice, and the answer is one retry rather than a dead link.
         self._nonce: str | None = None
+        # Told of every 429 as it comes back, before anything can catch it.
+        # Each caller handling its own lost one: a Refresh press caught it
+        # with any other failure, and the next timer read went straight out
+        # inside a 60-minute Retry-After.
+        self.on_rate_limited: Callable[[DataHubRateLimited], None] | None = None
 
     def _assertion(self) -> str:
         now = int(time.time())
@@ -449,7 +455,10 @@ class DataHubClient:
                 wait = float(retry_after or 60)
             except ValueError:
                 wait = 60.0
-            raise DataHubRateLimited(wait)
+            limited = DataHubRateLimited(wait)
+            if self.on_rate_limited is not None:
+                self.on_rate_limited(limited)
+            raise limited
         raise DataHubError(f"GET {path.split('/')[-1]} answered {status}")
 
     async def async_status(self, vin: str, access_token: str) -> dict[str, Any]:

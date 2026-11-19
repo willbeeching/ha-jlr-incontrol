@@ -671,6 +671,7 @@ class DataHubLink:
             settings[DATAHUB_CLIENT_ID],
             settings[DATAHUB_PRIVATE_KEY],
         )
+        self.client.on_rate_limited = self._slow_down
         self.vehicles: list[str] = list(settings.get(DATAHUB_VEHICLES, []))
         self.account_id: str | None = settings.get(DATAHUB_ACCOUNT_ID)
         self._tokens: Tokens | None = None

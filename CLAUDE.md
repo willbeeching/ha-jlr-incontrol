@@ -157,6 +157,10 @@ the user-facing detail; what matters when changing the code:
   starts a reauth; at startup the coordinator raises `ConfigEntryAuthFailed`
   so setup stops retrying a refused token. Failures are logged once down and
   once back (`_went_down`, `_came_back`); do not add a warning per retry.
+  A 429 is reported by the client itself (`on_rate_limited`, the link's
+  `_slow_down`) before anything can catch it, and `_async_access_token`
+  holds every REST read until the Retry-After has passed: do not leave a
+  rate limit for each caller to pass on, as five handlers in turn lost it.
 - Measured, not documented: access tokens last 5 minutes, the refresh token
   is offline with no expiry but rotates on every use (so renewal is behind
   `_token_lock`), the broker in the portal does not resolve, and

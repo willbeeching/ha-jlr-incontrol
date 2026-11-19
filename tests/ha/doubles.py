@@ -264,11 +264,17 @@ class FakeDataHub:
         self.login_result: Any = None
         self.poll_results: list[Any] = []
 
-    @staticmethod
-    def _answer(result: Any) -> Any:
+    on_rate_limited: Any = None
+
+    def _answer(self, result: Any) -> Any:
         if isinstance(result, list):
             result = result.pop(0)
         if isinstance(result, BaseException):
+            from custom_components.jlr_incontrol.datahub import DataHubRateLimited
+
+            # As the real client does, before anything can catch it.
+            if isinstance(result, DataHubRateLimited) and self.on_rate_limited:
+                self.on_rate_limited(result)
             raise result
         return result
 

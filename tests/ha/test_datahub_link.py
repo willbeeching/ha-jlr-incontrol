@@ -2371,6 +2371,33 @@ class TestJourneys:
         assert hub.datahub.calls.count("journeys 0") == 1
         assert KEPT in link.journeys
 
+    @pytest.mark.parametrize("where", ["status", "location"])
+    async def test_a_limit_a_refresh_meets_holds_the_timer_too(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles, where: str
+    ) -> None:
+        # Caught by the press as any failure, a 60-minute Retry-After was
+        # dropped and the next timer read went straight out.
+        link, pause = bare_link(hass, linked, 1)
+        setattr(hub.datahub, f"{where}_result", DataHubRateLimited(3600))
+        # Status is what a press is for: read, it still says so.
+        assert await link.async_read_now(KEPT) is (where == "location")
+        asked = len(hub.datahub.calls)
+        await run_status(link)
+        assert len(hub.datahub.calls) == asked
+        assert pause.waits[0] >= 3500
+
+    async def test_a_limit_on_the_details_read_holds_the_rest(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # The coordinator's daily details read catches any failure too.
+        link = DataHubLink(hass, linked)
+        hub.datahub.vehicle_result = DataHubRateLimited(3600)
+        with pytest.raises(DataHubRateLimited):
+            await link.async_vehicle_details(KEPT)
+        asked = len(hub.datahub.calls)
+        assert await link.async_read_now(KEPT) is False
+        assert len(hub.datahub.calls) == asked
+
     async def test_a_refresh_during_a_limit_asks_nothing(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
