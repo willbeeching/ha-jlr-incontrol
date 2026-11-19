@@ -350,10 +350,21 @@ def _merge_recent(
     """
     merged = {_journey_key(j): j for j in held}
     for journey in read:
-        # A copy held from before JLR gave it an id, under its end time.
         if journey.get("journey_id"):
+            # A copy held from before JLR gave it an id, under its end time.
             merged.pop(journey["ended"], None)
-        merged[_journey_key(journey)] = journey
+            merged[_journey_key(journey)] = journey
+            continue
+        # And the other way: an answer that left the id out. The trip held
+        # with the same end time is this one, and keeps its id, unless two
+        # end then and it cannot be told which.
+        ended = _ended(journey)
+        same = [key for key, held_one in merged.items() if _ended(held_one) == ended]
+        if len(same) == 1:
+            kept = merged[same[0]].get("journey_id")
+            merged[same[0]] = {**journey, "journey_id": kept}
+        else:
+            merged[_journey_key(journey)] = journey
     return sorted(merged.values(), key=_ended, reverse=True)[:RECENT_JOURNEYS]
 
 
@@ -732,6 +743,9 @@ class DataHubLink:
         self._stream_after = 0.0
         # The last journey per car, and what JLR said when last asked.
         self.journeys: dict[str, dict[str, Any]] = {}
+        # Until when JLR asked for no more reads, on the monotonic clock. One
+        # for every read, so a trip's journey read keeps the timer's wait.
+        self._rest_paused_until = 0.0
         # Each car's last RECENT_JOURNEYS, newest first; in memory only, and
         # read again after a restart with the first journeys read.
         self.recent_journeys: dict[str, list[dict[str, Any]]] = {}
@@ -825,6 +839,7 @@ class DataHubLink:
                 self._signed_out(err)
                 return
             except DataHubRateLimited as err:
+                self._slow_down(err)
                 self._went_down(
                     "reads", f"asked to slow down for {err.retry_after:.0f}s"
                 )
@@ -1097,7 +1112,10 @@ class DataHubLink:
                         )
                         items += older
                     items += newest
-            except (DataHubAuthError, DataHubRateLimited):
+            except DataHubAuthError:
+                raise
+            except DataHubRateLimited as err:
+                self._slow_down(err)
                 raise
             except (DataHubForbidden, DataHubNotFound) as err:
                 answer = f"refused: {err}"
@@ -1139,7 +1157,14 @@ class DataHubLink:
             # Raised once what was read is kept, so the poller still waits as
             # long as JLR asked: swallowed, a 60-minute Retry-After on the
             # older page was followed by the next read 15 minutes later.
+            self._slow_down(limited)
             raise limited
+
+    def _slow_down(self, err: DataHubRateLimited) -> None:
+        """Hold every read until JLR's Retry-After has passed."""
+        self._rest_paused_until = max(
+            self._rest_paused_until, time.monotonic() + err.retry_after
+        )
 
     async def _async_older_journeys(
         self, vin: str, token: str, pages: int
@@ -1199,7 +1224,13 @@ class DataHubLink:
         put back once, half an hour on: JLR had most likely not filed it yet.
         """
         while self._journeys_after_fix and not self.signed_out:
-            target = min(due for due, _ in self._journeys_after_fix.values())
+            # Not before a rate limit has passed, wherever it was met: a trip
+            # five minutes into a 60-minute Retry-After was read straight
+            # away. The car is read when it ends, rather than dropped.
+            target = max(
+                min(due for due, _ in self._journeys_after_fix.values()),
+                self._rest_paused_until,
+            )
             if not await self._wait_for_journeys(target):
                 # A fix came in during the wait: work the deadlines out again.
                 continue
@@ -1218,6 +1249,16 @@ class DataHubLink:
             except DataHubAuthError as err:
                 self._signed_out(err)
                 return
+            except DataHubRateLimited:
+                # Back in line for when the limit has passed, once: a car met
+                # by a second limit is left to the timer, as any other
+                # failure is, rather than asking at every Retry-After.
+                for vin, retry in ready.items():
+                    if retry:
+                        self._journeys_after_fix.setdefault(
+                            vin, (self._rest_paused_until, False)
+                        )
+                continue
             except DataHubError as err:
                 # The status loop's timer reads them later.
                 _LOGGER.debug("Data Hub journeys after a fix failed: %s", err)

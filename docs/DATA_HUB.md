@@ -102,8 +102,9 @@ data.jlr.com.
   list journeys oldest first, twenty to a page, so this is one request, or two once a car
   has more than twenty, and three when the newest page holds fewer than the twenty **Recent
   journeys** keeps. That third page is only history: if it fails, the newest journey is still
-  taken, and the list is made up at the next read. If JLR ask the integration to slow down on it,
-  the newest journey is kept and the next read still waits as long as they asked. A car JLR refuse journeys for gains no journey
+  taken, and the list is made up at the next read. If JLR ask the integration to slow down,
+  wherever they do, the newest journey read is kept and every read waits as long as they asked,
+  including the read after a trip, which is made once the wait is over rather than dropped. A car JLR refuse journeys for gains no journey
   sensors and is asked again once a day. The answer per car is in diagnostics under `journeys`.
 
   Each journey JLR send includes where it started and ended. Those coordinates are visible in
