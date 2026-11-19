@@ -351,6 +351,52 @@ class TestACodeThatRunsOutDuringAWait:
         assert slept == [0]
 
 
+class TestAWaitThatRunsLate:
+    async def test_a_code_that_ran_out_during_the_wait_is_not_polled(
+        self,
+        hass: HomeAssistant,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Five seconds that took eight, on a code with seven left: checked
+        # only before the wait, the poll went out with the dead code.
+        clock = [time.time()]
+        monkeypatch.setattr(
+            config_flow, "time", type("Clock", (), {"time": lambda: clock[0]})
+        )
+
+        async def late(seconds: float) -> None:
+            clock[0] += seconds + 3
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(config_flow.DataHubLinker, "_pause", staticmethod(late))
+        result = await open_setup(hass)
+        build = config_flow.DataHubClient
+        made: list[Any] = []
+
+        def short(*args: Any) -> Any:
+            fake = build(*args)
+            fake.login_result = DeviceLogin(
+                device_code="dev",
+                user_code="ABCD-EFGH",
+                verification_uri="https://auth.example/device",
+                verification_uri_complete="https://auth.example/device?c=1",
+                interval=5,
+                expires_at=clock[0] + 7,
+                verifier="v" * 64,
+            )
+            made.append(fake)
+            return fake
+
+        monkeypatch.setattr(config_flow, "DataHubClient", short)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        result = await finish_setup(hass, result)
+        assert result["reason"] == "datahub_expired"
+        assert "poll" not in made[0].calls
+
+
 class TestSettingUpOnTheDataHub:
     async def test_no_incontrol_sign_in_is_asked_for(
         self, hass: HomeAssistant, hub: Doubles

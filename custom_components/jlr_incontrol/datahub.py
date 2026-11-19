@@ -270,6 +270,11 @@ class DataHubClient:
         # with any other failure, and the next timer read went straight out
         # inside a 60-minute Retry-After.
         self.on_rate_limited: Callable[[DataHubRateLimited], None] | None = None
+        # Asked immediately before every request is sent, to raise the 429
+        # it would meet while a limit lasts. Checked anywhere earlier, a
+        # limit that began in between let the request out: a read holding a
+        # token renewed during another's 429, or a renewal queued for the lock.
+        self.before_request: Callable[[], None] | None = None
 
     def _assertion(self) -> str:
         now = int(time.time())
@@ -316,6 +321,8 @@ class DataHubClient:
         self, url: str, data: dict[str, str], dpop: bool
     ) -> tuple[int, dict[str, Any]]:
         for attempt in range(2):
+            if self.before_request is not None:
+                self.before_request()
             headers = {"DPoP": self._proof("POST", url)} if dpop else {}
             try:
                 async with self._session.post(
@@ -463,6 +470,8 @@ class DataHubClient:
         url = f"{API_BASE}{path}"
         target = f"{url}?{query}" if query else url
         for attempt in range(2):
+            if self.before_request is not None:
+                self.before_request()
             headers = {
                 "Authorization": f"DPoP {access_token}",
                 "DPoP": self._proof("GET", url, access_token),

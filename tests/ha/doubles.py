@@ -265,6 +265,12 @@ class FakeDataHub:
         self.poll_results: list[Any] = []
 
     on_rate_limited: Any = None
+    before_request: Any = None
+
+    def _gate(self) -> None:
+        """As the real client does, before a request is sent."""
+        if self.before_request is not None:
+            self.before_request()
 
     def _answer(self, result: Any) -> Any:
         if isinstance(result, list):
@@ -279,37 +285,46 @@ class FakeDataHub:
         return result
 
     async def async_refresh(self, refresh_token: str) -> Any:
+        self._gate()
         self.calls.append(f"refresh {refresh_token}")
         return self._answer(self.refresh_result)
 
     async def async_status(self, vin: str, access_token: str) -> Any:
+        self._gate()
         self.calls.append("status")
         return self._answer(self.status_result)
 
     async def async_vehicle(self, vin: str, access_token: str) -> Any:
+        self._gate()
         self.calls.append("details")
         return self._answer(self.vehicle_result)
 
     async def async_location(self, vin: str, access_token: str) -> Any:
+        self._gate()
         self.calls.append("location")
         return self._answer(self.location_result)
 
     async def async_ev(self, vin: str, access_token: str) -> Any:
+        self._gate()
         self.calls.append("ev")
         return self._answer(self.ev_result)
 
     async def async_journeys(self, vin: str, access_token: str, page: int = 0) -> Any:
+        self._gate()
         self.calls.append(f"journeys {page}")
         return self._answer(self.journeys_result)
 
     async def async_stream_token(self) -> Any:
+        self._gate()
         self.calls.append("stream token")
         return self._answer(self.stream_result)
 
     async def async_start_device_login(self) -> Any:
+        self._gate()
         self.calls.append("start")
         return self._answer(self.login_result)
 
     async def async_poll_device_login(self, login: Any) -> Any:
+        self._gate()
         self.calls.append("poll")
         return self._answer(self.poll_results)

@@ -495,6 +495,25 @@ class TestTheApi:
         assert raised.value.retry_after == 3600
         assert told == [3600]
 
+    @pytest.mark.parametrize("call", ["read", "renewal"])
+    async def test_nothing_is_sent_while_the_link_holds_a_limit(
+        self, credentials: datahub.Credentials, call: str
+    ) -> None:
+        # Asked immediately before sending, so a limit that began after the
+        # caller last looked still holds the request back.
+        client, session = make(credentials, ok_token())
+
+        def held() -> None:
+            raise DataHubRateLimited(3600)
+
+        client.before_request = held
+        with pytest.raises(DataHubRateLimited):
+            if call == "read":
+                await client.async_get("/v1/x", "t")
+            else:
+                await client.async_refresh("offline-1")
+        assert session.calls == []
+
     async def test_a_rate_limit_with_an_html_body_keeps_its_wait(
         self, credentials: datahub.Credentials
     ) -> None:

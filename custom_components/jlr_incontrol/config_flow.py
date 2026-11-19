@@ -332,6 +332,10 @@ class DataHubLinker:
                 # can start again straight away.
                 break
             await self._pause(interval)
+            if time.time() >= self.login.expires_at:
+                # And after it: a wait that ran late, five seconds that took
+                # eight, polled with a code that had run out at seven.
+                break
             try:
                 tokens = await self.client.async_poll_device_login(self.login)
             except DataHubDenied:

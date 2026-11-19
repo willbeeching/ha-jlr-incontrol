@@ -2420,6 +2420,26 @@ class TestJourneys:
         assert len(renewals) == 1
         assert all(isinstance(r, DataHubRateLimited) for r in results)
 
+    async def test_a_limit_met_while_renewing_holds_the_fresh_token(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Another request met a 429 while this one renewed: the renewal went
+        # through, and two reads went out on the fresh token inside the hour.
+        link = DataHubLink(hass, linked)
+
+        async def renewing(refresh_token: str) -> Any:
+            hub.datahub.calls.append(f"refresh {refresh_token}")
+            await asyncio.sleep(0)
+            link._slow_down(DataHubRateLimited(3600))
+            return hub.datahub.tokens
+
+        hub.datahub.async_refresh = renewing
+        assert await link.async_read_now(KEPT) is False
+        assert await link.async_read_now(KEPT) is False
+        assert [c for c in hub.datahub.calls if not c.startswith("refresh")] == []
+        # The rotated token is kept: the old one is spent.
+        assert linked.data["datahub"]["refresh_token"] == "offline-2"
+
     async def test_a_limit_on_the_details_read_holds_the_rest(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
