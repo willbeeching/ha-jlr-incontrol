@@ -279,6 +279,41 @@ async def finish_setup(hass: HomeAssistant, result: dict[str, Any]) -> dict[str,
     return await hass.config_entries.flow.async_configure(result["flow_id"])
 
 
+class TestAskedToSlowDownWhileApproving:
+    async def test_the_next_poll_waits_as_long_as_jlr_asked(
+        self,
+        hass: HomeAssistant,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from custom_components.jlr_incontrol.datahub import DataHubRateLimited
+
+        slept: list[float] = []
+
+        async def pause(seconds: float) -> None:
+            slept.append(seconds)
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(config_flow.DataHubLinker, "_pause", staticmethod(pause))
+        result = await open_setup(hass)
+        build = config_flow.DataHubClient
+
+        def limited(*args: Any) -> Any:
+            fake = build(*args)
+            fake.poll_results = [DataHubRateLimited(30), fake.tokens]
+            return fake
+
+        monkeypatch.setattr(config_flow, "DataHubClient", limited)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"client_id": "dsas-0123456789ab"}
+        )
+        result = await finish_setup(hass, result)
+        assert result["type"] is FlowResultType.CREATE_ENTRY
+        # The poll after the 429 waited its 30 seconds.
+        assert slept == [0, 30]
+        await hass.config_entries.async_unload(result["result"].entry_id)
+
+
 class TestSettingUpOnTheDataHub:
     async def test_no_incontrol_sign_in_is_asked_for(
         self, hass: HomeAssistant, hub: Doubles

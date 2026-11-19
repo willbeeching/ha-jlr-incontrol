@@ -65,6 +65,7 @@ from .datahub import (
     DataHubDenied,
     DataHubError,
     DataHubExpired,
+    DataHubRateLimited,
     DeviceLogin,
     Tokens,
     certificate_expiry,
@@ -261,6 +262,9 @@ class DataHubLinker:
     from drifting apart.
     """
 
+    # The wait between polls, in one place a test can stand in for.
+    _pause = staticmethod(asyncio.sleep)
+
     def __init__(self) -> None:
         self.credentials: Credentials | None = None
         self.client: DataHubClient | None = None
@@ -321,7 +325,7 @@ class DataHubLinker:
         assert self.client is not None and self.login is not None
         interval = self.login.interval
         while time.time() < self.login.expires_at:
-            await asyncio.sleep(interval)
+            await self._pause(interval)
             try:
                 tokens = await self.client.async_poll_device_login(self.login)
             except DataHubDenied:
@@ -332,6 +336,11 @@ class DataHubLinker:
             except DataHubAuthError:
                 self.error = "datahub_rejected"
                 return
+            except DataHubRateLimited as err:
+                # Asked to slow down while the owner approves: the next poll
+                # waits as long as JLR asked, not five seconds more.
+                interval = max(interval, err.retry_after)
+                continue
             except DataHubError as err:
                 # A dropped poll is not a refusal; the code is still good.
                 _LOGGER.debug("Data Hub sign-in poll failed: %s", err)

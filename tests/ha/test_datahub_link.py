@@ -2386,6 +2386,17 @@ class TestJourneys:
         assert len(hub.datahub.calls) == asked
         assert pause.waits[0] >= 3500
 
+    async def test_a_limit_on_renewing_the_token_holds_every_read(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link, pause = bare_link(hass, linked, 1)
+        hub.datahub.refresh_result = DataHubRateLimited(3600)
+        await run_status(link)
+        assert pause.waits[0] >= 3500
+        asked = len(hub.datahub.calls)
+        assert await link.async_read_now(KEPT) is False
+        assert len(hub.datahub.calls) == asked
+
     async def test_a_limit_on_the_details_read_holds_the_rest(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:

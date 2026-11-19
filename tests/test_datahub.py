@@ -475,6 +475,26 @@ class TestTheApi:
             await client.async_get("/v1/x", "t")
         assert told == [3600]
 
+    @pytest.mark.parametrize("call", ["renewal", "stream"])
+    async def test_a_token_request_rate_limited_keeps_its_wait(
+        self, credentials: datahub.Credentials, call: str
+    ) -> None:
+        # Renewal is a request like any other to JLR's limit. Its 429 came
+        # back as a plain failure, the wait dropped and the cooldown unset.
+        client, _ = make(
+            credentials,
+            FakeResponse(429, ValueError("<html>"), {"Retry-After": "3600"}),
+        )
+        told: list[float] = []
+        client.on_rate_limited = lambda err: told.append(err.retry_after)
+        with pytest.raises(DataHubRateLimited) as raised:
+            if call == "renewal":
+                await client.async_refresh("offline-1")
+            else:
+                await client.async_stream_token()
+        assert raised.value.retry_after == 3600
+        assert told == [3600]
+
     async def test_a_rate_limit_with_an_html_body_keeps_its_wait(
         self, credentials: datahub.Credentials
     ) -> None:

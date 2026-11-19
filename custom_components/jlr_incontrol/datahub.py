@@ -321,11 +321,19 @@ class DataHubClient:
                 async with self._session.post(
                     url, data=data, headers=headers, timeout=TIMEOUT
                 ) as resp:
-                    body = await resp.json(content_type=None)
-                    nonce = resp.headers.get("DPoP-Nonce")
                     status = resp.status
+                    nonce = resp.headers.get("DPoP-Nonce")
+                    retry_after = resp.headers.get("Retry-After")
+                    body: Any = None
+                    if status != 429:
+                        body = await resp.json(content_type=None)
             except (aiohttp.ClientError, TimeoutError, ValueError) as err:
                 raise DataHubError(f"could not reach JLR: {err!r}") from err
+            if status == 429:
+                # Token renewal is a read like any other to JLR's limit, and
+                # came back as a plain failure, its Retry-After dropped and
+                # the cooldown never started.
+                raise self._rate_limited(retry_after)
             if not isinstance(body, dict):
                 body = {}
             if (
@@ -488,11 +496,15 @@ class DataHubClient:
         if status == 404:
             raise DataHubNotFound(f"GET {path.split('/')[-1]} answered 404")
         if status == 429:
-            limited = DataHubRateLimited(_retry_after(retry_after))
-            if self.on_rate_limited is not None:
-                self.on_rate_limited(limited)
-            raise limited
+            raise self._rate_limited(retry_after)
         raise DataHubError(f"GET {path.split('/')[-1]} answered {status}")
+
+    def _rate_limited(self, retry_after: str | None) -> DataHubRateLimited:
+        """A 429 as its error, reported before anything can catch it."""
+        limited = DataHubRateLimited(_retry_after(retry_after))
+        if self.on_rate_limited is not None:
+            self.on_rate_limited(limited)
+        return limited
 
     async def async_status(self, vin: str, access_token: str) -> dict[str, Any]:
         """The latest status snapshot for one vehicle."""
