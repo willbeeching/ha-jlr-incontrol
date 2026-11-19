@@ -91,6 +91,7 @@ class FakeLink:
         self.stopped = False
         self.ev_waiting: dict[str, str] = {}
         self.journeys: dict[str, dict[str, Any]] = {}
+        self.recent_journeys: dict[str, list[dict[str, Any]]] = {}
         self.reports: dict[str, Any] = {}
         self.read_now_result = True
         self.reads: list[str | None] = []

@@ -243,6 +243,9 @@
       },
       "last_journey_fuel_used": {
         "default": "mdi:gas-station"
+      },
+      "recent_journeys": {
+        "default": "mdi:map-marker-path"
       }
     }
   }

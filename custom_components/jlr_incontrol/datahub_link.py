@@ -148,6 +148,9 @@ JOURNEY_REFUSED_RETRY = 24 * 60 * 60.0
 # most likely beaten JLR to filing it; asked once more, this much later, rather
 # than left to the six-hour timer.
 JOURNEY_UNFILED_RETRY = 30 * 60.0
+# The journeys kept per car, newest first: JLR's page size, and what owners
+# asked for to build a trip history on a dashboard (#63).
+RECENT_JOURNEYS = 20
 _KM_PER_MILE = 1.609344
 # How long without a good status read before the link stops vouching for the
 # readings. Three missed hourly reads: one failure is not an outage.
@@ -242,11 +245,10 @@ def journey_shape(item: dict[str, Any], prefix: str = "") -> list[str]:
 
 
 def latest_journey(items: Any) -> dict[str, Any] | None:
-    """The journey that ended last, without where it started or ended.
+    """The journey that ended last, for the last-journey sensors.
 
-    JLR send each journey's start and end coordinates. They are not kept:
-    this integration stores no coordinates beyond the car's current fix, and
-    a history of where a car has been is more than any sensor here needs.
+    Without where it started or ended: those sensors are single readings.
+    The car's recent journeys, places included, are in ``recent_journeys``.
     """
     latest: dict[str, Any] | None = None
     for item in items if isinstance(items, list) else []:
@@ -269,6 +271,59 @@ def latest_journey(items: Any) -> dict[str, Any] | None:
             "shape": journey_shape(item),
         }
     return latest
+
+
+def _place(location: Any) -> dict[str, float] | None:
+    """A journey's start or end as numbers; JLR send them as text."""
+    if not isinstance(location, dict):
+        return None
+    try:
+        latitude = _finite(float(location.get("latitude", "")))
+        longitude = _finite(float(location.get("longitude", "")))
+    except (TypeError, ValueError):
+        return None
+    if latitude is None or longitude is None:
+        return None
+    return {"latitude": latitude, "longitude": longitude}
+
+
+def recent_journeys(items: Any, limit: int = RECENT_JOURNEYS) -> list[dict[str, Any]]:
+    """The car's most recent journeys, newest first, where they went included.
+
+    Owners asked for a trip history like JLR's own app shows (#63), with
+    where each journey started and ended. Units are in the names, since an
+    attribute is not converted the way a sensor's state is: kilometres,
+    km/h, minutes, kWh and litres, whatever JLR sent them in.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        ended = _parse_time(item.get("endTime"))
+        if ended is None:
+            continue
+        started = _parse_time(item.get("startTime"))
+        try:
+            minutes: float | None = round(float(item.get("duration", "")) / 60, 1)
+        except (TypeError, ValueError):
+            minutes = None
+        used = {
+            {"energy_used": "energy_used_kwh", "fuel_used": "fuel_used_l"}[key]: value
+            for key, value in _energy_used(item.get("energyUsed")).items()
+        }
+        # Pages can overlap if JLR add a journey between two reads of them.
+        found[f"{item.get('journeyId')}@{ended.isoformat()}"] = {
+            "started": started.isoformat() if started else None,
+            "ended": ended.isoformat(),
+            "duration_min": minutes,
+            "distance_km": _in_km(item.get("distance"), _DISTANCE_UNITS),
+            "average_speed_kmh": _in_km(item.get("averageSpeed"), _SPEED_UNITS),
+            **used,
+            "start": _place(item.get("startLocation")),
+            "end": _place(item.get("endLocation")),
+        }
+    newest = sorted(found.values(), key=lambda j: j["ended"], reverse=True)
+    return newest[:limit]
 
 
 def _flatten(tree: Any, prefix: str = "") -> dict[str, Any]:
@@ -641,6 +696,9 @@ class DataHubLink:
         self._stream_after = 0.0
         # The last journey per car, and what JLR said when last asked.
         self.journeys: dict[str, dict[str, Any]] = {}
+        # Each car's last RECENT_JOURNEYS, newest first; in memory only, and
+        # read again after a restart with the first journeys read.
+        self.recent_journeys: dict[str, list[dict[str, Any]]] = {}
         self.journey_access: dict[str, str] = {}
         self._journeys_due: dict[str, float] = {}
         # The newest fix each car has had a journey read for, and the cars
@@ -968,12 +1026,13 @@ class DataHubLink:
         )
 
     async def _async_read_journeys(self, vins: set[str] | None = None) -> None:
-        """Read the last journey of the cars named, or of each one that is due.
+        """Read the recent journeys of the cars named, or of each one due.
 
         JLR list journeys oldest first, twenty to a page, and say how many
         pages there are, so the newest is on the last page: one request while
-        a car has twenty journeys or fewer, two after. The first page is kept
-        in the reckoning in case JLR ever list newest first.
+        a car has twenty journeys or fewer, two after, and three when the
+        last page is short of the twenty kept. The first page is kept in the
+        reckoning in case JLR ever list newest first.
         """
         now = time.monotonic()
         due = [
@@ -994,7 +1053,11 @@ class DataHubLink:
                 pages = (first.get("page") or {}).get("totalPages")
                 if isinstance(pages, int) and pages > 1:
                     last = await self.client.async_journeys(vin, token, pages - 1)
-                    items += list(last.get("items") or [])
+                    newest = list(last.get("items") or [])
+                    if pages > 2 and len(newest) < RECENT_JOURNEYS:
+                        before = await self.client.async_journeys(vin, token, pages - 2)
+                        items += list(before.get("items") or [])
+                    items += newest
             except (DataHubAuthError, DataHubRateLimited):
                 raise
             except (DataHubForbidden, DataHubNotFound) as err:
@@ -1013,6 +1076,10 @@ class DataHubLink:
                 held = self.journeys.get(vin)
                 if latest and (held is None or latest["ended"] > held["ended"]):
                     self.journeys[vin] = latest
+                    changed = True
+                recent = recent_journeys(items)
+                if recent and recent != self.recent_journeys.get(vin):
+                    self.recent_journeys[vin] = recent
                     changed = True
             if answer != self.journey_access.get(vin):
                 _LOGGER.debug(

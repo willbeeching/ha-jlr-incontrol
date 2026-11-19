@@ -19,7 +19,7 @@ one an entity uses tells you how fresh it can be and what happens when it fails.
 | Stream (MQTT) | every sensor and binary sensor below | as the car reports, about 16 seconds behind it | readings fall back to the status reads below; nothing goes unavailable |
 | Status (REST) | every sensor and binary sensor below | every 15 minutes, hourly once the stream has delivered | entities go unavailable after three hours without a good read or a connected stream, because a value nobody can refresh is not a reading |
 | Location (REST, and the stream's position topic) | `device_tracker` | with each status read, and about half a minute after a journey ends | the tracker holds its last fix and reports `trusted: false` once it is over three hours old |
-| Journeys (REST) | the last-journey sensors | five minutes after a journey ends, and every six hours | the sensors keep the last journey they read |
+| Journeys (REST) | the last-journey sensors and **Recent journeys** | five minutes after a journey ends, and every six hours | the sensors keep the last journeys they read |
 | Vehicle details (REST) | the device's name, model and registration | once a day | the names already held are kept |
 
 The vehicle list is the cars selected on the client you created at data.jlr.com; it is checked
@@ -107,6 +107,7 @@ ids made before it are kept, and so is their history.
 | Last report (Data Hub) | Data Hub `timestamp` | linked cars | diagnostic | on |
 | Last journey distance, duration, average speed, and when it ended (with `started` as an attribute); distance and speed follow the distance option | Data Hub journeys | cars JLR give journeys for | — | on |
 | Last journey energy used (kWh) or fuel used (litres) | Data Hub journeys, `energyUsed` | only once a journey carries it | — | on |
+| Recent journeys: how many are held, with the last 20 in the `journeys` attribute, newest first | Data Hub journeys | cars JLR give journeys for | — | on |
 | All info | — | any | diagnostic | **off** |
 
 **Engine coolant temperature** reads unknown once the figure has stood unchanged for longer
@@ -128,11 +129,23 @@ night.
 The **Last journey** sensors appear only once JLR have answered with a journey for the car, so an
 account still refused journeys has none. They change when a journey ends, not while one is under
 way: the read follows the position the stream sends at the end of a journey, five minutes later,
-with a read every six hours as a fallback. Where the journey started and ended is not kept.
+with a read every six hours as a fallback. The last-journey sensors are single readings and carry
+no places; where each journey started and ended is in **Recent journeys**.
 **Energy used** and **fuel used** come from one optional field in JLR's spec, `energyUsed`, which is
 in kWh or litres depending on the car; each sensor appears only once a journey has carried it, and a
 journey without it reads unknown rather than zero. JLR's journeys carry no MPG, EV distance,
 regeneration or efficiency figures, so there are no sensors for those.
+
+**Recent journeys** is a trip history for dashboards: its state is how many journeys it holds, up
+to 20, and its `journeys` attribute lists them newest first. Each has `started` and `ended`,
+`duration_min`, `distance_km`, `average_speed_kmh`, `energy_used_kwh` or `fuel_used_l` when JLR
+send it, and `start` and `end` as `{latitude, longitude}`. The units are in the names because an
+attribute is not converted with the distance option the way a sensor's state is; JLR's list
+starts on 30 October 2026, so there is nothing earlier. The list is read with the journeys
+above, not more often. It is kept out of the recorder: the entity always has the current list,
+but its past versions are not written to the database, which keeps it small and keeps a
+location history out of it. After a restart the list is back with the first journeys read,
+within minutes. [RECIPES.md](RECIPES.md#journey-history) has a card for it.
 
 Three are off by default on purpose. **12V battery charge** reads 0 whenever the car is asleep, so
 left on it writes a meaningless sawtooth into the recorder — voltage is the real signal. **EVCC

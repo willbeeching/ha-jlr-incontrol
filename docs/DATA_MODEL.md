@@ -63,8 +63,9 @@ car until the owner declares the car at data.jlr.com.
 
 Before 3.0.0 the position came from InControl's owner portal, whose dashboard page carried the
 recent trail of points. The Data Hub's journeys endpoint replaced the reason for reading it: each
-journey arrives with its distance, duration, speeds and energy used. The journey's start and end
-coordinates are dropped on purpose.
+journey arrives with its distance, duration, speeds and energy used, and its start and end
+coordinates, which the **Recent journeys** sensor keeps for the last 20 (#63). The last-journey
+sensors carry none.
 
 ## HA entity mapping
 | Platform | Entities |

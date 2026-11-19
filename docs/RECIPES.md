@@ -209,6 +209,30 @@ contain valid states.
 The sensor is available only when the integration reports a valid preconditioning state and the end-time helper contains
 a valid date and time. You can now use this sensor to display a countdown while preconditioning is active.
 
+## Journey history
+
+**Problem:** a list of the car's recent journeys on a dashboard, like the one in JLR's app.
+
+**Approach:** the **Recent journeys** sensor holds the last 20 in its `journeys` attribute, newest
+first. A Markdown card can lay them out; swap in your own entity id, and divide by 1.609 for
+miles. A reading JLR left out of a journey shows as a dash.
+
+```yaml
+type: markdown
+title: Recent journeys
+content: |
+  | Ended | Distance | Time | Average |
+  |---|---|---|---|
+  {% for j in state_attr('sensor.my_car_recent_journeys', 'journeys') or [] -%}
+  | {{ as_timestamp(j.ended) | timestamp_custom('%a %d %b %H:%M') }} | {{ j.distance_km | round(1, default='–') }} km | {{ j.duration_min | round(0, default='–') }} min | {{ j.average_speed_kmh | round(0, default='–') }} km/h |
+  {% endfor %}
+```
+
+Each journey's `start` and `end` hold `latitude` and `longitude`, for a map card or a link such as
+`https://www.openstreetmap.org/?mlat={{ j.end.latitude }}&mlon={{ j.end.longitude }}`. The list is
+kept out of the recorder, so to keep journeys for longer than the last 20, save them yourself,
+for example with an automation that runs when the sensor changes.
+
 ## Stale lock & alarm state
 
 **Problem:** `DOOR_IS_ALL_DOORS_LOCKED` and `THEFT_ALARM_STATUS` only refresh in JLR's cache when

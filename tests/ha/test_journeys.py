@@ -111,8 +111,8 @@ class TestLastJourney:
         assert float(speed.state) == pytest.approx(64.37)
         assert ended.state == "2026-11-08T18:30:00+00:00"
         assert ended.attributes["started"] == "2026-11-08T18:00:00+00:00"
-        # Where it went is in JLR's answer and nowhere here.
-        assert "51.6000" not in repr(hass.states.async_all())
+        # The last-journey sensors are single readings, not where it went.
+        assert "51.6" not in repr([hass.states.get(e) for e in SENSORS])
         await hass.config_entries.async_unload(entry.entry_id)
 
     async def test_distance_and_speed_follow_the_distance_option(
@@ -186,7 +186,8 @@ class TestLastJourney:
         await link._async_read_journeys({KEPT})
         await hass.async_block_till_done()
         assert float(hass.states.get(SENSORS[0]).state) == 5.0
-        assert len(hass.states.async_entity_ids("sensor")) == before + 4
+        # Four last-journey sensors and the recent journeys.
+        assert len(hass.states.async_entity_ids("sensor")) == before + 5
         await hass.config_entries.async_unload(entry.entry_id)
 
     async def test_changing_the_option_later_reaches_them(
@@ -254,3 +255,71 @@ class TestLastJourney:
         await hass.async_block_till_done()
         assert len(hass.states.async_entity_ids("sensor")) == before
         await hass.config_entries.async_unload(entry.entry_id)
+
+
+RECENT = "sensor.test_car_recent_journeys"
+
+
+class TestRecentJourneys:
+    """The trip history owners asked for (#63), places included."""
+
+    async def test_the_car_gains_its_recent_journeys(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(FakeDataHub, "journeys", ANSWER)
+        await set_up(hass, entry)
+        state = hass.states.get(RECENT)
+        assert state.state == "1"
+        (journey,) = state.attributes["journeys"]
+        assert journey["ended"] == "2026-11-08T18:30:00+00:00"
+        assert journey["start"] == {"latitude": 51.5, "longitude": -0.12}
+        assert journey["end"] == {"latitude": 51.6, "longitude": -0.13}
+        assert journey["distance_km"] == pytest.approx(32.19)
+        await hass.config_entries.async_unload(entry.entry_id)
+
+    async def test_a_car_refused_journeys_gains_none(
+        self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
+    ) -> None:
+        await set_up(hass, entry)
+        assert hass.states.get(RECENT) is None
+
+    async def test_it_outlives_a_restart_that_has_not_read_them_yet(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        hub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Built after the status that prunes: without protection it went
+        # on every restart, history and all, as the last-journey ones did.
+        monkeypatch.setattr(FakeDataHub, "journeys", ANSWER)
+        await set_up(hass, entry)
+        assert hass.states.get(RECENT) is not None
+        assert await hass.config_entries.async_unload(entry.entry_id)
+        monkeypatch.setattr(FakeDataHub, "journeys", None)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        assert er.async_get(hass).async_get(RECENT) is not None
+        await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_the_list_is_kept_out_of_the_recorder(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    hub: Doubles,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Twenty journeys at every change would grow the database for no use,
+    # and an attribute over 16 KB is dropped from it anyway. The recorder
+    # leaves out whatever a state's own info names here.
+    monkeypatch.setattr(FakeDataHub, "journeys", ANSWER)
+    await set_up(hass, entry)
+    state = hass.states.get(RECENT)
+    assert "journeys" in state.attributes
+    assert state.state_info is not None
+    assert "journeys" in state.state_info["unrecorded_attributes"]
+    await hass.config_entries.async_unload(entry.entry_id)

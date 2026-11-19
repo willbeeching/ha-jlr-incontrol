@@ -166,8 +166,12 @@ the user-facing detail; what matters when changing the code:
   or shared user, other drivers' consent) — confirmed on two cars, which went
   from refused to permitted straight after. Journeys were refused to owners
   until November 2026, then answered for two owners from 30 October 2026 on,
-  oldest first, twenty to a page, each with start and end coordinates that
-  `latest_journey` drops on purpose. A Range Rover's journey was listed at
+  oldest first, twenty to a page, each with start and end coordinates.
+  `latest_journey` leaves them out of the last-journey sensors; the
+  **Recent journeys** sensor keeps the last 20 with them, at owners' request
+  (#63), its list kept out of the recorder with `_unrecorded_attributes` and
+  rebuilt after a restart by the first journeys read, which fetches one more
+  page only when the last is short of 20. A Range Rover's journey was listed at
   the first read, five minutes after the end-of-journey fix.
   The broker accepts the exact `/position` topic and delivers fixes on it,
   but only when a journey ends (about 34 seconds after), never during a drive,

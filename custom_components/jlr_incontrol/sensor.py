@@ -1217,7 +1217,8 @@ async def async_setup_entry(
         """
         if coordinator.datahub is None or vin not in coordinator.datahub.vehicles:
             return set()
-        return {f"{vin}_{d.key}" for d in JOURNEY_SENSORS}
+        keys = [d.key for d in JOURNEY_SENSORS] + [RECENT_JOURNEYS_KEY]
+        return {f"{vin}_{key}" for key in keys}
 
     async_add_vehicle_entities(
         entry, Platform.SENSOR, coordinator, async_add_entities, build, protect
@@ -1247,7 +1248,13 @@ def _add_journey_sensors(
 
     @callback
     def add() -> None:
-        fresh: list[JlrJourneySensor] = []
+        fresh: list[SensorEntity] = []
+        for vin in list(link.recent_journeys):
+            if vin not in coordinator.data.get("vehicles", {}):
+                continue
+            if (vin, RECENT_JOURNEYS_KEY) not in added:
+                added.add((vin, RECENT_JOURNEYS_KEY))
+                fresh.append(JlrRecentJourneysSensor(coordinator, vin))
         for vin, journey in list(link.journeys.items()):
             if vin not in coordinator.data.get("vehicles", {}):
                 continue
@@ -1479,6 +1486,42 @@ class JlrJourneySensor(JlrDataHubEntity, SensorEntity):
             return None
         started = self._journey.get("started")
         return {"started": started.isoformat() if started else None}
+
+
+RECENT_JOURNEYS_KEY = "recent_journeys"
+
+
+class JlrRecentJourneysSensor(JlrDataHubEntity, SensorEntity):
+    """How many recent journeys are held, with the journeys themselves.
+
+    For a trip history on a dashboard (#63): each journey's times, distance,
+    speed, energy, and where it started and ended, newest first, in the
+    ``journeys`` attribute. The list is kept out of the recorder: twenty
+    journeys written to the database at every change would grow it for no
+    use, and Home Assistant drops an attribute over 16 KB from it anyway.
+    The entity itself always has the list, refilled after a restart by the
+    first journeys read.
+    """
+
+    _attr_translation_key = RECENT_JOURNEYS_KEY
+    _unrecorded_attributes = frozenset({"journeys"})
+
+    def __init__(self, coordinator: JlrCoordinator, vin: str) -> None:
+        super().__init__(coordinator, vin)
+        self._attr_unique_id = f"{vin}_{RECENT_JOURNEYS_KEY}"
+
+    @property
+    def _recent(self) -> list[dict[str, Any]]:
+        link = self.coordinator.datahub
+        return link.recent_journeys.get(self._vin, []) if link else []
+
+    @property
+    def native_value(self) -> int:
+        return len(self._recent)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"journeys": self._recent}
 
 
 class JlrAllInfoSensor(JlrVehicleEntity, SensorEntity):

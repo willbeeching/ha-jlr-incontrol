@@ -1859,15 +1859,91 @@ class TestJourneys:
         link = DataHubLink(hass, linked)
         latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
         hub.datahub.journeys_result = [
+            journeys(*[OCTOBER] * 20, pages=2),
+            journeys(latest, pages=2),
+        ]
+        await link._async_read_journeys()
+        assert [c for c in hub.datahub.calls if c.startswith("journeys")] == [
+            "journeys 0",
+            "journeys 1",
+        ]
+        assert link.journeys[KEPT]["distance"] == 30.0
+
+    async def test_a_short_last_page_is_made_up_from_the_one_before(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        # Twenty are kept; a last page of one journey needs the page before.
+        # Asked only when it is short, so a full page costs nothing more.
+        link = DataHubLink(hass, linked)
+        older = [
+            journey(f"2026-11-0{d}T08:00:00Z", f"2026-11-0{d}T08:30:00Z")
+            for d in range(1, 8)
+        ]
+        latest = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z", 30.0)
+        hub.datahub.journeys_result = [
             journeys(OCTOBER, SHORT, pages=3),
             journeys(latest, pages=3),
+            journeys(*older, pages=3),
         ]
         await link._async_read_journeys()
         assert [c for c in hub.datahub.calls if c.startswith("journeys")] == [
             "journeys 0",
             "journeys 2",
+            "journeys 1",
         ]
-        assert link.journeys[KEPT]["distance"] == 30.0
+        recent = link.recent_journeys[KEPT]
+        assert recent[0]["ended"] == "2026-11-08T18:30:00+00:00"
+        assert len(recent) == 10
+
+    async def test_recent_journeys_are_newest_first_with_where_they_went(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        hub.datahub.journeys_result = journeys(OCTOBER, SHORT)
+        await link._async_read_journeys()
+        newest, oldest = link.recent_journeys[KEPT]
+        assert newest == {
+            "started": "2026-10-31T13:35:53+00:00",
+            "ended": "2026-10-31T13:41:26+00:00",
+            "duration_min": 5.5,
+            "distance_km": 4.0,
+            "average_speed_kmh": 43.24,
+            "start": {"latitude": 51.5, "longitude": -0.12},
+            "end": {"latitude": 51.6, "longitude": -0.13},
+        }
+        assert oldest["distance_km"] == 172.0
+
+    async def test_no_more_than_twenty_are_kept(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        many = [
+            journey(f"2026-11-{d:02d}T08:00:00Z", f"2026-11-{d:02d}T08:30:00Z")
+            for d in range(1, 26)
+        ]
+        hub.datahub.journeys_result = journeys(*many)
+        await link._async_read_journeys()
+        recent = link.recent_journeys[KEPT]
+        assert len(recent) == 20
+        assert recent[0]["ended"].startswith("2026-11-25")
+        assert recent[-1]["ended"].startswith("2026-11-06")
+
+    async def test_energy_and_a_place_jlr_garbled_are_read_as_far_as_they_go(
+        self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
+    ) -> None:
+        link = DataHubLink(hass, linked)
+        odd = journey("2026-11-08T18:00:00Z", "2026-11-08T18:30:00Z")
+        odd["energyUsed"] = {"value": 5.2, "unit": "kWh"}
+        odd["startLocation"] = {"latitude": "north", "longitude": "-0.1"}
+        odd["endLocation"] = None
+        odd["duration"] = None
+        hub.datahub.journeys_result = journeys(odd)
+        await link._async_read_journeys()
+        (held,) = link.recent_journeys[KEPT]
+        assert held["energy_used_kwh"] == 5.2
+        assert held["start"] is None
+        assert held["end"] is None
+        assert held["duration_min"] is None
 
     async def test_miles_are_read_as_kilometres(
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
