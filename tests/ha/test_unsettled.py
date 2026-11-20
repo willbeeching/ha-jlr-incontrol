@@ -50,6 +50,8 @@ CAUGHT_MID_USE = {
 SETTLED = {
     **NO_TIMESTAMP,
     "VEHICLE_STATE_TYPE": "KEY_REMOVED",
+    # Left unlocked, so not armed: armed reads locked whatever the lock says.
+    "THEFT_ALARM_STATUS": "ALARM_OFF",
     "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
 }
 

@@ -225,6 +225,14 @@ snapshot as central locking, so they are exactly as stale as it is — switch th
 detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
 whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
 
+**An armed alarm means locked.** While the car reports the alarm armed, central locking, the
+per-door locks and the boot lock read locked, even where their own readings say unlocked. The car
+sends its alarm before its locks catch up: an I-Pace locked and went to sleep on a report saying
+armed with every door unlocked, and nothing followed to correct it. JLR cars arm only once locked,
+and unlocking disarms first. With the alarm off they read what the car sent, and a lock the car
+did not report, or reported as unknown, stays unknown. The bonnet latch is outside central locking
+and the alarm, and always reads what the car sent.
+
 The entities kept the status keys the InControl connection used, so an install upgraded from 2.x
 kept its entity ids and history: the Data Hub's signal names are mapped onto those keys.
 
