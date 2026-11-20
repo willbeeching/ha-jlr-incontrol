@@ -737,6 +737,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._attributes.pop(vin, None)
             self._attributes_attempted.pop(vin, None)
             self._status.pop(vin, None)
+            self._status_from.pop(vin, None)
+            self._status_times.pop(vin, None)
             self._pushed_at.pop(vin, None)
             self._position.pop(vin, None)
             self._portal_ids.pop(vin, None)
