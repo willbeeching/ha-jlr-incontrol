@@ -66,6 +66,12 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     # Other keys whose presence also says the car has this reading, for one
     # whose own key comes and goes with the value. Absent, it reads unknown.
     made_for: tuple[str, ...] = ()
+    # A lock that reads locked, not unlocked, whenever the alarm is armed.
+    # The car sends its alarm before its locks catch up: an I-Pace locked and
+    # went to sleep on a report saying armed with every door unlocked, and
+    # nothing followed to correct it (#65). JLR cars arm only once locked,
+    # and unlocking disarms first, so armed is the car's own word for locked.
+    armed_means_locked: bool = False
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -111,6 +117,7 @@ def _lock(key: str, status_key: str) -> JlrBinaryDescription:
         volatile=True,
         known=frozenset({"LOCKED", "UNLOCKED"}),
         is_on=lambda v: v == "UNLOCKED",
+        armed_means_locked=True,
     )
 
 
@@ -181,6 +188,7 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.LOCK,
         volatile=True,
         is_on=lambda v: v != "TRUE",
+        armed_means_locked=True,
     ),
     # Each door's own lock (#31). DOOR_IS_BOOT_LOCKED says the same as the
     # boot's own key, so is left out.
@@ -517,11 +525,19 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
             self._note_unknown(f"{value[:40]!r} is not a value it understands")
             return None
         state = self.entity_description.is_on(value)
+        if state and self.entity_description.armed_means_locked and self._armed():
+            # Only an unlocked reading is overruled. One the car did not send,
+            # or sent as UNKNOWN, stays unknown: armed says the car is locked,
+            # not what this key would have said.
+            state = False
         if self._withheld(state):
             self._note_unknown("withheld: a mid-use snapshot that has gone quiet")
             return None
         self._unknown_because = None
         return state
+
+    def _armed(self) -> bool:
+        return str(self._status_value("THEFT_ALARM_STATUS") or "") == "ALARM_ARMED"
 
     def _note_unknown(self, reason: str) -> None:
         """Say why this reads unknown, the first time it does for this reason.

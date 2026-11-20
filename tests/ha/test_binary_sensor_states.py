@@ -210,9 +210,10 @@ class TestEachDoorsOwnLock:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The case the central flag cannot show: one door open to the world,
-        # the rest locked. LOCK device class, so on means unlocked.
+        # the rest locked. LOCK device class, so on means unlocked. Single-point
+        # entry disarms the alarm as it unlocks the driver's door.
         switched_on(hass, entry, *LOCK_KEYS)
-        reporting(monkeypatch, LOCKS)
+        reporting(monkeypatch, {**LOCKS, "THEFT_ALARM_STATUS": "ALARM_OFF"})
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
@@ -262,6 +263,72 @@ class TestEachDoorsOwnLock:
         assert f"{KEPT}_door_front_left_lock" in off
         assert f"{KEPT}_door_rear_left_lock" not in off
         assert f"{KEPT}_door_rear_right_lock" not in off
+
+
+class TestAnArmedAlarmMeansLocked:
+    """#65: the car sends its alarm before its locks catch up.
+
+    An I-Pace locked and went to sleep on a report saying armed, with central
+    locking and every door unlocked, and nothing came to correct it. JLR cars
+    arm only once locked, so the locks read locked while it is armed.
+    """
+
+    LOCKED_AS_IT_SLEPT = {
+        **STATUS,
+        "THEFT_ALARM_STATUS": "ALARM_ARMED",
+        "VEHICLE_STATE_TYPE": "KEY_REMOVED",
+        "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
+        **dict.fromkeys(LOCKS, "UNLOCKED"),
+        "DOOR_ENGINE_HOOD_LOCK_STATUS": "UNLOCKED",
+    }
+
+    async def test_every_lock_reads_locked(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        switched_on(hass, entry, *LOCK_KEYS, "bonnet_lock")
+        reporting(monkeypatch, self.LOCKED_AS_IT_SLEPT)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        for key in ("doors_locked", *LOCK_KEYS):
+            assert state_of(hass, key) == "off", key
+        # The bonnet's latch sits outside central locking and the alarm.
+        assert state_of(hass, "bonnet_lock") == "on"
+
+    async def test_disarmed_they_read_what_the_car_sent(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        switched_on(hass, entry, *LOCK_KEYS)
+        reporting(
+            monkeypatch,
+            {**self.LOCKED_AS_IT_SLEPT, "THEFT_ALARM_STATUS": "ALARM_OFF"},
+        )
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+        for key in ("doors_locked", *LOCK_KEYS):
+            assert state_of(hass, key) == "on", key
+
+    async def test_armed_does_not_make_up_a_reading(
+        self, hass: HomeAssistant, loaded: Doubles
+    ) -> None:
+        # Armed overrules an unlocked reading; a lock the car did not report,
+        # or reported as UNKNOWN, still says it does not know.
+        for value in (None, "UNKNOWN"):
+            status = {**self.LOCKED_AS_IT_SLEPT, "DOOR_IS_ALL_DOORS_LOCKED": value}
+            if value is None:
+                del status["DOOR_IS_ALL_DOORS_LOCKED"]
+            loaded.telemetry.push(KEPT, status)
+            await hass.async_block_till_done()
+            assert state_of(hass, "doors_locked") == STATE_UNKNOWN, value
 
 
 class TestSayingWhyItIsUnknown:

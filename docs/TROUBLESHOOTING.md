@@ -58,6 +58,11 @@ wakes on its own. Waking it took a remote command, which JLR now gate behind the
 attestation. The official app can still do it. Gate anything that must not act on a stale lock
 state on the **Last updated** sensor.
 
+One case is covered: a car that goes to sleep straight after locking can leave a last report with
+the alarm armed and the doors still unlocked, because it sends the alarm before its locks catch
+up. While the alarm reads armed, the locks read locked; see
+[ENTITIES.md](ENTITIES.md#binary-sensors).
+
 ## "A door, window or lock shows Unknown for a while"
 
 Unknown is a deliberate answer, for one of two reasons:
