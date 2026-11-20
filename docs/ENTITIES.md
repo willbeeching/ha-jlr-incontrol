@@ -208,13 +208,16 @@ snapshot as central locking, so they are exactly as stale as it is — switch th
 detail, not for fresher news. Only `LOCKED` and `UNLOCKED` are understood; anything else, such as
 whatever a double-locked door reports, reads *unknown* rather than being guessed as either.
 
-**An armed alarm means locked.** While the car reports the alarm armed, central locking, the
-per-door locks and the boot lock read locked, even where their own readings say unlocked. The car
-sends its alarm before its locks catch up: an I-Pace locked and went to sleep on a report saying
-armed with every door unlocked, and nothing followed to correct it. JLR cars arm only once locked,
-and unlocking disarms first. With the alarm off they read what the car sent, and a lock the car
-did not report, or reported as unknown, stays unknown. The bonnet latch is outside central locking
-and the alarm, and always reads what the car sent.
+**An armed alarm means locked.** While the car reports the alarm armed, central locking and the
+per-door locks read locked, even where their own readings say unlocked. The car sends its alarm
+before its locks catch up: an I-Pace locked and went to sleep on a report saying armed with every
+door unlocked, and nothing followed to correct it. JLR cars arm only once locked, and unlocking
+disarms first. The alarm reading has to be at least as new as the lock's: the Data Hub keeps each
+reading as it last arrived, and an unlock that arrives before its disarm shows unlocked. With the
+alarm off they read what the car sent, and a lock the car did not report, or reported as unknown,
+stays unknown. The boot lock always reads what the car sent, because Land Rover document the
+exterior alarm staying armed with the tailgate open, and so does the bonnet latch, which is outside
+central locking and the alarm.
 
 With the [Data Hub linked](DATA_HUB.md), every entity above that reads a status key gets its value
 from the Data Hub instead of the telemetry socket: same entity, same key, different source.

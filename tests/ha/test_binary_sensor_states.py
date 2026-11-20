@@ -294,10 +294,14 @@ class TestAnArmedAlarmMeansLocked:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        for key in ("doors_locked", *LOCK_KEYS):
+        doors = [key for key in LOCK_KEYS if key != "boot_lock"]
+        for key in ("doors_locked", *doors):
             assert state_of(hass, key) == "off", key
         # The bonnet's latch sits outside central locking and the alarm.
         assert state_of(hass, "bonnet_lock") == "on"
+        # Land Rover document the exterior alarm staying armed with the
+        # tailgate open, so the boot says what the car sent.
+        assert state_of(hass, "boot_lock") == "on"
 
     async def test_disarmed_they_read_what_the_car_sent(
         self,

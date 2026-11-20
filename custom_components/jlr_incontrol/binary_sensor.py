@@ -96,7 +96,9 @@ def _window(key: str, status_key: str) -> JlrBinaryDescription:
     )
 
 
-def _lock(key: str, status_key: str) -> JlrBinaryDescription:
+def _lock(
+    key: str, status_key: str, *, armed_means_locked: bool = True
+) -> JlrBinaryDescription:
     """One door's own lock, for the case central locking cannot describe.
 
     JLR's single-point entry unlocks the driver's door alone on the first
@@ -117,7 +119,7 @@ def _lock(key: str, status_key: str) -> JlrBinaryDescription:
         volatile=True,
         known=frozenset({"LOCKED", "UNLOCKED"}),
         is_on=lambda v: v == "UNLOCKED",
-        armed_means_locked=True,
+        armed_means_locked=armed_means_locked,
     )
 
 
@@ -196,7 +198,9 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
     _lock("door_front_right_lock", "DOOR_FRONT_RIGHT_LOCK_STATUS"),
     _lock("door_rear_left_lock", "DOOR_REAR_LEFT_LOCK_STATUS"),
     _lock("door_rear_right_lock", "DOOR_REAR_RIGHT_LOCK_STATUS"),
-    _lock("boot_lock", "DOOR_BOOT_LOCK_STATUS"),
+    # Not read as locked while armed: Land Rover document the exterior alarm
+    # staying armed with the tailgate open, which showed an open boot locked.
+    _lock("boot_lock", "DOOR_BOOT_LOCK_STATUS", armed_means_locked=False),
     # The bonnet's latch, for completeness. Not volatile and off by default
     # for the reason it was long left out: it sits outside central locking
     # and reads LOCKED with every door open, so it says nothing about whether
@@ -537,7 +541,23 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         return state
 
     def _armed(self) -> bool:
-        return str(self._status_value("THEFT_ALARM_STATUS") or "") == "ALARM_ARMED"
+        """Armed, by a reading at least as new as this lock's own.
+
+        The Data Hub keeps each reading as it last arrived, so the two can be
+        from different reports: an unlock that came before its disarm was
+        shown locked on the strength of the alarm it had already ended.
+        """
+        if str(self._status_value("THEFT_ALARM_STATUS") or "") != "ALARM_ARMED":
+            return False
+        link = self.coordinator.datahub
+        if link is None or self._vin not in link.vehicles:
+            # The telemetry socket replaces the whole status at once, so its
+            # alarm and locks are always one report.
+            return True
+        alarm = link.reported_at(self._vin, "THEFT_ALARM_STATUS")
+        lock = link.reported_at(self._vin, self.entity_description.status_key)
+        # Untimed, which of the two is newer is not known.
+        return alarm is not None and lock is not None and alarm >= lock
 
     def _note_unknown(self, reason: str) -> None:
         """Say why this reads unknown, the first time it does for this reason.
