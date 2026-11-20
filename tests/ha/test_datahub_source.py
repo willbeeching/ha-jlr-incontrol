@@ -12,21 +12,24 @@ import asyncio
 import contextlib
 import json
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
 
-from doubles import KEPT, Doubles, FakeDataHub  # noqa: E402
+from doubles import KEPT, STATUS, Doubles, FakeDataHub  # noqa: E402
 from homeassistant.config_entries import ConfigEntryState  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.data_entry_flow import FlowResultType  # noqa: E402
+from homeassistant.helpers import entity_registry as er  # noqa: E402
 from pytest_homeassistant_custom_component.common import (  # noqa: E402
     MockConfigEntry,
 )
 
 from custom_components.jlr_incontrol import datahub_link  # noqa: E402
+from custom_components.jlr_incontrol.const import DOMAIN  # noqa: E402
 from custom_components.jlr_incontrol.coordinator import (  # noqa: E402
     FIRST_SNAPSHOT_TIMEOUT,
     Resubscription,
@@ -171,6 +174,41 @@ class TestStatusFromTheDataHub:
         assert coordinator.data["vehicles"][KEPT]["status"]["FUEL_LEVEL_PERC"] != "1"
         # A second notice is harmless.
         coordinator._datahub_signed_out()
+
+    async def test_the_socket_after_a_revoked_link_keeps_the_armed_rule(
+        self, hass: HomeAssistant, entry: MockConfigEntry, on_datahub: Doubles
+    ) -> None:
+        # The link keeps its cars and their last times once revoked. Read for
+        # a socket snapshot, an unlock it held from after an older alarm made
+        # one report saying armed read unlocked.
+        coordinator = entry.runtime_data
+        link = coordinator.datahub
+        link.signals[KEPT]["Vehicle.Body.Security.Alarm.Mode"] = {
+            "value": "ALARM_ARMED",
+            "time": datetime(2026, 11, 7, 9, tzinfo=UTC),
+        }
+        link.signals[KEPT]["Vehicle.Body.Door.Lock.Status"] = {
+            "value": "FALSE",
+            "time": datetime(2026, 11, 7, 10, tzinfo=UTC),
+        }
+        link._signed_out(DataHubAuthError("invalid_grant"))
+        await hass.async_block_till_done()
+        assert coordinator.status_source == "socket"
+
+        on_datahub.telemetry.push(
+            KEPT,
+            {
+                **STATUS,
+                "THEFT_ALARM_STATUS": "ALARM_ARMED",
+                "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
+            },
+        )
+        await hass.async_block_till_done()
+        entity_id = er.async_get(hass).async_get_entity_id(
+            "binary_sensor", DOMAIN, f"{KEPT}_doors_locked"
+        )
+        assert entity_id is not None
+        assert hass.states.get(entity_id).state == "off"
 
     async def test_a_location_the_data_hub_gives_is_used_when_newer(
         self, hass: HomeAssistant, entry: MockConfigEntry, on_datahub: Doubles
@@ -691,7 +729,6 @@ class TestStartingUpWithAStreamThatSpeaksFirst:
         went ahead on it and the prune deleted every entity whose key it did
         not carry, the fuel level among them, for good.
         """
-        from homeassistant.helpers import entity_registry as er
 
         link_entry(entry, hass)
         assert await hass.config_entries.async_setup(entry.entry_id)
