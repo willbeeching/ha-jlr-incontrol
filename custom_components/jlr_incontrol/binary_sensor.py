@@ -63,6 +63,9 @@ class JlrBinaryDescription(BinarySensorEntityDescription):
     requires_diesel: bool = False
     # The fuel-fired heater: hidden on a car with nothing to burn.
     suppress_for_ev: bool = False
+    # Other keys whose presence also says the car has this reading, for one
+    # whose own key comes and goes with the value. Absent, it reads unknown.
+    made_for: tuple[str, ...] = ()
 
 
 def _door(key: str, status_key: str) -> JlrBinaryDescription:
@@ -347,6 +350,11 @@ VEHICLE_BINARY_SENSORS: tuple[JlrBinaryDescription, ...] = (
         device_class=BinarySensorDeviceClass.PLUG,
         is_on=lambda v: v in ("WIRED", "WIRELESS"),
         requires_ev=True,
+        # A car that says nothing of the plug but its charging status has the
+        # method made from that status, and not from a FAULT. Gated on the
+        # method alone, one that started in a fault never got the entity, and
+        # one reloaded in a fault had it deleted, name and history (#61).
+        made_for=("EV_CHARGING_STATUS",),
     ),
     # Plain running-state for EV preconditioning so wallbox controllers
     # (EVCC) get a boolean without parsing the climate entity, whose modes
@@ -440,7 +448,10 @@ async def async_setup_entry(
         entities: list[BinarySensorEntity] = [
             JlrBinarySensor(coordinator, vin, description)
             for description in VEHICLE_BINARY_SENSORS
-            if description.status_key in status
+            if (
+                description.status_key in status
+                or any(key in status for key in description.made_for)
+            )
             and (description.key not in REAR_DOOR_KEYS or _has_rear_doors(attributes))
             and (not description.requires_ev or is_electrified(attributes, status))
             and not (description.requires_diesel and is_not_diesel(attributes, status))
