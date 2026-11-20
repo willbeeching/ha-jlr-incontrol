@@ -550,12 +550,13 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         if str(self._status_value("THEFT_ALARM_STATUS") or "") != "ALARM_ARMED":
             return False
         link = self.coordinator.datahub
-        if link is None or self.coordinator.status_source != "datahub":
+        if link is None or self.coordinator.status_from(self._vin) != "datahub":
             # The telemetry socket replaces the whole status at once, so its
-            # alarm and locks are always one report. Chosen by where this
-            # status came from, not by the link: a revoked link keeps its cars
-            # and their old times, which read a socket snapshot armed in the
-            # same report as unlocked.
+            # alarm and locks are always one report. Chosen by where the held
+            # status came from: not by the link, whose cars and old times
+            # outlive a revoke, nor by the source wanted, which turns to the
+            # socket before its first report and read the Data Hub's held
+            # readings as one report, an older armed over a newer unlock.
             return True
         alarm = link.reported_at(self._vin, "THEFT_ALARM_STATUS")
         lock = link.reported_at(self._vin, self.entity_description.status_key)

@@ -100,6 +100,10 @@ class FakeClient:
 class FakeTelemetry:
     """Stands in for the STOMP socket, and can push on demand."""
 
+    # Class-level so a test can set it before setup builds one: a socket
+    # that connects and has yet to deliver anything.
+    reports_on_connect = True
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         self.on_status = kwargs["on_status"]
         self.on_position = kwargs["on_position"]
@@ -114,6 +118,8 @@ class FakeTelemetry:
     async def async_start(self) -> None:
         self.connected = True
         self.on_connected(True)
+        if not type(self).reports_on_connect:
+            return
         for vin in self.vins:
             self.push(vin)
 

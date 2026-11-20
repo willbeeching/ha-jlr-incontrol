@@ -63,6 +63,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_attributes": {},
         "_attributes_attempted": {},
         "_status": {},
+        "_status_from": {},
         "_pushed_at": {},
         "_position": {},
         "_portal_ids": {},

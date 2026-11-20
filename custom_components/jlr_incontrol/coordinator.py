@@ -174,6 +174,9 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._attributes_attempted: dict[str, Any] = {}
         # Pushed state, keyed by VIN.
         self._status: dict[str, dict[str, Any]] = {}
+        # Which connection sent each car's held status. status_source says
+        # which one is wanted, and changes before the other's first report.
+        self._status_from: dict[str, str] = {}
         # When the broker last pushed for this VIN. Message time, not car time —
         # surfaced in diagnostics only, never used as a freshness signal.
         self._pushed_at: dict[str, str] = {}
@@ -390,7 +393,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         arriving = dt_util.parse_datetime(status.get("LAST_UPDATED_TIME") or "")
         if held and arriving and arriving < held:
             return
-        self._handle_status(vin, status, None)
+        self._handle_status(vin, status, None, source="datahub")
 
     def _handle_datahub_position(self, vin: str, position: dict[str, Any]) -> None:
         """Adopt a location from the Data Hub when it is newer than the held one."""
@@ -1094,12 +1097,17 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------- telemetry inflow
     def _handle_status(
-        self, vin: str, status: dict[str, Any], sent: str | None
+        self,
+        vin: str,
+        status: dict[str, Any],
+        sent: str | None,
+        source: str = "socket",
     ) -> None:
         """Adopt a pushed VHS snapshot."""
         if self._is_older_by_odometer(vin, status):
             return
         self._status[vin] = status
+        self._status_from[vin] = source
         if sent:
             self._pushed_at[vin] = sent
         self._note_status_change(vin)
@@ -1114,6 +1122,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not self._awaiting:
                 self._snapshots_ready.set()
         self._push()
+
+    def status_from(self, vin: str) -> str | None:
+        """Which connection sent this car's held status, if it has one."""
+        return self._status_from.get(vin)
 
     def _handle_position(self, vin: str, position: dict[str, Any]) -> None:
         """Adopt a pushed position.

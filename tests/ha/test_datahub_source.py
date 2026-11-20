@@ -210,6 +210,53 @@ class TestStatusFromTheDataHub:
         assert entity_id is not None
         assert hass.states.get(entity_id).state == "off"
 
+    async def test_the_socket_rule_waits_for_the_sockets_first_report(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        on_datahub: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The socket connecting refreshes every entity before it has sent a
+        # thing. Judged then as one socket report, the Data Hub's held
+        # readings, an older armed and a newer unlock, read locked.
+        coordinator = entry.runtime_data
+        link = coordinator.datahub
+        link.signals[KEPT]["Vehicle.Body.Security.Alarm.Mode"] = {
+            "value": "ALARM_ARMED",
+            "time": datetime(2026, 11, 7, 9, tzinfo=UTC),
+        }
+        link.signals[KEPT]["Vehicle.Body.Door.Lock.Status"] = {
+            "value": "FALSE",
+            "time": datetime(2026, 11, 7, 10, tzinfo=UTC),
+        }
+        link._emit(KEPT)
+        await hass.async_block_till_done()
+        entity_id = er.async_get(hass).async_get_entity_id(
+            "binary_sensor", DOMAIN, f"{KEPT}_doors_locked"
+        )
+        assert entity_id is not None
+        assert hass.states.get(entity_id).state == "on"
+
+        monkeypatch.setattr(type(on_datahub.telemetry), "reports_on_connect", False)
+        link._signed_out(DataHubAuthError("invalid_grant"))
+        await hass.async_block_till_done()
+        assert coordinator.status_source == "socket"
+        assert on_datahub.telemetry.connected
+        assert hass.states.get(entity_id).state == "on"
+
+        # Its first report is one report: armed in it reads locked.
+        on_datahub.telemetry.push(
+            KEPT,
+            {
+                **STATUS,
+                "THEFT_ALARM_STATUS": "ALARM_ARMED",
+                "DOOR_IS_ALL_DOORS_LOCKED": "FALSE",
+            },
+        )
+        await hass.async_block_till_done()
+        assert hass.states.get(entity_id).state == "off"
+
     async def test_a_location_the_data_hub_gives_is_used_when_newer(
         self, hass: HomeAssistant, entry: MockConfigEntry, on_datahub: Doubles
     ) -> None:
