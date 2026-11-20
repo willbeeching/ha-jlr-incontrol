@@ -508,6 +508,58 @@ def ev_endpoint(charging: bool, plugged: bool, **extra: Any) -> dict[str, Any]:
     }
 
 
+def charging_status_only(status: str) -> dict[str, Any]:
+    """An I-Pace's battery with its charging status and nothing on the plug."""
+    return {
+        "VehicleIdentification": {"VIN": KEPT},
+        "TraveledDistance": 12345000,
+        "Powertrain": {
+            "TractionBattery": {
+                "StateOfCharge": {"Displayed": 51},
+                "Charging": {"Status": status, "ChargeRate": 0},
+            }
+        },
+    }
+
+
+@pytest.mark.usefixtures("car")
+@pytest.mark.parametrize("fuel", ["electric"])
+@pytest.mark.parametrize(
+    "ev_answer",
+    [
+        {
+            "timestamp": "2026-11-07T09:00:00Z",
+            "Vehicle": {"Powertrain": {"TractionBattery": {"Range": 174}}},
+        }
+    ],
+)
+class TestACarThatSaysNothingOfThePlug:
+    """#61: an I-Pace with no Plugged in and no EVCC status to switch on.
+
+    Neither endpoint said whether it was plugged in, only its charging status,
+    and both entities are made only for a car that says.
+    """
+
+    @pytest.mark.parametrize(
+        ("snapshot", "plugged", "letter"),
+        [
+            (charging_status_only("INITIALIZATION"), "on", "B"),
+            (charging_status_only("CHARGING"), "on", "C"),
+            (charging_status_only("NOTCONNECTED"), "off", "A"),
+        ],
+    )
+    def test_the_charging_status_says(
+        self, hass: HomeAssistant, plugged: str, letter: str
+    ) -> None:
+        assert state(hass, "binary_sensor", "ev_plugged_in") == plugged
+        assert state(hass, "sensor", "evcc_status") == letter
+
+    @pytest.mark.parametrize("snapshot", [charging_status_only("FAULT")])
+    def test_a_fault_says_nothing_of_the_plug(self, hass: HomeAssistant) -> None:
+        assert state(hass, "binary_sensor", "ev_plugged_in") is None
+        assert state(hass, "sensor", "evcc_status") is None
+
+
 @pytest.mark.usefixtures("car")
 @pytest.mark.parametrize("fuel", ["petrol plug-in hybrid"])
 class TestAPlugInHybridOnTheEvEndpoint:

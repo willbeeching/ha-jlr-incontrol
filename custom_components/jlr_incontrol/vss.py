@@ -278,6 +278,27 @@ def to_status(signals: Mapping[str, Any], reported: str | None) -> dict[str, str
     return status
 
 
+# The plug, where a car's charging status is all it says about it. Each of
+# these can only be said of a car on a cable, or of one off it; FAULT and
+# UNKNOWN say neither, and are left out. INITIALIZATION is a car plugged in
+# with the wallbox not yet giving power, as an I-Pace showed live (#1).
+_METHOD_BY_CHARGING_STATUS = {
+    "NOTCONNECTED": "NOTCONNECTED",
+    **dict.fromkeys(
+        (
+            "CHARGING",
+            "BULKCHARGED",
+            "FULLYCHARGED",
+            "PAUSED",
+            "WAITINGTOCHARGE",
+            "INITIALIZATION",
+            "NOTCHARGING",
+        ),
+        "WIRED",
+    ),
+}
+
+
 def _charging_in_socket_terms(status: dict[str, str]) -> None:
     """Fill the socket's charging keys from the EV endpoint, where it lacks them.
 
@@ -289,7 +310,9 @@ def _charging_in_socket_terms(status: dict[str, str]) -> None:
     send — each only from a value that says the same thing, never a guess:
 
     - the charge shown is the true charge when no displayed one comes;
-    - plugged in is WIRED and unplugged NOTCONNECTED, as the socket said;
+    - plugged in is WIRED and unplugged NOTCONNECTED, as the socket said,
+      and with no plugged-in flag either, the charging status says which
+      where it can only mean one;
     - charging is CHARGING, a fault is FAULT, unplugged is NOTCONNECTED, and
       plugged in without charging is NOTCHARGING, its own word, because the
       socket's nearer ones (paused, waiting, fully charged) each say why and
@@ -300,17 +323,25 @@ def _charging_in_socket_terms(status: dict[str, str]) -> None:
     plugged = status.get("EV_IS_PLUGGED_IN")
     if "EV_CHARGING_METHOD" not in status and plugged in ("TRUE", "FALSE"):
         status["EV_CHARGING_METHOD"] = "WIRED" if plugged == "TRUE" else "NOTCONNECTED"
-    if "EV_CHARGING_STATUS" in status:
-        return
-    charging = status.get("EV_IS_CHARGING")
-    if status.get("EV_CHARGING_MODE", "").upper() == "FAULT":
-        status["EV_CHARGING_STATUS"] = "FAULT"
-    elif charging == "TRUE":
-        status["EV_CHARGING_STATUS"] = "CHARGING"
-    elif plugged == "FALSE":
-        status["EV_CHARGING_STATUS"] = "NOTCONNECTED"
-    elif plugged == "TRUE" and charging == "FALSE":
-        status["EV_CHARGING_STATUS"] = "NOTCHARGING"
+    if "EV_CHARGING_STATUS" not in status:
+        charging = status.get("EV_IS_CHARGING")
+        if status.get("EV_CHARGING_MODE", "").upper() == "FAULT":
+            status["EV_CHARGING_STATUS"] = "FAULT"
+        elif charging == "TRUE":
+            status["EV_CHARGING_STATUS"] = "CHARGING"
+        elif plugged == "FALSE":
+            status["EV_CHARGING_STATUS"] = "NOTCONNECTED"
+        elif plugged == "TRUE" and charging == "FALSE":
+            status["EV_CHARGING_STATUS"] = "NOTCHARGING"
+    if "EV_CHARGING_METHOD" not in status:
+        # An I-Pace sent its charging status and nothing else about the plug,
+        # no method and no plugged-in flag from either endpoint, so it had no
+        # Plugged in and no EVCC status (#61). The status says it alone.
+        method = _METHOD_BY_CHARGING_STATUS.get(
+            status.get("EV_CHARGING_STATUS", "").upper()
+        )
+        if method is not None:
+            status["EV_CHARGING_METHOD"] = method
 
 
 def to_position(body: Mapping[str, Any]) -> dict[str, Any] | None:
