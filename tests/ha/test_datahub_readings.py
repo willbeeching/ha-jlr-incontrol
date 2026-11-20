@@ -556,6 +556,30 @@ class TestAnUnlockAheadOfItsDisarm:
         assert state(hass, "binary_sensor", "doors_locked") == "on"
         assert state(hass, "binary_sensor", "door_front_left_lock") == "on"
 
+    async def test_a_signal_under_either_spelling_is_one_signal(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        # Held apart, the older armed reading under the short name won the
+        # value while the newer disarm's time stood for it.
+        link = entry.runtime_data.datahub
+        assert link is not None
+        for name, value, when in (
+            ("Vehicle.Body.Security.Alarm.Mode", "ALARM_OFF", "09:10"),
+            ("Body.Security.Alarm.Mode", "ALARM_ARMED", "09:05"),
+            ("Vehicle.Body.Door.Lock.Status", "FALSE", "09:06"),
+        ):
+            message = {
+                "name": name,
+                "value": value,
+                "timestamp": f"2026-11-07T{when}:00Z",
+            }
+            link._on_message(
+                f"account/acct-1/vehicles/{KEPT}/status", json.dumps(message).encode()
+            )
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "alarm") == "off"
+        assert state(hass, "binary_sensor", "doors_locked") == "on"
+
     async def test_one_report_saying_both_reads_locked(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:

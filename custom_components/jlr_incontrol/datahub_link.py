@@ -1770,6 +1770,12 @@ class DataHubLink:
             when = _parse_time(item.get("timestamp"))
             if not isinstance(name, str):
                 continue
+            # Both spellings are read as the same signal, so they are held as
+            # one: kept apart, a newer disarm under the full name lost to an
+            # older armed reading under the short one, while its time was the
+            # newer, and Central locking read locked on a disarmed car.
+            if not name.startswith("Vehicle."):
+                name = f"Vehicle.{name}"
             placed = True
             if when is None:
                 self.stats["untimed"] += 1
