@@ -553,7 +553,9 @@ class DataHubLink:
         hass: HomeAssistant,
         entry: ConfigEntry,
         *,
-        on_status: Callable[[str, dict[str, str]], None] | None = None,
+        on_status: (
+            Callable[[str, dict[str, str], dict[str, datetime]], None] | None
+        ) = None,
         on_position: Callable[[str, dict[str, Any]], None] | None = None,
         on_signed_out: Callable[[], None] | None = None,
     ) -> None:
@@ -1116,8 +1118,13 @@ class DataHubLink:
             return
         reported = self.reports.get(vin)
         values = {name: entry["value"] for name, entry in self.signals[vin].items()}
+        # The times go with the values they belong to. Read from the link
+        # instead, a REST answer that had moved them on while it waited for
+        # the EV endpoint paired the held armed alarm with its disarm's time.
         self._on_status(
-            vin, to_status(values, reported.isoformat() if reported else None)
+            vin,
+            to_status(values, reported.isoformat() if reported else None),
+            self._key_times(vin),
         )
 
     async def _async_read_status(self) -> set[str]:
@@ -1656,18 +1663,21 @@ class DataHubLink:
 
     # -- reporting --------------------------------------------------------
 
-    def reported_at(self, vin: str, key: str) -> datetime | None:
-        """When the car sent the reading behind this status key, by its clock.
+    def _key_times(self, vin: str) -> dict[str, datetime]:
+        """When the car sent the reading behind each status key, by its clock.
 
-        The newest of the signals named for it, None when none is timed.
+        The newest of the signals named for a key; a key with none timed is
+        left out.
         """
-        times = [
-            entry["time"]
-            for name, entry in self.signals.get(vin, {}).items()
-            if entry.get("time") is not None
-            and RENAMES.get(name.removeprefix("Vehicle.")) == key
-        ]
-        return max(times, default=None)
+        times: dict[str, datetime] = {}
+        for name, entry in self.signals.get(vin, {}).items():
+            key = RENAMES.get(name.removeprefix("Vehicle."))
+            when = entry.get("time")
+            if key is None or when is None:
+                continue
+            if key not in times or when > times[key]:
+                times[key] = when
+        return times
 
     def diagnostics(self) -> dict[str, Any]:
         """What the link has seen, without values or identifiers."""

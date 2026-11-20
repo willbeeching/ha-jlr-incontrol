@@ -838,7 +838,7 @@ class TestBatteryFromTheEvEndpoint:
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         seen: list[dict[str, str]] = []
-        link, _ = bare(hass, entry, 3, on_status=lambda _, s: seen.append(s))
+        link, _ = bare(hass, entry, 3, on_status=lambda _, s, _t: seen.append(s))
         hub.datahub.ev_result = EV_ANSWER
         await status_loop(link)
         assert hub.datahub.calls.count("ev") == 3
@@ -864,7 +864,7 @@ class TestBatteryFromTheEvEndpoint:
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         seen: list[dict[str, str]] = []
-        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s, _t: seen.append(s))
         hub.datahub.ev_result = EV_ANSWER
         await link._async_read_status()
         hub.datahub.ev_result = DataHubError("GET ev answered 500")
@@ -1013,7 +1013,7 @@ class TestReviewProbes:
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         seen: list[dict[str, str]] = []
-        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s, _t: seen.append(s))
         hub.datahub.ev_result = [DataHubError("GET ev answered 500"), EV_ANSWER]
         await link._async_read_status()
         # Not written off for a day, and the car's first status is held back
@@ -1028,7 +1028,7 @@ class TestReviewProbes:
         self, hass: HomeAssistant, entry: MockConfigEntry, hub: Doubles
     ) -> None:
         seen: list[dict[str, str]] = []
-        link, _ = bare(hass, entry, 1, on_status=lambda _, s: seen.append(s))
+        link, _ = bare(hass, entry, 1, on_status=lambda _, s, _t: seen.append(s))
         await link._async_read_status()
         assert link.ev[KEPT].startswith("refused")
         assert seen and "EV_STATE_OF_CHARGE" not in seen[-1]

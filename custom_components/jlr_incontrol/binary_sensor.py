@@ -549,8 +549,7 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         """
         if str(self._status_value("THEFT_ALARM_STATUS") or "") != "ALARM_ARMED":
             return False
-        link = self.coordinator.datahub
-        if link is None or self.coordinator.status_from(self._vin) != "datahub":
+        if self.coordinator.status_from(self._vin) != "datahub":
             # The telemetry socket replaces the whole status at once, so its
             # alarm and locks are always one report. Chosen by where the held
             # status came from: not by the link, whose cars and old times
@@ -558,8 +557,12 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
             # socket before its first report and read the Data Hub's held
             # readings as one report, an older armed over a newer unlock.
             return True
-        alarm = link.reported_at(self._vin, "THEFT_ALARM_STATUS")
-        lock = link.reported_at(self._vin, self.entity_description.status_key)
+        # The times that came with the held status, not the link's own, which
+        # a read in progress has already moved on.
+        alarm = self.coordinator.status_time(self._vin, "THEFT_ALARM_STATUS")
+        lock = self.coordinator.status_time(
+            self._vin, self.entity_description.status_key
+        )
         # Untimed, which of the two is newer is not known.
         return alarm is not None and lock is not None and alarm >= lock
 

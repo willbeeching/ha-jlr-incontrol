@@ -782,7 +782,7 @@ class TestStreamedDistances:
 
     async def statuses(self, hass: HomeAssistant, link: DataHubLink) -> Any:
         seen: list[dict[str, str]] = []
-        link._on_status = lambda _, status: seen.append(status)
+        link._on_status = lambda _, status, _t: seen.append(status)
         await link._async_read_status()
         return seen
 
@@ -1230,7 +1230,7 @@ class TestWhatTheStreamProves:
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
         statuses: list[dict[str, str]] = []
-        link = DataHubLink(hass, linked, on_status=lambda _, s: statuses.append(s))
+        link = DataHubLink(hass, linked, on_status=lambda _, s, _t: statuses.append(s))
         await link._async_read_status()
         snapshot = {
             "timestamp": "2026-11-07T10:00:00.000Z",
@@ -1349,7 +1349,7 @@ class TestWhatTheBrokerReallySends:
         self, hass: HomeAssistant, linked: MockConfigEntry, hub: Doubles
     ) -> None:
         statuses: list[dict[str, str]] = []
-        link = DataHubLink(hass, linked, on_status=lambda _, s: statuses.append(s))
+        link = DataHubLink(hass, linked, on_status=lambda _, s, _t: statuses.append(s))
         await link._async_read_status()
         batch = [
             sent_by_broker(
@@ -1617,7 +1617,7 @@ class TestStreamOrdering:
         # One streamed signal is not a car's status. Passed on before the
         # REST snapshot, it was taken for the whole of it at start-up.
         seen: list[dict[str, str]] = []
-        link = DataHubLink(hass, linked, on_status=lambda _, s: seen.append(s))
+        link = DataHubLink(hass, linked, on_status=lambda _, s, _t: seen.append(s))
         link._on_message(
             TOPIC,
             message(
