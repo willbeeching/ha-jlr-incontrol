@@ -210,7 +210,10 @@ range have no entity of their own: they say what the boot lock and electric rang
 On the Data Hub, a plug-in car's battery and charging come from JLR's EV endpoint, which has no
 charging status of its own. **Charging status** is then made from its charging and plugged-in flags:
 charging, not connected, a fault, or **Plugged in, not charging** when it is plugged in and not
-charging, since the endpoint does not say whether that is paused, waiting or full. See
+charging, since the endpoint does not say whether that is paused, waiting or full. A car that
+sends its charging status but nothing about the plug, as one I-Pace does, gets **Plugged in** and
+**EVCC status** from that status instead: not connected is unplugged, and charging, waiting,
+paused, full or initialising is plugged in. A fault says neither, and they read unknown. See
 [DATA_HUB.md](DATA_HUB.md).
 
 Unfitted hardware commonly reports `UNKNOWN`, which would otherwise read as "window open" or

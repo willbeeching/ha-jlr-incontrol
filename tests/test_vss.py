@@ -286,6 +286,37 @@ class TestTheEvEndpointInSocketTerms:
         }
         assert to_status(signals, None)["EV_CHARGING_STATUS"] == "FULLYCHARGED"
 
+    @pytest.mark.parametrize(
+        ("charging_status", "method"),
+        [
+            ("INITIALIZATION", "WIRED"),
+            ("CHARGING", "WIRED"),
+            ("FULLYCHARGED", "WIRED"),
+            ("WAITINGTOCHARGE", "WIRED"),
+            ("NOTCONNECTED", "NOTCONNECTED"),
+        ],
+    )
+    def test_the_plug_from_a_charging_status_alone(
+        self, charging_status: str, method: str
+    ) -> None:
+        # #61: an I-Pace sent its charging status and nothing about the plug.
+        result = to_status({**self.ev(), f"{EV}Charging.Status": charging_status}, None)
+        assert result["EV_CHARGING_METHOD"] == method
+
+    @pytest.mark.parametrize("charging_status", ["FAULT", "UNKNOWN"])
+    def test_a_status_that_says_nothing_of_the_plug_says_nothing(
+        self, charging_status: str
+    ) -> None:
+        result = to_status({**self.ev(), f"{EV}Charging.Status": charging_status}, None)
+        assert "EV_CHARGING_METHOD" not in result
+
+    def test_the_plug_flag_wins_over_the_charging_status(self) -> None:
+        signals = {
+            **self.ev(IsPlugConnected=False),
+            f"{EV}Charging.Status": "INITIALIZATION",
+        }
+        assert to_status(signals, None)["EV_CHARGING_METHOD"] == "NOTCONNECTED"
+
     def test_nothing_is_said_when_nothing_was_sent(self) -> None:
         # Plugged in, with no word on whether it is charging: no status.
         result = to_status(self.ev(IsPlugConnected=True), None)
