@@ -1180,7 +1180,12 @@ async def async_setup_entry(
         if coordinator.datahub and vin in coordinator.datahub.vehicles:
             entities.append(JlrDataHubReportSensor(coordinator, vin))
         entities.append(JlrAllInfoSensor(coordinator, vin))
-        if is_electrified(attributes, status) and "EV_CHARGING_METHOD" in status:
+        # The charging status too: on a car that says nothing else of the
+        # plug, the method is made from it, and not from a FAULT. Gated on the
+        # method alone, a fault at the first read or a reload lost this (#61).
+        if is_electrified(attributes, status) and (
+            "EV_CHARGING_METHOD" in status or "EV_CHARGING_STATUS" in status
+        ):
             entities.append(JlrEvccStatusSensor(coordinator, vin))
         if is_electrified(attributes, status) and "EV_CHARGE_NOW_SETTING" in status:
             entities.append(JlrChargeNowSettingSensor(coordinator, vin))

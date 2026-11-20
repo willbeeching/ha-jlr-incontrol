@@ -9,6 +9,7 @@ are made up, in the shapes JLR's catalog gives.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -555,9 +556,51 @@ class TestACarThatSaysNothingOfThePlug:
         assert state(hass, "sensor", "evcc_status") == letter
 
     @pytest.mark.parametrize("snapshot", [charging_status_only("FAULT")])
-    def test_a_fault_says_nothing_of_the_plug(self, hass: HomeAssistant) -> None:
-        assert state(hass, "binary_sensor", "ev_plugged_in") is None
-        assert state(hass, "sensor", "evcc_status") is None
+    async def test_a_fault_first_reads_unknown_then_the_plug(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        # Made on the method alone, a fault at the first read built neither,
+        # and nothing built them when charging followed.
+        assert state(hass, "binary_sensor", "ev_plugged_in") == STATE_UNKNOWN
+        assert state(hass, "sensor", "evcc_status") == STATE_UNKNOWN
+
+        link = entry.runtime_data.datahub
+        assert link is not None
+        message = {
+            "name": "Vehicle.Powertrain.TractionBattery.Charging.Status",
+            "value": "CHARGING",
+            "timestamp": "2026-11-07T10:00:00Z",
+        }
+        link._on_message(
+            f"account/acct-1/vehicles/{KEPT}/status", json.dumps(message).encode()
+        )
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "ev_plugged_in") == "on"
+        assert state(hass, "sensor", "evcc_status") == "C"
+
+    @pytest.mark.parametrize("snapshot", [charging_status_only("FAULT")])
+    async def test_a_reload_in_a_fault_keeps_them(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        # A reload during a fault deleted both, with the names given them.
+        registry = er.async_get(hass)
+        ids = {
+            platform: registry.async_get_entity_id(platform, DOMAIN, f"{KEPT}_{key}")
+            for platform, key in (
+                ("binary_sensor", "ev_plugged_in"),
+                ("sensor", "evcc_status"),
+            )
+        }
+        for entity_id in ids.values():
+            assert entity_id is not None
+            registry.async_update_entity(entity_id, name="Wallbox")
+
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+        for entity_id in ids.values():
+            kept = registry.async_get(entity_id)
+            assert kept is not None
+            assert kept.name == "Wallbox"
 
 
 @pytest.mark.usefixtures("car")
