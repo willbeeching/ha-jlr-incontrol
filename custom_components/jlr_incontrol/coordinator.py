@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -142,6 +142,8 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
         self._attributes_attempted: dict[str, Any] = {}
         self._status: dict[str, dict[str, Any]] = {}
+        # When the car sent each key of the held status, taken with it.
+        self._status_times: dict[str, dict[str, datetime]] = {}
         # Restored, not started empty: rebuilding it from nothing on every
         # reload made the "last updated" sensor jump backwards.
         self._last_changed: dict[str, str] = dict(
@@ -446,7 +448,12 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
 
     # ------------------------------------------------------- Data Hub inflow
-    def _handle_status(self, vin: str, status: dict[str, Any]) -> None:
+    def _handle_status(
+        self,
+        vin: str,
+        status: dict[str, Any],
+        times: dict[str, datetime] | None = None,
+    ) -> None:
         """Adopt status from the Data Hub, newest by the car's own clock."""
         held = dt_util.parse_datetime(
             self._status.get(vin, {}).get("LAST_UPDATED_TIME") or ""
@@ -455,6 +462,7 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if held and arriving and arriving < held:
             return
         self._status[vin] = status
+        self._status_times[vin] = dict(times or {})
         self._note_status_change(vin)
         self._note_unsettled(vin, status)
         self._note_decay(vin, status)
@@ -465,6 +473,10 @@ class JlrCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not self._awaiting:
                 self._snapshots_ready.set()
         self._push()
+
+    def status_time(self, vin: str, key: str) -> datetime | None:
+        """When the car sent this key of its held status, if that is known."""
+        return self._status_times.get(vin, {}).get(key)
 
     def _handle_position(self, vin: str, position: dict[str, Any]) -> None:
         """Adopt a location from the Data Hub when it is newer than the held one."""

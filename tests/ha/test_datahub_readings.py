@@ -556,6 +556,36 @@ class TestAnUnlockAheadOfItsDisarm:
         assert state(hass, "binary_sensor", "doors_locked") == "on"
         assert state(hass, "binary_sensor", "door_front_left_lock") == "on"
 
+    async def test_a_read_in_progress_does_not_lend_its_times(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        # A REST answer moves the link's readings on before it waits for the
+        # EV endpoint. An entity refreshed in that wait paired the held armed
+        # alarm with its pending disarm's newer time, and read locked.
+        link = entry.runtime_data.datahub
+        assert link is not None
+        message = {
+            "name": "Vehicle.Body.Door.Lock.Status",
+            "value": "FALSE",
+            "timestamp": "2026-11-07T09:05:00Z",
+        }
+        link._on_message(
+            f"account/acct-1/vehicles/{KEPT}/status", json.dumps(message).encode()
+        )
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "doors_locked") == "on"
+
+        link._merge(
+            KEPT,
+            {
+                "timestamp": "2026-11-07T09:10:00Z",
+                "Vehicle": {"Body": {"Security": {"Alarm": {"Mode": "ALARM_OFF"}}}},
+            },
+        )
+        entry.runtime_data.async_update_listeners()
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "doors_locked") == "on"
+
     async def test_a_signal_under_either_spelling_is_one_signal(
         self, hass: HomeAssistant, entry: MockConfigEntry
     ) -> None:

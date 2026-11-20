@@ -96,8 +96,6 @@ class FakeLink:
         self.journeys: dict[str, dict[str, Any]] = {}
         self.recent_journeys: dict[str, list[dict[str, Any]]] = {}
         self.reports: dict[str, Any] = {}
-        # When the car sent each status key, as the real link keeps it.
-        self.times: dict[str, dict[str, datetime]] = {}
         self.read_now_result = True
         self.reads: list[str | None] = []
         self.details_asked = 0
@@ -139,11 +137,7 @@ class FakeLink:
         held = dict(status or STATUS)
         sent = dt_util.parse_datetime(str(held.get("LAST_UPDATED_TIME") or ""))
         sent = sent or datetime(2026, 11, 7, 9, tzinfo=UTC)
-        self.times[vin] = dict.fromkeys(held, sent) | (times or {})
-        self.on_status(vin, held)
-
-    def reported_at(self, vin: str, key: str) -> datetime | None:
-        return self.times.get(vin, {}).get(key)
+        self.on_status(vin, held, dict.fromkeys(held, sent) | (times or {}))
 
     def fix(self, vin: str, position: dict[str, Any]) -> None:
         self.on_position(vin, dict(position))

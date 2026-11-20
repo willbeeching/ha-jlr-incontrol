@@ -549,11 +549,12 @@ class JlrBinarySensor(JlrVehicleEntity, BinarySensorEntity):
         """
         if str(self._status_value("THEFT_ALARM_STATUS") or "") != "ALARM_ARMED":
             return False
-        link = self.coordinator.datahub
-        if link is None:
-            return False
-        alarm = link.reported_at(self._vin, "THEFT_ALARM_STATUS")
-        lock = link.reported_at(self._vin, self.entity_description.status_key)
+        # The times that came with the held status, not the link's own, which
+        # a read in progress has already moved on.
+        alarm = self.coordinator.status_time(self._vin, "THEFT_ALARM_STATUS")
+        lock = self.coordinator.status_time(
+            self._vin, self.entity_description.status_key
+        )
         # Untimed, which of the two is newer is not known.
         return alarm is not None and lock is not None and alarm >= lock
 

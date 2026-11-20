@@ -39,6 +39,7 @@ def coordinator(**state: Any) -> JlrCoordinator:
         "_attributes": {},
         "_attributes_attempted": {},
         "_status": {},
+        "_status_times": {},
         "_position": {},
         "_last_status_seen": {},
         "_last_changed": {},
