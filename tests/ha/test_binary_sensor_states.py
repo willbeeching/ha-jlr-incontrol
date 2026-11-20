@@ -8,6 +8,7 @@ being sent by a car that was sending it a moment ago.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -288,10 +289,14 @@ class TestAnArmedAlarmMeansLocked:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-        for key in ("doors_locked", *LOCK_KEYS):
+        doors = [key for key in LOCK_KEYS if key != "boot_lock"]
+        for key in ("doors_locked", *doors):
             assert state_of(hass, key) == "off", key
         # The bonnet's latch sits outside central locking and the alarm.
         assert state_of(hass, "bonnet_lock") == "on"
+        # Land Rover document the exterior alarm staying armed with the
+        # tailgate open, so the boot says what the car sent.
+        assert state_of(hass, "boot_lock") == "on"
 
     async def test_disarmed_they_read_what_the_car_sent(
         self,
@@ -310,6 +315,35 @@ class TestAnArmedAlarmMeansLocked:
 
         for key in ("doors_locked", *LOCK_KEYS):
             assert state_of(hass, key) == "on", key
+
+    async def test_an_older_alarm_does_not_hide_a_newer_unlock(
+        self,
+        hass: HomeAssistant,
+        entry: MockConfigEntry,
+        doubles: Doubles,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The Data Hub keeps each reading as it last came: an unlock that
+        # arrived before its disarm read locked on the alarm it had ended.
+        switched_on(hass, entry, *LOCK_KEYS)
+        reporting(monkeypatch, self.LOCKED_AS_IT_SLEPT)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        later = datetime(2026, 11, 7, 9, 5, tzinfo=UTC)
+        doubles.link.push(
+            KEPT,
+            self.LOCKED_AS_IT_SLEPT,
+            times={
+                "DOOR_IS_ALL_DOORS_LOCKED": later,
+                "DOOR_FRONT_LEFT_LOCK_STATUS": later,
+            },
+        )
+        await hass.async_block_till_done()
+
+        assert state_of(hass, "doors_locked") == "on"
+        assert state_of(hass, "door_front_left_lock") == "on"
+        # The others came with the alarm, and it still holds for them.
+        assert state_of(hass, "door_front_right_lock") == "off"
 
     async def test_armed_does_not_make_up_a_reading(
         self, hass: HomeAssistant, loaded: Doubles

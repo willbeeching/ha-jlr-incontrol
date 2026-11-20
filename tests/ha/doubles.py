@@ -7,11 +7,14 @@ readings, and the Data Hub client (FakeDataHub), for tests of the link itself.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
 pytest.importorskip("pytest_homeassistant_custom_component")
+
+from homeassistant.util import dt as dt_util  # noqa: E402
 
 
 def device_for(hass: Any, entry: Any, vin: str) -> Any:
@@ -93,6 +96,8 @@ class FakeLink:
         self.journeys: dict[str, dict[str, Any]] = {}
         self.recent_journeys: dict[str, list[dict[str, Any]]] = {}
         self.reports: dict[str, Any] = {}
+        # When the car sent each status key, as the real link keeps it.
+        self.times: dict[str, dict[str, datetime]] = {}
         self.read_now_result = True
         self.reads: list[str | None] = []
         self.details_asked = 0
@@ -120,8 +125,25 @@ class FakeLink:
         self.connected = False
         self.stopped = True
 
-    def push(self, vin: str, status: dict[str, Any] | None = None) -> None:
-        self.on_status(vin, dict(status or STATUS))
+    def push(
+        self,
+        vin: str,
+        status: dict[str, Any] | None = None,
+        times: dict[str, datetime] | None = None,
+    ) -> None:
+        """Hand over a status as one report: every key sent at one time.
+
+        ``times`` gives some keys their own, as the Data Hub's per-signal
+        merge can hold readings from different reports.
+        """
+        held = dict(status or STATUS)
+        sent = dt_util.parse_datetime(str(held.get("LAST_UPDATED_TIME") or ""))
+        sent = sent or datetime(2026, 11, 7, 9, tzinfo=UTC)
+        self.times[vin] = dict.fromkeys(held, sent) | (times or {})
+        self.on_status(vin, held)
+
+    def reported_at(self, vin: str, key: str) -> datetime | None:
+        return self.times.get(vin, {}).get(key)
 
     def fix(self, vin: str, position: dict[str, Any]) -> None:
         self.on_position(vin, dict(position))

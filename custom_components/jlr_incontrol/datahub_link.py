@@ -81,6 +81,7 @@ from .vss import (
     LATITUDE,
     LONGITUDE,
     POSITION_SIGNALS,
+    RENAMES,
     signals_to_position,
     to_attributes,
     to_position,
@@ -1875,6 +1876,19 @@ class DataHubLink:
             self._journey_ended(vin, when)
 
     # -- reporting --------------------------------------------------------
+
+    def reported_at(self, vin: str, key: str) -> datetime | None:
+        """When the car sent the reading behind this status key, by its clock.
+
+        The newest of the signals named for it, None when none is timed.
+        """
+        times = [
+            entry["time"]
+            for name, entry in self.signals.get(vin, {}).items()
+            if entry.get("time") is not None
+            and RENAMES.get(name.removeprefix("Vehicle.")) == key
+        ]
+        return max(times, default=None)
 
     def diagnostics(self) -> dict[str, Any]:
         """What the link has seen, without values or identifiers."""

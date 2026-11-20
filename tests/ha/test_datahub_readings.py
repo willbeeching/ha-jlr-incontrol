@@ -514,6 +514,70 @@ def ev_endpoint(charging: bool, plugged: bool, **extra: Any) -> dict[str, Any]:
     }
 
 
+ARMED_AND_LOCKED: dict[str, Any] = {
+    "VehicleIdentification": {"VIN": KEPT},
+    "TraveledDistance": 12345000,
+    "Body": {
+        "Door": {"Lock": {"Status": "TRUE"}},
+        "Security": {"Alarm": {"Mode": "ALARM_ARMED"}},
+    },
+    "Cabin": {"Door": {"Row1": {"DriverSide": {"IsLocked": "LOCKED"}}}},
+}
+
+
+@pytest.mark.usefixtures("car")
+@pytest.mark.parametrize("snapshot", [ARMED_AND_LOCKED])
+class TestAnUnlockAheadOfItsDisarm:
+    """#65 review: each reading is kept as it last came, from its own report.
+
+    An unlock streamed before the disarm read locked, on the strength of an
+    alarm reading older than it.
+    """
+
+    async def test_the_newer_unlock_stands(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        assert state(hass, "binary_sensor", "doors_locked") == "off"
+        link = entry.runtime_data.datahub
+        assert link is not None
+        for name, value in (
+            ("Vehicle.Body.Door.Lock.Status", "FALSE"),
+            ("Vehicle.Cabin.Door.Row1.DriverSide.IsLocked", "UNLOCKED"),
+        ):
+            message = {
+                "name": name,
+                "value": value,
+                "timestamp": "2026-11-07T09:05:00Z",
+            }
+            link._on_message(
+                f"account/acct-1/vehicles/{KEPT}/status", json.dumps(message).encode()
+            )
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "doors_locked") == "on"
+        assert state(hass, "binary_sensor", "door_front_left_lock") == "on"
+
+    async def test_one_report_saying_both_reads_locked(
+        self, hass: HomeAssistant, entry: MockConfigEntry
+    ) -> None:
+        # What the I-Pace in #65 sent as it went to sleep.
+        link = entry.runtime_data.datahub
+        assert link is not None
+        for name, value in (
+            ("Vehicle.Body.Security.Alarm.Mode", "ALARM_ARMED"),
+            ("Vehicle.Body.Door.Lock.Status", "FALSE"),
+        ):
+            message = {
+                "name": name,
+                "value": value,
+                "timestamp": "2026-11-07T09:05:00Z",
+            }
+            link._on_message(
+                f"account/acct-1/vehicles/{KEPT}/status", json.dumps(message).encode()
+            )
+        await hass.async_block_till_done()
+        assert state(hass, "binary_sensor", "doors_locked") == "off"
+
+
 def charging_status_only(status: str) -> dict[str, Any]:
     """An I-Pace's battery with its charging status and nothing on the plug."""
     return {
